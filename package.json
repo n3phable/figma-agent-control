@@ -1,0 +1,32 @@
+{
+  "name": "figma-agent-control",
+  "version": "0.1.0-rc",
+  "description": "Figma Agent Control",
+  "type": "module",
+  "bin": {
+    "figma-agent-control": "bin/figma-agent-control.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "plugin/",
+    "docs/",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "check": "node --check bin/figma-agent-control.mjs && node --check plugin/main.js"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "n3phable",
+    "email": "n3phable@163.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/n3phable/figma-agent-control.git"
+  }
+}
