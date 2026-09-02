@@ -6,7 +6,9 @@ Host-side command, bridge and evidence modules.
 
 ## Members
 
+- `connection.mjs`: Plugin instance lease state.
 - `project.mjs`: Binding, paths, identifiers and atomic file writes.
+- `session.mjs`: Pairing, process locks and restart recovery.
 
 ## Contract maintenance
 
