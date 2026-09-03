@@ -7,6 +7,7 @@ Behavioral tests for the implementation in this revision.
 ## Members
 
 - `project-session.test.mjs`: Tests for project session behavior in this revision.
+- `record.test.mjs`: Tests for record behavior in this revision.
 
 ## Contract maintenance
 

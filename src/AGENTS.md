@@ -8,6 +8,8 @@ Host-side command, bridge and evidence modules.
 
 - `connection.mjs`: Plugin instance lease state.
 - `project.mjs`: Binding, paths, identifiers and atomic file writes.
+- `record.mjs`: Interpret persisted job outcomes and wait without resubmission.
+- `report.mjs`: Read-only job timing and outcome aggregation.
 - `session.mjs`: Pairing, process locks and restart recovery.
 
 ## Contract maintenance

@@ -8,5 +8,6 @@ Local workspace, execution and evidence modules for Figma automation.
 
 - Bind a workspace to a Figma file and node scope.
 - Coordinate local pairing, bridge locks and plugin leases.
+- Read durable results, compare snapshots and summarize job outcomes.
 
 [Agent guide](docs/agent-guide.md) · [Protocol](docs/protocol.md) · [Architecture](docs/architecture.md) · [MIT](LICENSE)
