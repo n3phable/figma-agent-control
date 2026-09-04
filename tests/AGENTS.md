@@ -6,6 +6,7 @@ Behavioral tests for the implementation in this revision.
 
 ## Members
 
+- `args.test.mjs`: Tests for args behavior in this revision.
 - `project-session.test.mjs`: Tests for project session behavior in this revision.
 - `record.test.mjs`: Tests for record behavior in this revision.
 

@@ -4,6 +4,7 @@ Local trusted Figma automation with persistent evidence and explicit recovery bo
 
 ## Members
 
+- `bin/`: Command-line dispatch and process output contracts.
 - `src/`: Host-side command, bridge and evidence modules.
 - `tests/`: Behavioral tests for the implementation in this revision.
 

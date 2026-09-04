@@ -2,6 +2,13 @@
 
 [English](../agent-guide.md)
 
-## 模块入口
+## 可用命令
 
-通过 src/project.mjs 的 parseTarget、init、readBinding 和原子存储函数维护本地绑定。模块职责和测试入口见架构及协议。
+`help`, `init`, `result`, `wait`
+
+在项目工作目录运行 CLI，使用 help 查看本版本的具体语法。
+
+```sh
+figma-agent-control help
+figma-agent-control init 'https://www.figma.com/design/<fileKey>/<name>?node-id=1-2'
+```

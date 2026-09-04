@@ -13,3 +13,7 @@
 ## 持久化结果
 
 `src/record.mjs` 以 `result.json` 为完成提交点，比较快照并生成摘要和退出码。等待只观察证据，不提交新任务。`src/report.mjs` 汇总已完成记录，分别统计执行失败和画面检查失败。
+
+## 离线 CLI
+
+`bin/figma-agent-control.mjs` 分派 `src/args.mjs` 声明的命令。此阶段提供 `help`、`init`、`result` 和 `wait`；参数错误输出 JSON 并以非零状态退出。`result` 和 `wait` 按任务 ID 读取本地证据。

@@ -6,6 +6,7 @@ Host-side command, bridge and evidence modules.
 
 ## Members
 
+- `args.mjs`: Command definitions and argument validation.
 - `connection.mjs`: Plugin instance lease state.
 - `project.mjs`: Binding, paths, identifiers and atomic file writes.
 - `record.mjs`: Interpret persisted job outcomes and wait without resubmission.
