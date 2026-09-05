@@ -17,3 +17,7 @@
 ## 离线 CLI
 
 `bin/figma-agent-control.mjs` 分派 `src/args.mjs` 声明的命令。此阶段提供 `help`、`init`、`result` 和 `wait`；参数错误输出 JSON 并以非零状态退出。`result` 和 `wait` 按任务 ID 读取本地证据。
+
+## 插件传输中继
+
+`plugin/ui.html` 串行处理轮询与结果回传 tick。它只接受 ID 和 channel nonce 匹配的任务回复，在所属桥接不可用时保留结果，并区分配对、版本和外部任务错误。

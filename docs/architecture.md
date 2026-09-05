@@ -11,3 +11,5 @@
 - **Durable results:** `src/record.mjs` reads `result.json` as the completion commit point, compares snapshots and derives summaries and exit codes. Waiting observes evidence without submitting another job. `src/report.mjs` aggregates completed records and keeps execution and visual-verification failures separate.
 
 - **Offline CLI:** `bin/figma-agent-control.mjs` dispatches the commands declared in `src/args.mjs`. This slice exposes `help`, `init`, `result` and `wait`; argument failures produce JSON and a nonzero exit. `result` and `wait` read local evidence by job ID.
+
+- **Plugin transport relay:** `plugin/ui.html` serializes polling and completion ticks. It accepts task replies only for the matching ID and channel nonce, retains results while their bridge is unavailable, and distinguishes pairing, version and foreign-job failures.

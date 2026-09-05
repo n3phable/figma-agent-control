@@ -10,6 +10,7 @@ Local workspace, execution and evidence modules for Figma automation.
 - Coordinate local pairing, bridge locks and plugin leases.
 - Read durable results, compare snapshots and summarize job outcomes.
 - Use the CLI to initialize bindings and read or wait for saved jobs.
+- Relay authenticated plugin tasks and retain unacknowledged results.
 
 ## Install from source
 
