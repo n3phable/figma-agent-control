@@ -101,4 +101,10 @@ async function cli(cwd, ...args) {
 
 
 
-
+test('CLI status in an uninitialized directory reports NO_SESSION and suggests init or connect', async t => {
+  const { code, json } = await cli(await tmp(t), 'status');
+  assert.equal(code, 1);
+  assert.equal(json.code, 'NO_SESSION');
+  assert.match(json.error, /init/);
+  assert.match(json.error, /connect/);
+});

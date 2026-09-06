@@ -9,4 +9,8 @@ Read the [agent guide](../../docs/agent-guide.md), [protocol](../../docs/protoco
 
 ## Commands
 
-Use `figma-agent-control help` to inspect syntax. Available commands: `help`, `init`, `result`, `wait`.
+Use `figma-agent-control help` to inspect syntax. Available commands: `help`, `init`, `result`, `wait`, `connect`, `status`.
+
+## Connection
+
+Work in the bound project directory. Keep connect in the foreground, run the generated development plugin in its bound Figma file, and inspect status before submitting work.

@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:fs, node:os, node:path, ../src/project.mjs, ../src/session.mjs, ../src/connection.mjs.
+ * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:fs, node:os, node:path, ../src/project.mjs, ../src/session.mjs, ../src/connection.mjs, ../src/bridge.mjs.
  * [OUTPUT]: Selected original node:test cases and their unchanged fixture setup.
  * [POS]: Regression coverage for project session; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -13,7 +13,7 @@ import path from 'node:path';
 import { parseTarget, init, readBinding, save, json, isNodeId, isJobId, installPlugin, pluginHome } from '../src/project.mjs';
 import { pairingToken, unfinishedOperations, acquireLock } from '../src/session.mjs';
 import { createConnection } from '../src/connection.mjs';
-
+import { start } from '../src/bridge.mjs';
 
 // -- Fixtures -------------------------------------------------------------
 async function tmp(t) {
@@ -96,7 +96,16 @@ test('init writes format-2 binding and maintains .gitignore without overwriting 
   assert.equal(await exists(path.join(bad, '.figma-agent-control')), false);
 });
 
-
+test('Non-format-2 bindings are LEGACY_PROJECT and are rejected before the bridge acquires a lock', async t => {
+  const cwd = await tmp(t), dir = path.join(cwd, '.figma-agent-control');
+  await assert.rejects(readBinding(cwd), { code: 'ENOENT' });
+  for (const format of [undefined, 1, '2']) {
+    await save(path.join(dir, 'binding.json'), { id: 'old', fileKey: 'abc', nodeId: '1:2', format });
+    await assert.rejects(readBinding(cwd), { code: 'LEGACY_PROJECT' }, String(format));
+  }
+  await assert.rejects(start(cwd, 0), { code: 'LEGACY_PROJECT' });
+  for (const file of ['bridge.lock', 'pairing.json', 'session.json', 'plugin']) assert.equal(await exists(path.join(dir, file)), false, file);
+});
 
 // -- Atomic writes --------------------------------------------------------
 test('save writes compact single-line or default two-space JSON; serialization/rename failures preserve old contents and leave no temporary file', async t => {

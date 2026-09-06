@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:os, node:path, node:vm, node:crypto, node:child_process, node:util, node:url, node:timers/promises, ../../src/project.mjs, ../../src/session.mjs, ../../src/png.mjs.
+ * [INPUT]: Imports node:fs/promises, node:os, node:path, node:vm, node:crypto, node:child_process, node:util, node:url, node:timers/promises, ../../src/bridge.mjs, ../../src/project.mjs, ../../src/session.mjs, ../../src/png.mjs.
  * [OUTPUT]: Exports cliFile, pluginSource, createDoc, fakeFigma, harness, writeScript.
  * [POS]: Isolated test fixtures shared by the surrounding contract and integration suites.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -13,7 +13,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-
+import { start } from '../../src/bridge.mjs';
 import { init, installPlugin } from '../../src/project.mjs';
 import { pairingToken } from '../../src/session.mjs';
 import { encodePng } from '../../src/png.mjs';

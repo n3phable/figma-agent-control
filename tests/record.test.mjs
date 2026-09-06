@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:crypto, ../src/project.mjs, ../src/record.mjs, ../src/report.mjs.
+ * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:crypto, ../src/project.mjs, ../src/bridge.mjs, ../src/record.mjs, ../src/report.mjs.
  * [OUTPUT]: Selected original node:test cases and their unchanged fixture setup.
  * [POS]: Regression coverage for record; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -12,7 +12,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { init, json, save } from '../src/project.mjs';
-
+import { start } from '../src/bridge.mjs';
 import { changeSet, localResult, summarizeRecord, exitCode, waitForResult } from '../src/record.mjs';
 import { report } from '../src/report.mjs';
 

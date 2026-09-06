@@ -7,6 +7,8 @@ Host-side command, bridge and evidence modules.
 ## Members
 
 - `args.mjs`: Command definitions and argument validation.
+- `bridge.mjs`: Loopback HTTP relay with role credentials, serialized jobs and persistent evidence.
+- `client.mjs`: CLI-side HTTP requests and bridge lifecycle calls.
 - `connection.mjs`: Plugin instance lease state.
 - `png.mjs`: PNG codec and strict pixel-change statistics.
 - `project.mjs`: Binding, paths, identifiers and atomic file writes.

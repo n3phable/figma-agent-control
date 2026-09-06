@@ -12,6 +12,7 @@ Local workspace, execution and evidence modules for Figma automation.
 - Use the CLI to initialize bindings and read or wait for saved jobs.
 - Relay authenticated plugin tasks and retain unacknowledged results.
 - Inspect bound nodes, export previews and read local variables in the plugin.
+- Start the authenticated local bridge and inspect connection status.
 
 ## Install from source
 
@@ -22,6 +23,6 @@ npm link
 figma-agent-control help
 ```
 
-`help`, `init`, `result`, `wait`
+`help`, `init`, `result`, `wait`, `connect`, `status`
 
 [Agent guide](docs/agent-guide.md) · [Protocol](docs/protocol.md) · [Architecture](docs/architecture.md) · [MIT](LICENSE)
