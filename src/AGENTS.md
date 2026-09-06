@@ -8,6 +8,7 @@ Host-side command, bridge and evidence modules.
 
 - `args.mjs`: Command definitions and argument validation.
 - `connection.mjs`: Plugin instance lease state.
+- `png.mjs`: PNG codec and strict pixel-change statistics.
 - `project.mjs`: Binding, paths, identifiers and atomic file writes.
 - `record.mjs`: Interpret persisted job outcomes and wait without resubmission.
 - `report.mjs`: Read-only job timing and outcome aggregation.

@@ -21,3 +21,7 @@
 ## Plugin transport relay
 
 `plugin/ui.html` serializes polling and completion ticks. It accepts task replies only for the matching ID and channel nonce, retains results while their bridge is unavailable, and distinguishes pairing, version and foreign-job failures.
+
+## Plugin read engine
+
+`plugin/main.js` verifies the bound file and target for read operations. Inspect returns the target and display ancestry; preview exports requested in-scope nodes; variables follows local default-mode aliases and counts target-subtree bindings. `src/png.mjs` handles PNG evidence.

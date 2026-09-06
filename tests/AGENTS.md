@@ -7,6 +7,8 @@ Behavioral tests for the implementation in this revision.
 ## Members
 
 - `args.test.mjs`: Tests for args behavior in this revision.
+- `helpers/`: Isolated synthetic document, bridge and media fixtures.
+- `plugin.test.mjs`: Tests for plugin behavior in this revision.
 - `project-session.test.mjs`: Tests for project session behavior in this revision.
 - `record.test.mjs`: Tests for record behavior in this revision.
 - `ui.test.mjs`: Tests for ui behavior in this revision.

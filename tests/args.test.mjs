@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:util, ../src/args.mjs.
+ * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:util, ../src/args.mjs, ./helpers/harness.mjs.
  * [OUTPUT]: Selected original node:test cases and their unchanged fixture setup.
  * [POS]: Regression coverage for args; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -12,7 +12,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { parse, COMMANDS } from '../src/args.mjs';
-
+import { cliFile } from './helpers/harness.mjs';
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e', ID2 = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
 const URL_ = 'https://www.figma.com/design/k/n?node-id=1-2';

@@ -11,6 +11,7 @@ Local workspace, execution and evidence modules for Figma automation.
 - Read durable results, compare snapshots and summarize job outcomes.
 - Use the CLI to initialize bindings and read or wait for saved jobs.
 - Relay authenticated plugin tasks and retain unacknowledged results.
+- Inspect bound nodes, export previews and read local variables in the plugin.
 
 ## Install from source
 

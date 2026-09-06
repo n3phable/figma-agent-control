@@ -21,3 +21,7 @@
 ## 插件传输中继
 
 `plugin/ui.html` 串行处理轮询与结果回传 tick。它只接受 ID 和 channel nonce 匹配的任务回复，在所属桥接不可用时保留结果，并区分配对、版本和外部任务错误。
+
+## 插件读取引擎
+
+`plugin/main.js` 为读取操作校验绑定文件和目标。inspect 返回目标及显示祖先链；preview 导出所请求的范围内节点；variables 跟随本地默认模式别名并统计目标子树绑定。`src/png.mjs` 处理 PNG 证据。
