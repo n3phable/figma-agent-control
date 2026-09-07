@@ -21,10 +21,22 @@ const cwd = process.cwd();
 const out = value => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
 const HELP = {
   commands: Object.values(COMMANDS).map(c => c.usage),
+  output: 'Submission commands wait by default and print a compact summary; --no-wait only submits, and --full prints the complete record',
   exitCodes: { 0: 'success', 1: 'failure, failed visual verification, or a reviewed result that remains unknown', 2: 'not complete (wait expired or review pending; for stop, the bridge is still finishing shutdown, so check status later)' }
 };
 
-
+async function submit(command, [file], o) {
+  const body = { operation: command, targetNodeId: o.targetNodeId, nodes: o.nodes, snapshotDepth: o.snapshotDepth, scale: o.scale, risk: o.risk, requestId: o.requestId, expect: o.expect, tolerance: o.tolerance };
+  
+  const { ok, data } = await call(cwd, '/job', body);
+  if (!ok || o.noWait) { out(data); return ok ? 0 : 1; }
+  // Write the task ID to stderr first so an agent can wait on the same task after an external timeout, without resubmitting it.
+  process.stderr.write(JSON.stringify({ submitted: data.id, ...(data.reused ? { reused: true } : {}), next: `figma-agent-control wait ${data.id}` }) + '\n');
+  // Wait in the submitting command. Deduplicated submissions wait on the original task and report its exit code; a timeout never resubmits, and the ID remains valid for wait.
+  const record = await waitForResult(cwd, data.id, o.timeoutSeconds);
+  out({ ...(o.full ? record : summarizeRecord(record)), ...(data.reused ? { reused: true } : {}) });
+  return exitCode(record);
+}
 
 try {
   const { command, positionals, options: o } = parse(process.argv.slice(2));
@@ -42,6 +54,7 @@ try {
     process.once('SIGINT', close); process.once('SIGTERM', close);
   }
   else if (command === 'status') { const { ok, data } = await call(cwd, '/status'); out(data); if (!ok) process.exitCode = 1; }
+  else if (COMMANDS[command].submit) process.exitCode = await submit(command, positionals, o);
   else if (command === 'result') { const record = await localResult(cwd, positionals[0]); out(o.full ? record : summarizeRecord(record)); process.exitCode = exitCode(record); }
   else if (command === 'wait') { const record = await waitForResult(cwd, positionals[0], o.timeoutSeconds); out(o.full ? record : summarizeRecord(record)); process.exitCode = exitCode(record); }
 } catch (error) { out({ error: error.message, code: error.code || 'COMMAND_FAILED' }); process.exitCode = 1; }

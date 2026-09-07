@@ -13,6 +13,7 @@ Local workspace, execution and evidence modules for Figma automation.
 - Relay authenticated plugin tasks and retain unacknowledged results.
 - Inspect bound nodes, export previews and read local variables in the plugin.
 - Start the authenticated local bridge and inspect connection status.
+- Submit built-in reads and persist immutable job results.
 
 ## Install from source
 
@@ -23,6 +24,6 @@ npm link
 figma-agent-control help
 ```
 
-`help`, `init`, `result`, `wait`, `connect`, `status`
+`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`
 
 [Agent guide](docs/agent-guide.md) · [Protocol](docs/protocol.md) · [Architecture](docs/architecture.md) · [MIT](LICENSE)

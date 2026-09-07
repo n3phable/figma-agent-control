@@ -29,3 +29,7 @@
 ## 本机桥接与状态
 
 `connect` 持有前台桥接进程并安装生成的开发插件。`src/bridge.mjs` 监听端口 32523，区分 CLI 与插件凭证；`src/client.mjs` 是 CLI 的 HTTP 边界。`status` 提供会话和插件连接状态。同一台机器只运行一个项目桥接。
+
+## 任务交付与完成
+
+桥接每次交付一个任务，交付前保存任务身份。重复请求 ID 返回原任务，并拒绝同 ID 的内容变化。首次原子写入的 `result.json` 为最终结果。CLI 在此阶段提供 `inspect`、`preview` 和 `variables`，回执给出后续等待的任务 ID。

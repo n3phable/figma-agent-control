@@ -13,6 +13,7 @@
 - 中继已认证的插件任务，保留未被确认接收的结果。
 - 在插件中检查绑定节点、导出预览并读取本地变量。
 - 启动已认证的本机桥接并查看连接状态。
+- 提交内置读取操作并持久化不可变的任务结果。
 
 ## 从源码安装
 
@@ -23,6 +24,6 @@ npm link
 figma-agent-control help
 ```
 
-`help`, `init`, `result`, `wait`, `connect`, `status`
+`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`
 
 [使用指南](docs/zh_cn/agent-guide.md) · [协议](docs/zh_cn/protocol.md) · [架构](docs/zh_cn/architecture.md) · [MIT](LICENSE)

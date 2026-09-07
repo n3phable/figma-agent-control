@@ -382,4 +382,21 @@ test('Recovery hints immediately return review-needed with exit 2; reviewed reso
   assert.deepEqual([summarizeRecord(resolved).resolution, summarizeRecord(resolved).instruction], ['reviewed-without-replay', '\u5df2\u6838\u5bf9']);
 });
 
-
+test('Hidden-panel active tasks still default to a 30-second wait: long polling prevents background delivery/completion delays, so the limit stays unchanged', async t => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'figma-agent-control-record-bg-'));
+  let bridge;
+  t.after(async () => { await bridge?.close(); await fs.rm(cwd, { recursive: true, force: true }); });
+  await init(cwd, 'https://www.figma.com/design/example/Test?node-id=1-2');
+  const pluginToken = 'a'.repeat(64);
+  bridge = await start(cwd, 0, { pollHoldMs: 0, pluginToken });
+  const session = await json(path.join(cwd, '.figma-agent-control', 'session.json'));
+  const hidden = await fetch(`http://127.0.0.1:${bridge.port}/heartbeat?client=test&file=example&visibility=hidden`, { headers: { 'X-Session-Token': pluginToken, 'X-Plugin-Version': bridge.version } });
+  assert.equal(hidden.status, 200);
+  const submitted = await fetch(`http://127.0.0.1:${bridge.port}/job`, { method: 'POST', headers: { 'X-Session-Token': session.token }, body: JSON.stringify({ operation: 'inspect' }) });
+  const { id } = await submitted.json();
+  const status = await (await fetch(`http://127.0.0.1:${bridge.port}/status`, { headers: { 'X-Session-Token': session.token } })).json();
+  assert.deepEqual([status.connectionState, status.active], ['BACKGROUND', id]);
+  const clock = fakeClock();
+  assert.equal((await waitForResult(cwd, id, undefined, clock)).waitStatus, 'timeout');
+  assert.equal(clock.t, 30000);
+});

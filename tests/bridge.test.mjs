@@ -106,22 +106,190 @@ test('CLI and plugin credentials are not interchangeable; missing or incorrect c
   assert.equal(await exists(path.join(b.dir, 'pairing.json')), false, 'The project directory does not store pairing credentials');
 });
 
-
+test('Missing or mismatched X-Plugin-Version returns 409 PLUGIN_OUTDATED and prevents old plugins from receiving tasks', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const id = await b.submit(RUN);
+  for (const version of [undefined, '0'.repeat(16)])
+    for (const [route, body] of [['/poll?client=plugin&file=example'], ['/heartbeat?client=plugin&file=example'], ['/checkpoint', { id }], ['/approve', { id }], ['/complete', { id, ok: true }]]) {
+      const r = await b.send(route, { token: b.pairing, version, body });
+      assert.deepEqual([r.status, r.body.code], [409, 'PLUGIN_OUTDATED'], `${route} version ${version}`);
+    }
+  assert.equal((await b.cli('/result?id=' + id)).body.state, 'queued');
+  assert.equal((await b.poll()).body.id, id);
+});
 
 // -- Job validation -------------------------------------------------------
+test('Every protocol.md job-field constraint rejects out-of-bounds values with 400 and accepts boundary values', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  // Occupy the active slot first: valid requests reach 409 ACTIVE_JOB, while invalid ones fail earlier with 400.
+  await b.submit({ operation: 'inspect' });
+  const preview = { operation: 'preview', targetNodeId: '1:3' };
+  const nodes = n => ['1:3', ...Array.from({ length: n - 1 }, (_, i) => `2:${i + 1}`)];
+  const lib = (name, code) => ({ name, code });
+  const rejected = {
+    'unknown operation': { operation: 'rollback' },
+    'run without a script': { operation: 'run' },
+    'run with whitespace-only script': { operation: 'run', code: ' \n' },
+    'script on a non-run task': { operation: 'inspect', code: 'return 1;' },
+    'target ID contains a path': { operation: 'inspect', targetNodeId: '../1:2' },
+    'instance ID lacks descendant chain': { operation: 'inspect', targetNodeId: 'I1:2' },
+    '21 libraries': { ...RUN, libs: Array.from({ length: 21 }, (_, i) => lib(`l${i}`, '')) },
+    'libraries total over 2 MiB': { ...RUN, libs: [lib('a', 'a'.repeat(MiB)), lib('b', 'a'.repeat(MiB + 1))] },
+    'libraries on inspect': { operation: 'inspect', libs: [lib('a', '')] },
+    'library missing name': { ...RUN, libs: [{ code: '' }] },
+    'snapshotDepth 0': { ...RUN, snapshotDepth: 0 },
+    'snapshotDepth 32': { ...RUN, snapshotDepth: 32 },
+    'noninteger snapshotDepth': { ...RUN, snapshotDepth: 1.5 },
+    'snapshotDepth on preview': { ...preview, nodes: ['1:3', '1:4'], snapshotDepth: 1 },
+    'only 1 node': { ...preview, nodes: ['1:3'] },
+    '51 nodes': { ...preview, nodes: nodes(51) },
+    'duplicate nodes': { ...preview, nodes: ['1:3', '1:3'] },
+    'first node is not the target': { ...preview, nodes: ['1:4', '1:3'] },
+    'nodes on inspect': { operation: 'inspect', targetNodeId: '1:3', nodes: ['1:3', '1:4'] },
+    'scale on inspect': { operation: 'inspect', scale: 1 },
+    'scale on run without expect': { ...RUN, scale: 1 },
+    'scale below 0.1': { ...preview, scale: 0.09 },
+    'scale above 4': { ...preview, scale: 4.01 },
+    'string scale': { ...preview, scale: '1' },
+    'data on inspect': { operation: 'inspect', data: {} },
+    'data over 1 MiB': { ...RUN, data: 'a'.repeat(MiB) },
+    'invalid expect value': { ...RUN, expect: 'same' },
+    'expect on inspect': { operation: 'inspect', expect: 'changed' },
+    'tolerance without expect': { ...RUN, tolerance: 0 },
+    'negative tolerance': { ...RUN, expect: 'changed', tolerance: -1 },
+    'noninteger tolerance': { ...RUN, expect: 'changed', tolerance: 1.5 },
+    'high risk without reason': { ...RUN, risk: { level: 'high' } },
+    'high risk on inspect': { operation: 'inspect', risk: { level: 'high', reason: '\u8bf4\u660e' } },
+    'unknown risk level': { ...RUN, risk: { level: 'urgent', reason: '\u8bf4\u660e' } },
+    'non-UUID requestId': { operation: 'inspect', requestId: 'abc' }
+  };
+  const accepted = {
+    'minimal run': RUN,
+    '20 libraries totaling exactly 2 MiB': { ...RUN, libs: [lib('big', 'a'.repeat(2 * MiB - 19)), ...Array.from({ length: 19 }, (_, i) => lib(`l${i}`, 'a'))] },
+    'snapshotDepth 1（run）': { ...RUN, snapshotDepth: 1 },
+    'snapshotDepth 31（inspect）': { operation: 'inspect', snapshotDepth: 31 },
+    '2 nodes': { ...preview, nodes: ['1:3', '1:4'] },
+    '50 nodes': { ...preview, nodes: nodes(50) },
+    'scale 0.1（preview）': { ...preview, scale: 0.1 },
+    'scale 4 on run with expect': { ...RUN, expect: 'changed', scale: 4 },
+    'data exactly 1 MiB': { ...RUN, data: 'a'.repeat(MiB - 2) },
+    'expect unchanged with tolerance 0': { ...RUN, expect: 'unchanged', tolerance: 0 },
+    'high risk with reason': { ...RUN, risk: { level: 'high', reason: '\u8c03\u6574\u5171\u4eab\u7ec4\u4ef6' } },
+    'instance descendant target': { operation: 'inspect', targetNodeId: 'I1:2;3:4' },
+    'variables': { operation: 'variables' },
+    'UUID requestId': { operation: 'inspect', requestId: uuid(9) }
+  };
+  for (const [name, body] of Object.entries(rejected)) {
+    const r = await b.cli('/job', body);
+    assert.equal(r.status, 400, `${name} should be rejected: ${JSON.stringify(r.body)}`);
+  }
+  for (const [name, body] of Object.entries(accepted)) {
+    const r = await b.cli('/job', body);
+    assert.equal(r.body.code, 'ACTIVE_JOB', `${name} should pass validation: ${JSON.stringify(r.body)}`);
+  }
+  assert.equal((await b.status()).jobs.length, 1);
+});
 
+test('MiB limits count bytes: oversized data and libraries with multibyte characters are rejected', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  await b.submit({ operation: 'inspect' });
+  // U+4E2D occupies 3 UTF-8 bytes and 2 UTF-16 bytes. Both payloads exceed their byte limits in either encoding while remaining within the code-unit limits.
+  const data = await b.cli('/job', { ...RUN, data: '\u4e2d'.repeat(600_000) });
+  const libs = await b.cli('/job', { ...RUN, libs: [{ name: 'cjk.js', code: '\u4e2d'.repeat(1_100_000) }] });
+  assert.deepEqual({ data: data.status, libs: libs.status }, { data: 400, libs: 400 }, 'Reject approximately 1.8 MB of data and 3.3 MB of libraries');
+});
 
-
-
-
+test('Preview without targetNodeId validates its first node against the bound node', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  assert.equal((await b.cli('/job', { operation: 'preview', nodes: ['1:3', '1:2'] })).status, 400, 'The first node is not the bound node');
+  const r = await b.cli('/job', { operation: 'preview', nodes: ['1:2', '1:3'] });
+  assert.equal(r.status, 202, JSON.stringify(r.body));
+  assert.deepEqual((await json(path.join(b.run(r.body.id), 'job.json'))).nodes, ['1:2', '1:3']);
+});
 
 // ── requestId ────────────────────────────────────────────────────────────
+test('requestId resubmission returns the original task, rejects any changed content across restarts, and rejects incomplete journals', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const id = uuid(1);
+  const original = { operation: 'run', requestId: id, code: 'return data;', libs: [{ name: 'lib.js', code: 'const k = 1;' }], data: { text: '\u539f\u6587' },
+    expect: 'changed', tolerance: 2, scale: 2, snapshotDepth: 3, targetNodeId: '1:3', risk: { level: 'high', reason: '\u6539\u5171\u4eab\u7ec4\u4ef6' }, label: 'body.js' };
+  assert.equal((await b.cli('/job', original)).status, 202);
+  const again = await b.cli('/job', original);
+  assert.deepEqual([again.status, again.body.id, again.body.state, again.body.reused], [200, id, 'queued', true]);
 
+  const variants = { code: { code: 'return 2;' }, libs: { libs: [{ name: 'lib.js', code: 'const k = 2;' }] }, data: { data: { text: '\u65b0\u6587' } },
+    expect: { expect: 'unchanged' }, tolerance: { tolerance: 3 }, scale: { scale: 1 }, snapshotDepth: { snapshotDepth: 4 },
+    targetNodeId: { targetNodeId: '1:4' }, risk: { risk: { level: 'normal' } } };
+  for (const [field, change] of Object.entries(variants)) {
+    // A new requestId reaches only ACTIVE_JOB, proving each variant is otherwise valid and 400 specifically means the same ID has different content.
+    assert.equal((await b.cli('/job', { ...original, ...change, requestId: uuid(2) })).body.code, 'ACTIVE_JOB', field);
+    assert.equal((await b.cli('/job', { ...original, ...change })).status, 400, `${field} differs but was treated as resubmission`);
+  }
+  assert.equal(await fs.readFile(path.join(b.run(id), 'script.js'), 'utf8'), original.code);
+  assert.equal((await json(path.join(b.run(id), 'job.json'))).risk.level, 'high');
+
+  await b.poll();
+  await b.plugin('/complete', { id, ok: false, executionStarted: false, error: '\u672a\u786e\u8ba4' });
+  assert.deepEqual(await b.cli('/job', original).then(r => [r.status, r.body.state, r.body.reused]), [200, 'failed', true]);
+  // operation participates in comparison: resubmission with only a changed operation is also rejected.
+  assert.equal((await b.cli('/job', { operation: 'inspect', requestId: uuid(4) })).status, 202);
+  assert.equal((await b.cli('/job', { operation: 'variables', requestId: uuid(4) })).status, 400);
+
+  // After restart the task is absent from memory but still recognized from its journal; /result serves only the current session.
+  await b.restart();
+  assert.deepEqual(await b.cli('/job', original).then(r => [r.status, r.body.id, r.body.state]), [200, id, 'failed']);
+  assert.equal((await b.cli('/job', { ...original, code: 'return 2;' })).status, 400);
+  assert.equal((await b.cli('/result?id=' + id)).status, 404);
+
+  // An evidence directory without job.json cannot prove whether delivery occurred. Reject the same ID; the plugin is disconnected so this cannot be RECONNECTING.
+  await fs.mkdir(b.run(uuid(3)));
+  assert.equal((await b.cli('/job', { operation: 'inspect', requestId: uuid(3) })).status, 400);
+  assert.equal(await exists(path.join(b.run(uuid(3)), 'job.json')), false);
+});
 
 // -- Submission gates and delivery ----------------------------------------
+test('Submission returns RECONNECTING before connection and ACTIVE_JOB for an in-flight task; delivery occurs once and includes binding', OPTIONS, async t => {
+  const b = await fixture(t);
+  assert.equal((await b.cli('/job', { operation: 'inspect' })).body.code, 'RECONNECTING');
+  await b.poll();
+  b.clock = 15000; // The foreground lease expires after 15 s.
+  const stale = await b.cli('/job', { operation: 'inspect' });
+  assert.deepEqual([stale.status, stale.body.code], [409, 'RECONNECTING']);
+  assert.deepEqual((await b.status()).jobs, []);
 
+  await b.poll();
+  const id = await b.submit({ ...RUN, targetNodeId: '1:3' });
+  const busy = await b.cli('/job', { operation: 'inspect' });
+  assert.deepEqual([busy.status, busy.body.code, busy.body.active], [409, 'ACTIVE_JOB', id]);
 
+  const polls = await Promise.all(Array.from({ length: 10 }, () => b.poll()));
+  const delivered = polls.map(p => p.body).filter(Boolean);
+  assert.equal(delivered.length, 1, 'Concurrent polls deliver only once');
+  const [job] = delivered;
+  assert.deepEqual([job.id, job.state, job.code, job.targetNodeId], [id, 'running', 'return 1;', '1:3']);
+  assert.deepEqual(job.binding, await json(path.join(b.dir, 'binding.json')), 'The plugin needs binding to verify the file and scope');
+  assert.equal((await json(path.join(b.run(id), 'job.json'))).state, 'running');
+  assert.equal((await b.poll()).body, null);
+  assert.equal((await b.cli('/result?id=' + id)).body.state, 'running');
 
+  await b.plugin('/complete', { id, ok: true, output: 1 });
+  assert.equal((await b.cli('/job', { operation: 'inspect' })).status, 202);
+});
+
+test('Concurrent /job submissions yield one 202 and one 409 ACTIVE_JOB, creating only one runs/ directory', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const replies = await Promise.all([b.cli('/job', { operation: 'inspect' }), b.cli('/job', RUN)]);
+  const accepted = replies.filter(r => r.status === 202), refused = replies.filter(r => r.status === 409);
+  assert.deepEqual([accepted.length, refused.length], [1, 1], JSON.stringify(replies.map(r => r.body)));
+  assert.deepEqual([refused[0].body.code, refused[0].body.active], ['ACTIVE_JOB', accepted[0].body.id]);
+  assert.deepEqual(await fs.readdir(path.join(b.dir, 'runs')), [accepted[0].body.id]);
+});
 
 // -- Checkpoints and high-risk approval ------------------------------------
 
@@ -131,12 +299,101 @@ test('CLI and plugin credentials are not interchangeable; missing or incorrect c
 
 
 // -- Completion and commit point ------------------------------------------
+test('The first result wins and repeats are idempotent; result.json commits the result but the gate stays closed until journaling completes', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  // A task unknown to this project belongs elsewhere because the plugin is global. Return 409 so the plugin retains the result; neither reject its content nor persist it here.
+  const foreign = await b.plugin('/complete', { id: uuid(404), ok: true });
+  assert.deepEqual([foreign.status, foreign.body.code, await exists(b.run(uuid(404)))], [409, 'FOREIGN_JOB', false]);
+  assert.equal((await b.plugin('/complete', { id: 'not-a-job', ok: true })).status, 400, 'Invalid task ID');
+  const id = await b.submit({ operation: 'inspect' });
+  assert.equal((await b.plugin('/complete', { id, ok: true })).status, 400, 'Not yet delivered');
+  await b.poll();
+  assert.equal((await b.plugin('/complete', { id, output: 1 })).status, 400, 'Missing ok');
 
+  const replies = await Promise.all(Array.from({ length: 10 }, (_, output) => b.plugin('/complete', { id, ok: true, output })));
+  assert.ok(replies.every(r => r.status === 200));
+  const resultFile = path.join(b.run(id), 'result.json');
+  const persisted = await json(resultFile);
+  assert.ok(Number.isInteger(persisted.output) && persisted.output >= 0 && persisted.output < 10);
+  assert.equal((await b.plugin('/complete', { id, ok: false, output: '\u8986\u76d6\u5c1d\u8bd5' })).status, 200);
+  assert.deepEqual(await json(resultFile), persisted);
+  assert.deepEqual((await b.cli('/result?id=' + id)).body, persisted);
+  const journal = await json(path.join(b.run(id), 'job.json'));
+  assert.equal('result' in journal, false, 'job.json does not embed results');
+  assert.deepEqual([journal.state, journal.finishedAt], ['done', persisted.finishedAt]);
 
+  // Replace job.json with a directory to fail the second step: the result is committed but the gate stays closed; retry reuses the committed result.
+  const runId = (await b.deliver(RUN)).id;
+  const journalFile = path.join(b.run(runId), 'job.json'), backup = path.join(b.run(runId), 'job.backup');
+  await fs.rename(journalFile, backup);
+  await fs.mkdir(journalFile);
+  assert.equal((await b.plugin('/complete', { id: runId, ok: false, executionStarted: true, error: '\u9996\u4e2a\u7ed3\u679c' })).status, 400);
+  assert.equal((await json(path.join(b.run(runId), 'result.json'))).error, '\u9996\u4e2a\u7ed3\u679c');
+  assert.equal((await b.status()).active, runId);
+  assert.equal((await b.cli('/job', { operation: 'inspect' })).body.code, 'ACTIVE_JOB');
+  assert.deepEqual((await fs.readdir(b.run(runId))).filter(name => name.endsWith('.tmp')), []);
+  await fs.rmdir(journalFile);
+  await fs.rename(backup, journalFile);
+  assert.equal((await b.plugin('/complete', { id: runId, ok: true, output: '\u540e\u6765\u7684\u7ed3\u679c' })).status, 200);
+  assert.equal((await json(path.join(b.run(runId), 'result.json'))).error, '\u9996\u4e2a\u7ed3\u679c');
+  assert.equal((await json(journalFile)).state, 'failed');
+  assert.equal((await b.status()).active, null);
+});
 
+test('/complete allows 72 MiB for images and binaries; other routes allow 16 MiB', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const tooBig = await b.cli('/job', { operation: 'inspect', pad: 'a'.repeat(16 * MiB) });
+  assert.equal(tooBig.status, 413);
+  assert.deepEqual((await b.status()).jobs, []);
+  const job = await b.deliver({ operation: 'inspect' });
+  assert.equal((await b.plugin('/complete', { id: job.id, ok: true, output: 'a'.repeat(17 * MiB) })).status, 200);
+  assert.equal((await json(path.join(b.run(job.id), 'result.json'))).output.length, 17 * MiB);
+});
 
 // -- Persisted evidence ---------------------------------------------------
+test('Preview images use ordinal and node names; binary placeholders become files, before stays in checkpoints, and after is retained only for post-execution failures', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const red = png(2, 2, RED), blue = png(3, 1, BLUE);
+  const preview = await b.deliver({ operation: 'preview', targetNodeId: '1:3', nodes: ['1:3', '1:4'] });
+  const swapped = await b.plugin('/complete', { id: preview.id, ok: true, images: [{ nodeId: '1:4', name: '\u8272\u5757', base64: b64(blue) }, { nodeId: '1:3', name: '\u6807\u9898', base64: b64(red) }] });
+  assert.equal(swapped.status, 400, 'Images for nodes other than those requested must not be persisted');
+  assert.equal(await exists(path.join(b.run(preview.id), 'result.json')), false);
+  await b.plugin('/complete', { id: preview.id, ok: true, images: [{ nodeId: '1:3', name: '\u6807\u9898', base64: b64(red) }, { nodeId: '1:4', name: '\u8272\u5757', base64: b64(blue) }], bindingVerified: verified('1:3') });
+  const images = (await json(path.join(b.run(preview.id), 'result.json'))).images;
+  for (const [i, [nodeId, bytes, width, height, color]] of [['1:3', red, 2, 2, '#FF0000'], ['1:4', blue, 3, 1, '#0000FF']].entries()) {
+    const image = images[i];
+    assert.equal(image.file, `images/${i + 1}-${nodeId.replace(':', '-')}.png`);
+    assert.deepEqual(await fs.readFile(path.join(b.run(preview.id), image.file)), bytes);
+    assert.deepEqual([image.nodeId, image.bytes, image.sha256, image.width, image.height, image.pixels.dominant.color], [nodeId, bytes.length, sha256(bytes), width, height, color]);
+    assert.equal(image.base64, undefined);
+  }
 
+  const pdf = Buffer.from('%PDF-1.4\n');
+  const binary = await b.finish(RUN, { ok: true, executionStarted: true, binaries: [b64(red), b64(pdf)],
+    output: { chart: { __figmaAgentControlBinary: 0 }, list: [{ __figmaAgentControlBinary: 1 }], bad: { __figmaAgentControlBinary: 5 } } });
+  const { chart, list: [doc], bad } = binary.result.output;
+  assert.deepEqual([chart.file, chart.type, chart.bytes, chart.sha256, chart.width, chart.height], ['files/output-1.png', 'png', red.length, sha256(red), 2, 2]);
+  assert.deepEqual(await fs.readFile(path.join(b.run(binary.id), chart.file)), red);
+  assert.deepEqual([doc.file, doc.type, doc.sha256], ['files/output-2.pdf', 'pdf', sha256(pdf)]);
+  assert.deepEqual(bad, { binaryUnavailable: true });
+  assert.ok(binary.result.binaryErrors.length > 0, 'Invalid placeholders are recorded in binaryErrors');
+  assert.equal(binary.result.ok, true, 'Binary problems do not change the script result');
+  assert.equal(binary.result.binaries, undefined);
+
+  const before = { id: '1:2', name: '\u753b\u677f', children: [{ id: '1:3', name: '\u6807\u9898', characters: '\u539f\u6587' }] };
+  const after = { id: '1:2', name: '\u753b\u677f', children: [{ id: '1:3', name: '\u6807\u9898', characters: '\u65b0\u6587' }] };
+  const done = (await b.finish(RUN, { ok: true, executionStarted: true, output: null, before, after })).result;
+  assert.deepEqual([done.before, done.after], [undefined, undefined]);
+  assert.equal(done.changes.counts.updated, 1);
+  assert.deepEqual(done.changes.nodes, [{ id: '1:3', name: '\u6807\u9898', change: 'updated', keys: ['characters'] }]);
+  const partial = (await b.finish(RUN, { ok: false, executionStarted: true, error: '\u811a\u672c\u4e2d\u9014\u629b\u9519', before, after })).result;
+  assert.deepEqual([partial.before, partial.after], [undefined, after]);
+  const early = (await b.finish(RUN, { ok: false, executionStarted: false, error: 'Syntax error', before, after })).result;
+  assert.equal(early.after, undefined);
+});
 
 
 
@@ -199,7 +456,25 @@ test('Global plugins embed pluginToken without project pairing files; identical 
   await again.close();
 });
 
-
+test('Among global plugin instances, only the bound file owns the lease and receives tasks; other files receive binding headers without renewal or delivery', OPTIONS, async t => {
+  const b = await fixture(t);
+  const id = await b.submit({ operation: 'inspect' }).catch(() => null);
+  assert.equal(id, null, 'No instance has connected');
+  // An instance in another file arrives first: return no task with binding headers for the panel, without a lease, and record WRONG_FILE.
+  const elsewhere = await b.plugin('/poll?client=x&file=other');
+  assert.deepEqual([elsewhere.status, elsewhere.body, JSON.parse(elsewhere.headers.get('X-Figma-Binding')).fileKey], [200, null, 'example']);
+  assert.equal((await b.plugin('/heartbeat?client=x&file=other')).status, 200);
+  const status = await b.status();
+  assert.deepEqual([status.connected, Object.keys(status.pluginIssues)], [false, ['WRONG_FILE']]);
+  // An instance lacking fileKey also cannot lease. Record its own reason without conflating it with another open file or replacing the existing reason.
+  for (const route of ['/poll?client=z&file=', '/poll?client=z']) assert.equal((await b.plugin(route)).body, null, route);
+  assert.deepEqual(Object.keys((await b.status()).pluginIssues).sort(), ['NO_FILE_KEY', 'WRONG_FILE']);
+  // The bound-file instance arrives next and takes over immediately, without waiting for another lease; only it receives the task.
+  assert.equal((await b.plugin('/poll?client=y&file=example')).body, null);
+  const queued = await b.submit({ operation: 'inspect' });
+  assert.equal((await b.plugin('/poll?client=x&file=other')).body, null, 'An instance in another file cannot receive tasks');
+  assert.equal((await b.plugin('/poll?client=y&file=example')).body.id, queued);
+});
 
 
 
@@ -221,10 +496,67 @@ test('Non-ASCII project names with CJK, accents, and emoji work; binding headers
 });
 
 // -- Long polling ---------------------------------------------------------
+test('An empty /poll waits, wakes on enqueue, times out with X-Long-Poll, and releases immediately on bridge close', OPTIONS, async t => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'figma-agent-control-bridge-'));
+  t.after(() => fs.rm(cwd, { recursive: true, force: true }));
+  await init(cwd, FIGMA_URL);
+  const pairing = 'a'.repeat(64);
+  const bridge = await start(cwd, 0, { pollHoldMs: 300, pluginToken: pairing });
+  let closed = false;
+  t.after(async () => { if (!closed) await bridge.close(); });
+  const { token } = await json(path.join(root(cwd), 'session.json'));
+  const url = route => `http://127.0.0.1:${bridge.port}${route}`;
+  const poll = () => fetch(url('/poll?client=plugin&visibility=hidden&file=example'), { headers: { 'X-Session-Token': pairing, 'X-Plugin-Version': bridge.version } });
 
+  let started = performance.now();
+  const empty = await poll();
+  assert.ok(performance.now() - started >= 250, 'An empty poll waits');
+  assert.deepEqual([empty.status, await empty.json(), empty.headers.get('X-Long-Poll')], [200, null, '1']);
+
+  const held = poll();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  started = performance.now();
+  const submitted = await fetch(url('/job'), { method: 'POST', headers: { 'X-Session-Token': token }, body: JSON.stringify({ operation: 'inspect' }) });
+  assert.equal(submitted.status, 202, 'A pending poll keeps the connection fresh');
+  const claimed = await held;
+  assert.ok(performance.now() - started < 250, 'Enqueue wakes the poll before its timeout');
+  assert.deepEqual([(await claimed.json()).id, claimed.headers.get('X-Long-Poll')], [(await submitted.json()).id, null]);
+
+  await fetch(url('/complete'), { method: 'POST', headers: { 'X-Session-Token': pairing, 'X-Plugin-Version': bridge.version }, body: JSON.stringify({ id: (await (await fetch(url('/status'), { headers: { 'X-Session-Token': token } })).json()).active, ok: true, output: {} }) });
+  const pending = poll();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  started = performance.now();
+  closed = true;
+  await bridge.close();
+  const released = await pending.then(r => r.status, () => 'closed');
+  assert.ok(performance.now() - started < 250, 'Closing immediately releases a pending poll');
+  assert.ok(released === 200 || released === 'closed', String(released));
+});
 
 // ── /status ──────────────────────────────────────────────────────────────
+test('/status reports session, connection, active/unresolved tasks, binding, plugin version, and the latest 20 tasks', OPTIONS, async t => {
+  const b = await fixture(t);
+  const first = await b.cli('/status');
+  const session = await json(path.join(b.dir, 'session.json'));
+  assert.deepEqual([first.body.sessionId, first.headers.get('x-figma-session'), first.body.pid], [session.sessionId, session.sessionId, process.pid]);
+  assert.equal(first.body.pluginVersion, b.bridge.version);
+  assert.deepEqual(first.body.binding, await json(path.join(b.dir, 'binding.json')));
+  assert.deepEqual([first.body.connected, first.body.connectionState, first.body.pollAgeMs, first.body.active, first.body.unresolved], [false, 'STALE', null, null, []]);
 
+  await b.poll();
+  b.clock = 1234;
+  const live = await b.status();
+  assert.deepEqual([live.connected, live.connectionState, live.pollAgeMs], [true, 'ACTIVE', 1234]);
+
+  const ids = [];
+  for (let i = 0; i < 21; i++) ids.push((await b.finish({ operation: 'inspect', ...(i === 20 ? { label: 'probe.js' } : {}) }, { ok: true, output: { id: '1:2' } })).id);
+  const queued = await b.submit({ operation: 'inspect' });
+  const status = await b.status();
+  assert.equal(status.active, queued);
+  assert.deepEqual(status.jobs.map(job => job.id), [...ids.slice(2), queued]);
+  assert.deepEqual(status.jobs.at(-2), { id: ids[20], operation: 'inspect', state: 'done', label: 'probe.js' });
+  assert.deepEqual(status.jobs.at(-1), { id: queued, operation: 'inspect', state: 'queued' });
+});
 
 // -- Occupied ports -------------------------------------------------------
 test('Occupied ports report EADDRINUSE and a remedy, release the lock, and leave the original listener unaffected', OPTIONS, async t => {

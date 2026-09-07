@@ -50,7 +50,14 @@ test('Commands named after Object prototype properties are still unknown command
 
 
 
-
+test('preview allows repeated --node: use the first target, deduplicate normalized IDs, and cap at 50', () => {
+  assert.deepEqual(opts('preview', '--node', '1-3', '--node', '1:4'), { targetNodeId: '1:3', nodes: ['1:3', '1:4'] });
+  assert.deepEqual(opts('preview', '--node', '1:3'), { targetNodeId: '1:3' });
+  assert.throws(() => parse(['preview', '--node', '1:2', '--node', '1-2']), /without duplicates/);
+  const many = n => Array.from({ length: n }, (_, i) => ['--node', `1:${i + 1}`]).flat();
+  assert.equal(opts('preview', ...many(50)).nodes.length, 50);
+  assert.throws(() => parse(['preview', ...many(51)]), /at most 50/);
+});
 
 
 

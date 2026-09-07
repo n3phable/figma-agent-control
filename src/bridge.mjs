@@ -241,7 +241,13 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
         finally { deliveries.delete(job.id); }
         return reply(200, { ...job, binding });
       }
-      
+      if (req.method === 'GET' && u.pathname === '/result') {
+        const id = u.searchParams.get('id');
+        if (!isJobId(id)) return reply(400, { error: 'Invalid job ID' });
+        const job = jobs.get(id);
+        if (!job) return reply(404, { error: 'The job does not belong to the current session; read its local evidence with result' });
+        return reply(200, await optional(path.join(runDir(id), 'result.json')) ?? { id, state: job.state });
+      }
       if (req.method !== 'POST') return reply(404, { error: 'Unknown endpoint' });
       const chunks = []; let size = 0;
       // Result uploads may contain images and binary files; all other requests retain a 16 MiB limit.
@@ -251,9 +257,55 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       
       
       
+      if (u.pathname === '/job') {
+        const candidate = buildJob(data, binding);
+        if (data.requestId !== undefined) {
+          let prior = jobs.get(data.requestId);
+          if (!prior) {
+            try { prior = await json(path.join(runDir(data.requestId), 'job.json')); }
+            catch (e) {
+              if (e.code !== 'ENOENT') throw e;
+              try { await fs.access(runDir(data.requestId)); throw Error('The request journal is incomplete; keep the evidence and verify; do not resubmit'); }
+              catch (missing) { if (missing.code !== 'ENOENT') throw missing; }
+            }
+          }
+          if (prior) {
+            if (specKey(prior) !== specKey(candidate)) throw Error('A job with the same requestId cannot change its content');
+            return reply(200, { id: prior.id, state: prior.state, evidence: runDir(prior.id), reused: true });
+          }
+        }
+        if (stopping) return reply(409, { code: 'BRIDGE_STOPPING', error: 'The bridge is stopping; the job was not submitted' });
+        if (!connection.connected) return reply(409, { code: 'RECONNECTING', error: 'The plugin is not connected or is reconnecting; the job was not submitted' });
+        if (active) return reply(409, { code: 'ACTIVE_JOB', error: 'A job is unfinished; read back its result first; do not replay the script', active });
+        if (unresolved.size && candidate.operation === 'run') return reply(409, { code: 'REVIEW_REQUIRED', error: 'The previous operation needs verification; inspect or preview first, then resolve after verifying; do not replay the script', unresolved: [...unresolved] });
+        active = candidate.id;
+        try {
+          await fs.mkdir(runDir(candidate.id), { recursive: true, mode: 0o700 });
+          await fs.writeFile(path.join(runDir(candidate.id), 'script.js'), candidate.code || `// built-in operation: ${candidate.operation}\n`, { mode: 0o600 });
+          await save(path.join(runDir(candidate.id), 'job.json'), candidate, true);
+          jobs.set(candidate.id, candidate);
+        } catch (error) { active = null; throw error; }
+        wakePolls();
+        return reply(202, { id: candidate.id, state: 'queued', evidence: runDir(candidate.id) });
+      }
       
-      
-      
+      if (u.pathname === '/complete') {
+        // Persist late results from prior sessions: they provide stronger evidence than unknown and clear unresolved state after persistence.
+        // Completed tasks are absent from memory after restart. Acknowledge repeated results idempotently when an earlier response was lost, preventing endless plugin uploads.
+        // Unknown local tasks belong to another project. Return 409 so the plugin preserves the real result, instead of treating it as invalid content and degrading it to failure.
+        if (!isJobId(data.id)) throw Error('Invalid job ID');
+        const job = jobs.get(data.id);
+        if (!job && await optional(path.join(runDir(data.id), 'result.json'))) return reply(200, { received: true });
+        if (!job) { noteIssue('FOREIGN_JOB'); return reply(409, FOREIGN_JOB); }
+        if (!['running', 'done', 'failed'].includes(job.state)) throw Error('Job not delivered yet');
+        if (job.state !== 'running') return reply(200, { received: true });
+        if (typeof data.ok !== 'boolean') throw Error('Result is missing its ok status');
+        let pending = completing.get(job.id);
+        if (!pending) { pending = persistCompletion(job, data); completing.set(job.id, pending); }
+        try { await pending; }
+        finally { if (completing.get(job.id) === pending) completing.delete(job.id); }
+        return reply(200, { received: true });
+      }
       reply(404, { error: 'Unknown endpoint' });
     } catch (e) { reply(400, { error: e.message }); }
   });

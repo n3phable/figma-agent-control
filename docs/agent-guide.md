@@ -4,7 +4,7 @@
 
 ## Available commands
 
-`help`, `init`, `result`, `wait`, `connect`, `status`
+`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`
 
 Run the CLI in the project working directory and use help for this revision's syntax.
 
@@ -20,3 +20,13 @@ figma-agent-control connect
 ```
 
 Keep the foreground process running. Import the returned manifest in Figma Desktop, open the bound file and run the development plugin. Use status from another terminal to inspect the connection.
+
+## Read the target
+
+```sh
+figma-agent-control inspect
+figma-agent-control preview --node 12:34
+figma-agent-control variables
+```
+
+Use the receipt's job ID to read result or continue waiting with wait.

@@ -9,8 +9,12 @@ Read the [agent guide](../../docs/agent-guide.md), [protocol](../../docs/protoco
 
 ## Commands
 
-Use `figma-agent-control help` to inspect syntax. Available commands: `help`, `init`, `result`, `wait`, `connect`, `status`.
+Use `figma-agent-control help` to inspect syntax. Available commands: `help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`.
 
 ## Connection
 
 Work in the bound project directory. Keep connect in the foreground, run the generated development plugin in its bound Figma file, and inspect status before submitting work.
+
+## Evidence
+
+Submit jobs sequentially. Read instruction and use the receipt's job ID for result or wait. Keep stdout JSON separate from stderr receipts.
