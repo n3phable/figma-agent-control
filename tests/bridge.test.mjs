@@ -292,11 +292,67 @@ test('Concurrent /job submissions yield one 202 and one 409 ACTIVE_JOB, creating
 });
 
 // -- Checkpoints and high-risk approval ------------------------------------
+test('Checkpoint accepts only a delivered run with the correct target and locks the hash after persistence', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const inspect = await b.deliver({ operation: 'inspect' });
+  assert.equal((await b.plugin('/checkpoint', { id: inspect.id, before: { id: '1:2' }, bindingVerified: verified('1:2') })).status, 400, 'Read-only tasks do not need checkpoints');
+  await b.plugin('/complete', { id: inspect.id, ok: true, output: { id: '1:2' } });
 
+  const id = await b.submit(RUN);
+  const checkpoint = { id, before: { id: '1:2', name: '\u753b\u677f' }, bindingVerified: verified('1:2') };
+  assert.equal((await b.plugin('/checkpoint', checkpoint)).status, 400, 'The task has not been delivered');
+  await b.poll();
+  for (const [name, bad] of [['Snapshot is not the target', { before: { id: '1:3' } }], ['File mismatch', { bindingVerified: { ...verified('1:2'), fileKey: 'other' } }],
+    ['Missing page', { bindingVerified: { fileKey: 'example', nodeId: '1:2' } }]])
+    assert.equal((await b.plugin('/checkpoint', { ...checkpoint, ...bad })).status, 400, name);
+  const beforeFile = path.join(b.run(id), 'before.json');
+  assert.equal(await exists(beforeFile), false);
 
+  const saved = await Promise.all([b.plugin('/checkpoint', checkpoint), b.plugin('/checkpoint', checkpoint)]);
+  assert.deepEqual(saved.map(r => [r.status, r.body.saved]), [[200, true], [200, true]]);
+  assert.equal(saved[0].body.hash, saved[1].body.hash);
+  assert.deepEqual(await json(beforeFile), checkpoint);
+  assert.equal((await b.plugin('/checkpoint', { ...checkpoint, before: { id: '1:2', name: '\u6539\u8fc7' } })).status, 400, 'A locked checkpoint cannot be overwritten');
+  assert.deepEqual(await json(beforeFile), checkpoint);
+  const repeat = await b.plugin('/checkpoint', checkpoint);
+  assert.deepEqual([repeat.status, repeat.body.hash], [200, saved[0].body.hash]);
+});
 
+test('High-risk tasks cannot checkpoint before approval; the decision binds to the script hash and is immutable', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const risky = { ...RUN, risk: { level: 'high', reason: '\u6539\u5171\u4eab\u7ec4\u4ef6' } };
+  const denied = await b.deliver(risky);
+  const checkpoint = id => ({ id, before: { id: '1:2' }, bindingVerified: verified('1:2') });
+  assert.equal((await b.plugin('/checkpoint', checkpoint(denied.id))).status, 400, 'Not approved');
+  const decide = (job, approved, extra = {}) => b.plugin('/approve', { id: job.id, scriptHash: job.scriptHash, approved, ...extra });
+  assert.equal((await decide(denied, true, { scriptHash: 'f'.repeat(64) })).status, 400, 'Script hash mismatch');
+  assert.equal((await decide(denied, 'yes')).status, 400, 'The decision must be a boolean');
+  assert.equal((await decide(denied, false)).status, 200);
+  assert.deepEqual(await json(path.join(b.run(denied.id), 'approval.json')).then(a => [a.approved, a.scriptHash]), [false, denied.scriptHash]);
+  assert.equal((await decide(denied, true)).status, 400, 'Denial cannot become approval');
+  assert.equal((await decide(denied, false)).status, 200, 'The same decision may be reported again');
+  assert.equal((await b.plugin('/checkpoint', checkpoint(denied.id))).status, 400, 'Denied scripts cannot checkpoint');
+  await b.plugin('/complete', { id: denied.id, ok: false, executionStarted: false, error: '\u7528\u6237\u62d2\u7edd' });
 
+  const allowed = await b.deliver(risky);
+  assert.equal((await decide(allowed, true)).status, 200);
+  assert.equal((await b.plugin('/checkpoint', checkpoint(allowed.id))).status, 200);
+  assert.equal((await decide(allowed, false)).status, 400, 'Approval cannot become denial');
+});
 
+test('/approve accepts only high-risk runs; ordinary runs and inspect return 400 without writing approval.json', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  for (const body of [RUN, { operation: 'inspect' }]) {
+    const job = await b.deliver(body);
+    const r = await b.plugin('/approve', { id: job.id, scriptHash: job.scriptHash, approved: true });
+    assert.equal(r.status, 400, `${body.operation} does not need approval: ${JSON.stringify(r.body)}`);
+    assert.equal(await exists(path.join(b.run(job.id), 'approval.json')), false, body.operation);
+    await b.plugin('/complete', { id: job.id, ok: false, executionStarted: false, error: '\u7ed3\u675f' });
+  }
+});
 
 // -- Completion and commit point ------------------------------------------
 test('The first result wins and repeats are idempotent; result.json commits the result but the gate stays closed until journaling completes', OPTIONS, async t => {
@@ -395,9 +451,51 @@ test('Preview images use ordinal and node names; binary placeholders become file
   assert.equal(early.after, undefined);
 });
 
+test('Visual verification persists before/after/diff images, computes pass from tolerance, and reports missing renders without changing ok', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const white = png(2, 2, WHITE), red = png(2, 2, RED), wide = png(3, 2, WHITE);
+  const cases = [
+    ['Changed pixels satisfy expect changed', { expect: 'changed' }, white, red, { pass: true, changedPixels: 4, tolerance: 0, sameSize: true }],
+    ['Changed pixels within tolerance count as unchanged', { expect: 'changed', tolerance: 4 }, white, red, { pass: false, changedPixels: 4, tolerance: 4, sameSize: true }],
+    ['Identical images satisfy expect unchanged', { expect: 'unchanged' }, white, white, { pass: true, changedPixels: 0, tolerance: 0, sameSize: true }],
+    ['Different sizes count as changed', { expect: 'unchanged' }, white, wide, { pass: false, changedPixels: 0, tolerance: 0, sameSize: false }]
+  ];
+  for (const [name, expect, beforeImage, afterImage, want] of cases) {
+    const { id, result } = await b.finish({ ...RUN, ...expect }, { ok: true, executionStarted: true, output: null, renders: { before: b64(beforeImage), after: b64(afterImage) } });
+    const { verify } = result;
+    assert.equal(result.ok, true, name);
+    assert.equal(result.renders, undefined, name);
+    assert.deepEqual({ pass: verify.pass, changedPixels: verify.changedPixels, tolerance: verify.tolerance, sameSize: verify.sameSize }, want, name);
+    assert.equal(verify.expect, expect.expect, name);
+    assert.deepEqual(verify.images, { before: 'images/render-before.png', after: 'images/render-after.png', diff: 'images/render-diff.png' }, name);
+    assert.deepEqual(await fs.readFile(path.join(b.run(id), verify.images.before)), beforeImage, name);
+    assert.deepEqual(await fs.readFile(path.join(b.run(id), verify.images.after)), afterImage, name);
+    if (verify.changedPixels) assert.deepEqual([...decodePng(await fs.readFile(path.join(b.run(id), verify.images.diff))).data.subarray(0, 4)], [255, 0, 0, 255], 'Changed pixels are red');
+  }
 
+  const missing = await b.finish({ ...RUN, expect: 'changed' }, { ok: true, executionStarted: true, output: 7 });
+  assert.deepEqual([missing.result.ok, missing.result.output], [true, 7]);
+  // Unavailable verification contains only expect, tolerance, pass:false, and error; no pixel statistics or images.
+  assert.deepEqual(missing.result.verify, { expect: 'changed', tolerance: 0, pass: false, error: missing.result.verify.error });
+  assert.match(missing.result.verify.error, /^Visual check unavailable: /);
+  assert.equal(await exists(path.join(b.run(missing.id), 'images', 'render-before.png')), false);
+  const exportFailed = await b.finish({ ...RUN, expect: 'changed' }, { ok: true, executionStarted: true, output: null, renders: { before: b64(white), error: '\u540e\u56fe\u5bfc\u51fa\u5931\u8d25\uff1a\u76ee\u6807\u5df2\u5220\u9664' } });
+  assert.match(exportFailed.result.verify.error, /\u540e\u56fe\u5bfc\u51fa\u5931\u8d25\uff1a\u76ee\u6807\u5df2\u5220\u9664/);
+  assert.equal(exportFailed.result.verify.pass, false);
+  const failedRun = await b.finish({ ...RUN, expect: 'changed' }, { ok: false, executionStarted: true, error: '\u811a\u672c\u629b\u9519', renders: { before: b64(white), after: b64(red) } });
+  assert.equal(failedRun.result.verify, undefined, 'Failed scripts skip visual verification');
+});
 
-
+test('Evidence permissions: .figma-agent-control and runs/<id> use 0700; session.json and before.json use 0600', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const job = await b.deliver(RUN);
+  assert.equal((await b.plugin('/checkpoint', { id: job.id, before: { id: '1:2' }, bindingVerified: verified('1:2') })).status, 200);
+  const mode = async file => (await fs.stat(file)).mode & 0o777;
+  assert.deepEqual({ dir: await mode(b.dir), run: await mode(b.run(job.id)), session: await mode(path.join(b.dir, 'session.json')), before: await mode(path.join(b.run(job.id), 'before.json')) },
+    { dir: 0o700, run: 0o700, session: 0o600, before: 0o600 });
+});
 
 // -- Shutdown -----------------------------------------------------------
 

@@ -255,8 +255,36 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       for await (const c of req) { size += c.length; if (size > limit) return reply(413, { error: 'Request too large' }); chunks.push(c); }
       const data = JSON.parse(Buffer.concat(chunks).toString() || 'null') ?? {};
       
-      
-      
+      if (u.pathname === '/approve') {
+        const job = jobs.get(data.id);
+        // Prior-session tasks already declared unknown cannot be approved or started again; subsequent writes would invalidate resolution evidence.
+        if (!job || job.recovered || job.state !== 'running' || job.risk?.level !== 'high' || data.scriptHash !== job.scriptHash || typeof data.approved !== 'boolean') throw Error('Invalid approval target, script or state');
+        let entry = approvals.get(job.id);
+        if (entry && entry.approved !== data.approved) throw Error('This approval is already recorded; the decision cannot be changed');
+        if (!entry) {
+          const approval = { approved: data.approved, scriptHash: job.scriptHash, bindingId: binding.id, decidedAt: new Date().toISOString(), source: 'plugin-ui' };
+          entry = { approved: data.approved, promise: save(path.join(runDir(job.id), 'approval.json'), approval).then(() => approval) };
+          approvals.set(job.id, entry);
+        }
+        try { return reply(200, await entry.promise); }
+        catch (error) { if (approvals.get(job.id) === entry) approvals.delete(job.id); throw error; }
+      }
+      if (u.pathname === '/checkpoint') {
+        // Write-ahead logging: persist the before snapshot and lock its hash before allowing script execution.
+        const job = jobs.get(data.id);
+        if (!job || job.recovered || job.state !== 'running' || job.operation !== 'run') throw Error('Only a running script job of this session can save a before-snapshot');
+        if (job.risk?.level === 'high' && (await approvals.get(job.id)?.promise)?.approved !== true) throw Error('The high-risk script has not been approved');
+        const expectedNodeId = job.targetNodeId ?? binding.nodeId;
+        if (data.before?.id !== expectedNodeId || data.bindingVerified?.nodeId !== expectedNodeId || data.bindingVerified?.fileKey !== binding.fileKey || typeof data.bindingVerified?.pageId !== 'string') throw Error('Snapshot target does not match the binding');
+        const value = { id: job.id, before: data.before, bindingVerified: data.bindingVerified };
+        const digest = hash(JSON.stringify(value));
+        let entry = checkpoints.get(job.id);
+        if (entry && entry.digest !== digest) throw Error('The before-snapshot is locked; refusing to overwrite it');
+        if (!entry) { entry = { digest, promise: save(path.join(runDir(job.id), 'before.json'), value, true) }; checkpoints.set(job.id, entry); }
+        try { await entry.promise; }
+        catch (error) { if (checkpoints.get(job.id) === entry) checkpoints.delete(job.id); throw error; }
+        return reply(200, { saved: true, hash: digest });
+      }
       if (u.pathname === '/job') {
         const candidate = buildJob(data, binding);
         if (data.requestId !== undefined) {

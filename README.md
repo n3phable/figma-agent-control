@@ -14,6 +14,7 @@ Local workspace, execution and evidence modules for Figma automation.
 - Inspect bound nodes, export previews and read local variables in the plugin.
 - Start the authenticated local bridge and inspect connection status.
 - Submit built-in reads and persist immutable job results.
+- Execute trusted scripts with approval, checkpoints and Undo boundaries.
 
 ## Install from source
 

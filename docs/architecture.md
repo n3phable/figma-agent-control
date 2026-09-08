@@ -19,3 +19,5 @@
 - **Local bridge and status:** `connect` owns the foreground bridge process and installs the generated development plugin. `src/bridge.mjs` binds port 32523 and separates CLI and plugin credentials; `src/client.mjs` is the CLI HTTP boundary. `status` exposes the session and plugin connection. Keep only one project bridge running on the machine.
 
 - **Job delivery and completion:** The bridge delivers one job at a time and saves job identity before delivery. Reusing a request ID returns the original task and rejects changed content. The first atomically persisted `result.json` wins. The CLI now submits `inspect`, `preview` and `variables`; receipts identify the job to wait for.
+
+- **Plugin script execution:** The plugin compiles a function body with `figma`, `target` and `data`, validates the target, obtains any high-risk approval, and waits for the saved before-snapshot. Target revalidation precedes the before-render export. Undo boundaries enclose script execution. Scripts receive the full Plugin API; snapshots and visual checks cover the selected target.

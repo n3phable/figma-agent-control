@@ -1,7 +1,7 @@
 /**
  * [INPUT]: Figma Plugin API and the sandbox/iframe message channel.
  * [OUTPUT]: Plugin message handling for this development stage.
- * [POS]: Figma sandbox executor for bound read operations; the original unsupported-operation branch rejects script execution in this stage.
+ * [POS]: Figma sandbox executor for bound reads and trusted writes, with approval, checkpoints and Undo boundaries.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 figma.showUI(__html__, { width: 320, height: 200, themeColors: true });
@@ -15,8 +15,32 @@ const BINARY_LIMIT = 48 * 1024 * 1024;
 const BINARY_KEY = '__figmaAgentControlBinary';
 
 // -- Approval round trips -----------------------------------------------
-
-
+function requestApproval(job, send) {
+  // Approval must become visible even when the panel is hidden; failure to show it keeps execution denied.
+  figma.ui.show();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { approvalWaiter = null; reject(Error('High-risk approval timed out; the script did not run')); }, 300000);
+    approvalWaiter = { id: job.id, channelNonce: job.channelNonce, finish(message) {
+      clearTimeout(timer); approvalWaiter = null;
+      if (message.approved === true) resolve();
+      else reject(Error('High-risk operation was not approved; the script did not run'));
+    } };
+    const source = (job.libs || []).map(lib => `// lib: ${lib.name}\n${lib.code}`).concat(job.code).join('\n\n');
+    send({ type: 'approval-request', id: job.id, reason: job.risk.reason, scriptHash: job.scriptHash, code: source,
+      binding: { ...job.binding, nodeId: job.targetNodeId ?? job.binding.nodeId } });
+  });
+}
+function saveCheckpoint(job, before, page, send) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { checkpointWaiter = null; reject(Error('Before-snapshot confirmation timed out; the script did not run')); }, 10000);
+    checkpointWaiter = { id: job.id, channelNonce: job.channelNonce, finish(message) {
+      clearTimeout(timer); checkpointWaiter = null;
+      if (message.ok === true) resolve();
+      else reject(Error('Failed to save the before-snapshot; the script did not run'));
+    } };
+    send({ type: 'checkpoint', id: job.id, before, bindingVerified: { fileKey: figma.fileKey, pageId: page.id, nodeId: before.id } });
+  });
+}
 
 // -- Snapshots ----------------------------------------------------------
 const copy = value => JSON.parse(JSON.stringify(value, (_, item) => typeof item === 'symbol' ? 'MIXED' : item));
@@ -43,7 +67,7 @@ function tree(node, maxDepth, depth = 0, budget = { count: 0 }) {
   }
   return value;
 }
-
+const isTruncated = node => node.truncated === true || (node.children || []).some(isTruncated);
 // Visibility chain above the target through its page: masks, visibility, opacity and fills explain whether writes can appear on screen (inspect only).
 function ancestry(node) {
   const chain = [];
@@ -129,7 +153,10 @@ async function localVariables(target) {
 // -- Script compilation -------------------------------------------------
 // Nest each library and the body in its own function scope: earlier libraries are outermost, with the body inside and able to call their functions directly;
 // duplicate names shadow outer declarations instead of causing redeclaration errors. Library top-level code evaluates with the body inside Undo boundaries.
-
+function compile(job) {
+  const body = (job.libs || []).reduceRight((inner, lib) => `${lib.code}\nreturn (async () => {\n${inner}\n})();`, job.code);
+  return new Function('figma', 'target', 'data', `return (async () => {\n${body}\n})();`);
+}
 
 // -- Target guidance ----------------------------------------------------
 // The panel answers whether the currently open file and page match the bound target.
@@ -183,7 +210,7 @@ figma.ui.onmessage = async job => {
     if (figma.fileKey !== job.binding.fileKey) throw Error('The current file does not match the binding');
     if (figma.editorType !== 'figma' || figma.mode !== 'default') throw Error('Run the plugin in Figma Design edit mode');
     // Compile first: syntax errors return before snapshots, approval or writes, preserving executionStarted false.
-    
+    const program = run ? compile(job) : null;
     const candidate = await figma.getNodeByIdAsync(job.targetNodeId ?? job.binding.nodeId);
     if (candidate === null && job.operation === 'inspect') {
       send({ id: job.id, ok: false, executionStarted: false, targetMissing: true, missingNodeId: job.targetNodeId ?? job.binding.nodeId, fileVerified: figma.fileKey,
@@ -210,6 +237,47 @@ figma.ui.onmessage = async job => {
         images.push({ nodeId: node.id, name: node.name, base64: await render(node, job.scale, budget) });
       }
       send({ id: job.id, ok: true, images, bindingVerified: { fileKey: figma.fileKey, pageId: page.id, nodeId: target.id } });
+      return;
+    } else if (run) {
+      if (declaredDepth === null && isTruncated(before)) throw Error('Before-snapshot truncated; the script did not run. Narrow the target with --node');
+      if (job.risk?.level === 'high') {
+        const asked = Date.now();
+        try { await requestApproval(job, send); } finally { approvalMs = Date.now() - asked; }
+      }
+      await saveCheckpoint(job, before, page, send);
+      let currentPage = target;
+      while (currentPage && currentPage.type !== 'PAGE') currentPage = currentPage.parent;
+      if (figma.fileKey !== job.binding.fileKey || target.removed || !within(target, job.binding.nodeId) || currentPage?.id !== page.id || JSON.stringify(snapshot()) !== JSON.stringify(before)) throw Error('Target changed while waiting for the snapshot; the script did not run. Run inspect again');
+      // Export the before image outside the Undo boundary. Export is read-only, and failure means the script has not executed.
+      const renders = job.expect ? { before: await render(target, job.scale, budget) } : null;
+      if (typeof figma.commitUndo !== 'function') throw Error('This environment does not support Undo boundaries; the script did not run');
+      const commitUndo = figma.commitUndo.bind(figma);
+      try { commitUndo(); undoBoundaries.before = 'committed'; }
+      catch (error) { undoBoundaries.before = 'failed'; throw error; }
+      executionStarted = true;
+      let scriptFailure;
+      try { output = await program(figma, target, job.data ?? null); }
+      catch (error) { scriptFailure = { error }; }
+      // Create history boundaries for success and partial failure alike; never trigger global Undo automatically.
+      try { commitUndo(); undoBoundaries.after = 'committed'; }
+      catch (error) {
+        undoBoundaries.after = 'failed';
+        throw Error(`${scriptFailure ? `Script error: ${String(scriptFailure.error)}; ` : ''}Failed to commit the closing Undo boundary: ${String(error)}; verify the document, do not auto-undo or replay the script`);
+      }
+      if (scriptFailure) throw scriptFailure.error;
+      // Failed after-image export does not invalidate script success: mark the visual verdict unavailable and still return output.
+      if (renders) {
+        try { if (target.removed) throw Error('Target was deleted by the script'); renders.after = await render(target, job.scale, budget); }
+        catch (error) { renders.error = String(error); }
+      }
+      // An over-budget after snapshot only makes the change set unavailable; it does not invalidate successful execution or output.
+      let after, afterError;
+      try { after = target.removed ? null : snapshot(); } catch (error) { afterError = String(error); }
+      let serialized;
+      try { serialized = serializeOutput(output, budget); }
+      catch (error) { throw String(error).includes('do not replay the script') ? error : Error('Return value cannot be converted to JSON; the script ran, check the document, do not replay the script'); }
+      send({ id: job.id, ok: true, output: serialized.output, ...(serialized.binaries.length ? { binaries: serialized.binaries } : {}), ...(renders ? { renders } : {}),
+        before, ...(afterError ? { afterError } : { after }), bindingVerified: { fileKey: figma.fileKey, pageId: page.id, nodeId: before.id }, undoBoundaries });
       return;
     } else throw Error('Unknown operation');
     send({ id: job.id, ok: true, output: serializeOutput(output, budget).output, ...(ancestors ? { ancestors } : {}), bindingVerified: { fileKey: figma.fileKey, pageId: page.id, nodeId: before.id } });
