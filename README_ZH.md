@@ -15,6 +15,7 @@
 - 启动已认证的本机桥接并查看连接状态。
 - 提交内置读取操作并持久化不可变的任务结果。
 - 通过确认、写前快照和 Undo 边界执行可信脚本。
+- 使用 run 选项提交脚本并诊断连接。
 
 ## 从源码安装
 
@@ -25,6 +26,6 @@ npm link
 figma-agent-control help
 ```
 
-`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`
+`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`, `run`, `doctor`
 
 [使用指南](docs/zh_cn/agent-guide.md) · [协议](docs/zh_cn/protocol.md) · [架构](docs/zh_cn/architecture.md) · [MIT](LICENSE)

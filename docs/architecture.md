@@ -21,3 +21,5 @@
 - **Job delivery and completion:** The bridge delivers one job at a time and saves job identity before delivery. Reusing a request ID returns the original task and rejects changed content. The first atomically persisted `result.json` wins. The CLI now submits `inspect`, `preview` and `variables`; receipts identify the job to wait for.
 
 - **Plugin script execution:** The plugin compiles a function body with `figma`, `target` and `data`, validates the target, obtains any high-risk approval, and waits for the saved before-snapshot. Target revalidation precedes the before-render export. Undo boundaries enclose script execution. Scripts receive the full Plugin API; snapshots and visual checks cover the selected target.
+
+- **Run CLI and diagnosis:** `run` accepts a script file, repeated `--lib` files, JSON `--data`, target/depth options and optional visual expectations. It prints a job receipt before waiting for evidence. `doctor` diagnoses binding, session, plugin and pending-job issues. An uncertain executed write is inspected rather than submitted again.

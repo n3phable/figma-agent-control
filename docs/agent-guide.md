@@ -4,7 +4,7 @@
 
 ## Available commands
 
-`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`
+`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`, `run`, `doctor`
 
 Run the CLI in the project working directory and use help for this revision's syntax.
 
@@ -30,3 +30,12 @@ figma-agent-control variables
 ```
 
 Use the receipt's job ID to read result or continue waiting with wait.
+
+## Submit a script
+
+```sh
+figma-agent-control doctor
+figma-agent-control run <script.js> --node 12:34
+```
+
+The script is a function body with figma, target and data. The target defines snapshot coverage; the full Plugin API remains available for the current file. Read instruction, executionStarted and the saved result before continuing.

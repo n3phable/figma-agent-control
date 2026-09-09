@@ -490,4 +490,21 @@ test('check-target identifies the bound file and explains missing targets or rea
 });
 
 // -- End to end: result.json before/after retention -------------------------
+test('result.json retains only changes on success and keeps after as evidence on post-execution failure', { timeout: 20000 }, async t => {
+  const h = await harness(t);
+  const read = async summary => JSON.parse(await fs.readFile(summary.resultFile, 'utf8'));
+  const ok = await h.run('run', await writeScript(h.cwd, 'ok.js', 'target.characters = "\u6210\u529f";'), '--node', '1:3');
+  assert.equal(ok.code, 0, JSON.stringify(ok.json));
+  const success = await read(ok.json);
+  assert.equal('after' in success, false);
+  assert.equal('before' in success, false);
+  assert.deepEqual(success.changes.nodes[0].keys, ['characters']);
 
+  const bad = await h.run('run', await writeScript(h.cwd, 'bad.js', 'target.characters = "\u90e8\u5206"; throw Error("\u4e2d\u9014");'), '--node', '1:3');
+  assert.equal(bad.code, 1);
+  const failure = await read(bad.json);
+  assert.equal(failure.executionStarted, true);
+  assert.equal(failure.after.characters, '\u90e8\u5206');
+  assert.equal('before' in failure, false);
+  assert.deepEqual(h.errors, []);
+});

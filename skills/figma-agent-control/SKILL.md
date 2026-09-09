@@ -9,7 +9,7 @@ Read the [agent guide](../../docs/agent-guide.md), [protocol](../../docs/protoco
 
 ## Commands
 
-Use `figma-agent-control help` to inspect syntax. Available commands: `help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`.
+Use `figma-agent-control help` to inspect syntax. Available commands: `help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`, `run`, `doctor`.
 
 ## Connection
 
@@ -18,3 +18,7 @@ Work in the bound project directory. Keep connect in the foreground, run the gen
 ## Evidence
 
 Submit jobs sequentially. Read instruction and use the receipt's job ID for result or wait. Keep stdout JSON separate from stderr receipts.
+
+## Scripts
+
+Choose a target covering authorized writes. Scripts receive the full Plugin API. Use local --lib files for helpers and --data for parameters; inspect the saved execution outcome before continuing after a failure.

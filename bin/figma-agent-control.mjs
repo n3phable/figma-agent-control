@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * [INPUT]: Imports node:fs/promises, node:path, ../src/project.mjs, ../src/bridge.mjs, ../src/session.mjs, ../src/args.mjs, ../src/client.mjs, ../src/record.mjs, ../src/report.mjs.
+ * [INPUT]: Imports node:fs/promises, node:path, ../src/project.mjs, ../src/bridge.mjs, ../src/session.mjs, ../src/args.mjs, ../src/client.mjs, ../src/doctor.mjs, ../src/record.mjs, ../src/report.mjs.
  * [OUTPUT]: CLI dispatch for the commands currently listed by help.
  * [POS]: CLI shell: validate arguments, dispatch a command, and emit its JSON result and exit status.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -12,7 +12,7 @@ import { start, DEFAULT_PORT } from '../src/bridge.mjs';
 import { pairingToken } from '../src/session.mjs';
 import { COMMANDS, parse } from '../src/args.mjs';
 import { call } from '../src/client.mjs';
-
+import { doctor } from '../src/doctor.mjs';
 import { localResult, summarizeRecord, exitCode, waitForResult } from '../src/record.mjs';
 
 import { report } from '../src/report.mjs';
@@ -21,13 +21,21 @@ const cwd = process.cwd();
 const out = value => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
 const HELP = {
   commands: Object.values(COMMANDS).map(c => c.usage),
+  script: 'run executes a trusted JavaScript function body with figma, target (the --node node, or the bound node by default), and data (JSON from --data). Use return for output; exportAsync bytes returned directly are saved as files. Mark nodes with setSharedPluginData("figmaagentcontrol", key, value); setPluginData is unavailable because the manifest has no Figma-assigned plugin ID',
+  lib: '--lib is repeatable: each library executes in a separate enclosing scope, and the body can call its functions directly; same-name declarations shadow outer scopes without conflicts',
+  expect: '--expect changed|unchanged: export the target once before and once after the script and compare them to check whether the write changed the rendering; --tolerance sets the number of changed pixels allowed',
   output: 'Submission commands wait by default and print a compact summary; --no-wait only submits, and --full prints the complete record',
   exitCodes: { 0: 'success', 1: 'failure, failed visual verification, or a reviewed result that remains unknown', 2: 'not complete (wait expired or review pending; for stop, the bridge is still finishing shutdown, so check status later)' }
 };
 
 async function submit(command, [file], o) {
   const body = { operation: command, targetNodeId: o.targetNodeId, nodes: o.nodes, snapshotDepth: o.snapshotDepth, scale: o.scale, risk: o.risk, requestId: o.requestId, expect: o.expect, tolerance: o.tolerance };
-  
+  if (command === 'run') {
+    body.code = await fs.readFile(path.resolve(file), 'utf8');
+    body.label = path.basename(file);
+    if (o.libFiles) body.libs = await Promise.all(o.libFiles.map(async lib => ({ name: path.basename(lib), code: await fs.readFile(path.resolve(lib), 'utf8') })));
+    if (o.dataFile) body.data = await json(path.resolve(o.dataFile));
+  }
   const { ok, data } = await call(cwd, '/job', body);
   if (!ok || o.noWait) { out(data); return ok ? 0 : 1; }
   // Write the task ID to stderr first so an agent can wait on the same task after an external timeout, without resubmitting it.
@@ -54,6 +62,7 @@ try {
     process.once('SIGINT', close); process.once('SIGTERM', close);
   }
   else if (command === 'status') { const { ok, data } = await call(cwd, '/status'); out(data); if (!ok) process.exitCode = 1; }
+  else if (command === 'doctor') { const result = await doctor(cwd); out(result); if (!result.ready) process.exitCode = 1; }
   else if (COMMANDS[command].submit) process.exitCode = await submit(command, positionals, o);
   else if (command === 'result') { const record = await localResult(cwd, positionals[0]); out(o.full ? record : summarizeRecord(record)); process.exitCode = exitCode(record); }
   else if (command === 'wait') { const record = await waitForResult(cwd, positionals[0], o.timeoutSeconds); out(o.full ? record : summarizeRecord(record)); process.exitCode = exitCode(record); }
