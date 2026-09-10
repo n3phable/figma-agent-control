@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * [INPUT]: Imports node:fs/promises, node:path, ../src/project.mjs, ../src/bridge.mjs, ../src/session.mjs, ../src/args.mjs, ../src/client.mjs, ../src/doctor.mjs, ../src/record.mjs, ../src/report.mjs.
- * [OUTPUT]: CLI dispatch for the commands currently listed by help.
+ * [INPUT]: Imports node:fs/promises, node:path, ../src/project.mjs, ../src/bridge.mjs, ../src/session.mjs, ../src/args.mjs, ../src/client.mjs, ../src/doctor.mjs, ../src/record.mjs, ../src/image-diff.mjs, ../src/report.mjs.
+ * [OUTPUT]: Plugin task handling and serialized results.
  * [POS]: CLI shell: validate arguments, dispatch a command, and emit its JSON result and exit status.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -14,7 +14,7 @@ import { COMMANDS, parse } from '../src/args.mjs';
 import { call, stop } from '../src/client.mjs';
 import { doctor } from '../src/doctor.mjs';
 import { localResult, summarizeRecord, exitCode, waitForResult } from '../src/record.mjs';
-
+import { imageDiff } from '../src/image-diff.mjs';
 import { report } from '../src/report.mjs';
 
 const cwd = process.cwd();
@@ -71,4 +71,6 @@ try {
     const { ok, data } = await call(cwd, '/resolve', { id: positionals[0], inspectId: o.inspectId, previousPluginStopped: true });
     out(data); if (!ok) process.exitCode = 1;
   }
+  else if (command === 'image-diff') { const diff = await imageDiff(cwd, positionals, o); out(diff); if (diff.expectation === 'failed') process.exitCode = 1; }
+  else if (command === 'report') out(await report(cwd, o.since ? { since: o.since } : {}));
 } catch (error) { out({ error: error.message, code: error.code || 'COMMAND_FAILED' }); process.exitCode = 1; }

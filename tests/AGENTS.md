@@ -13,6 +13,7 @@ Behavioral tests for the implementation in this revision.
 - `plugin.test.mjs`: Tests for plugin behavior in this revision.
 - `project-session.test.mjs`: Tests for project session behavior in this revision.
 - `record.test.mjs`: Tests for record behavior in this revision.
+- `smoke.test.mjs`: Tests for smoke behavior in this revision.
 - `ui.test.mjs`: Tests for ui behavior in this revision.
 
 ## Contract maintenance

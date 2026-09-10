@@ -1,6 +1,6 @@
 /**
- * [INPUT]: Figma Plugin API and the sandbox/iframe message channel.
- * [OUTPUT]: Plugin message handling for this development stage.
+ * [INPUT]: Figma Plugin API, bridge configuration and the sandbox/iframe message channel.
+ * [OUTPUT]: Plugin task handling and serialized results.
  * [POS]: Figma sandbox executor for bound reads and trusted writes, with approval, checkpoints and Undo boundaries.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */

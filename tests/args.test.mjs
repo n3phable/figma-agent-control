@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:util, ../src/args.mjs, ./helpers/harness.mjs.
- * [OUTPUT]: Selected original node:test cases and their unchanged fixture setup.
+ * [OUTPUT]: Node.js test cases and fixture setup for this revision.
  * [POS]: Regression coverage for args; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -28,7 +28,15 @@ const opts = (...argv) => parse(argv).options;
 
 // -- Positional arguments ------------------------------------------------
 
-
+test('Each command enforces positional argument bounds and reports its own usage', () => {
+  for (const [cmd, pos] of Object.entries(POSITIONALS)) {
+    const flags = FLAGS[cmd] ?? [];
+    const ok = parse([cmd, ...pos, ...flags]);
+    assert.deepEqual([ok.command, ok.positionals], [cmd, pos], cmd);
+    assert.throws(() => parse([cmd, ...pos, 'extra', ...flags]), usageOf(cmd), cmd + ' extra argument');
+    if (pos.length) assert.throws(() => parse([cmd, ...pos.slice(1), ...flags]), usageOf(cmd), cmd + ' missing argument');
+  }
+});
 
 // ── help ────────────────────────────────────────────────────────────────
 
@@ -40,7 +48,14 @@ test('Empty arguments, --help, and -h anywhere select help before other validati
 
 // -- Unknown commands and options -----------------------------------------
 
-
+test('Unknown commands point to help; unknown, disallowed, or valueless options include command usage', () => {
+  assert.throws(() => parse(['bogus']), /Unknown command: bogus.*figma-agent-control help/);
+  for (const [cmd, ...rest] of [
+    ['run', 'a.js', '--bogus'], ['status', '--node', '1:2'], ['inspect', '--high-risk', '\u98ce\u9669'], ['inspect', '--expect', 'changed'],
+    ['preview', '--depth', '1'], ['run', 'a.js', '--threshold', '3'], ['image-diff', 'a.png', 'b.png', '--tolerance', '3'],
+    ['wait', ID, '--no-wait'], ['run', 'a.js', '--high-risk'], ['run', 'a.js', '--high-risk', '--node', '1:2'], ['inspect', '--node'],
+  ]) assert.throws(() => parse([cmd, ...rest]), ({ message }) => message.startsWith('Invalid arguments') && message.endsWith('; usage: ' + COMMANDS[cmd].usage), rest.join(' '));
+});
 
 test('Commands named after Object prototype properties are still unknown commands', () => {
   for (const name of ['toString', 'constructor', '__proto__']) assert.throws(() => parse([name]), /Unknown command/, name);
@@ -78,7 +93,13 @@ test('--depth accepts only integers from 1 to 31', () => {
     assert.throws(() => parse(['inspect', `--depth=${bad}`]), /--depth must be an integer 1-31/, bad);
 });
 
-
+test('image-diff --threshold accepts only integers from 0 to 255, including with --expect', () => {
+  assert.deepEqual(opts('image-diff', 'a.png', 'b.png', '--threshold', '0', '--expect', 'unchanged'), { threshold: 0, expect: 'unchanged' });
+  assert.equal(opts('image-diff', 'a.png', 'b.png', '--threshold', '255').threshold, 255);
+  for (const bad of ['256', '-1', '1.5', 'x'])
+    assert.throws(() => parse(['image-diff', 'a.png', 'b.png', `--threshold=${bad}`]), /--threshold must be an integer 0-255/, bad);
+  assert.throws(() => parse(['image-diff', 'a.png', 'b.png', '--expect', 'same']), /--expect accepts only/);
+});
 
 test('--scale ranges from 0.1 to 4; run requires --expect, while preview accepts it directly', () => {
   assert.equal(opts('preview', '--scale', '0.1').scale, 0.1);
@@ -131,9 +152,15 @@ test('resolve requires both --inspect and --previous-plugin-stopped, with UUIDs 
 
 // ── report ──────────────────────────────────────────────────────────────
 
+test('report normalizes --since to UTC ISO time and rejects invalid times', () => {
+  assert.equal(opts('report', '--since', '2026-10-01T08:00:00+08:00').since, '2026-10-01T00:00:00.000Z');
+  for (const bad of ['yesterday', '2026-13-01', '2026-02-30', '2026-04-31T00:00Z']) assert.throws(() => parse(['report', '--since', bad]), /--since needs an ISO time/, bad);
+  assert.deepEqual(opts('report'), {});
+});
 
-
-
+test('report --since rejects non-ISO input without guessing the local timezone', () => {
+  for (const bad of ['1', 'Oct 1 2026']) assert.throws(() => parse(['report', '--since', bad]), /--since needs an ISO time/, bad);
+});
 
 // -- CLI subprocesses -----------------------------------------------------
 
@@ -148,7 +175,14 @@ async function cli(cwd, ...args) {
   catch (error) { return { code: error.code, json: JSON.parse(error.stdout) }; }
 }
 
-
+test('CLI help returns one JSON listing all commands and exit codes; -h anywhere returns the same output', async t => {
+  const cwd = await tmp(t);
+  const [help, inline] = await Promise.all([cli(cwd, 'help'), cli(cwd, 'run', 'x.js', '--node', 'bad', '-h')]);
+  assert.equal(help.code, 0);
+  assert.deepEqual(help.json.commands.map(u => u.split(/[\s:]/)[0]).sort(), Object.keys(POSITIONALS).sort());
+  assert.deepEqual(Object.keys(help.json.exitCodes), ['0', '1', '2']);
+  assert.deepEqual(inline, help);
+});
 
 test('CLI argument errors return one {error, code} JSON and exit 1 before any filesystem access', async t => {
   const cwd = await tmp(t);

@@ -26,7 +26,10 @@ export const COMMANDS = {
   result: { usage: 'result <job-id> [--full]: read local evidence', positionals: [1, 1], options: { full: { type: 'boolean' } } },
   wait: { usage: 'wait <job-id> [--timeout <seconds>] [--full]: wait for the original result without resubmitting', positionals: [1, 1], options: { timeout: { type: 'string' }, full: { type: 'boolean' } } },
   resolve: { usage: 'resolve <original-job-id> --inspect <inspect-job-id> --previous-plugin-stopped: after verification, end the unresolved wait without replaying the script', positionals: [1, 1],
-    options: { inspect: { type: 'string' }, 'previous-plugin-stopped': { type: 'boolean' } } }
+    options: { inspect: { type: 'string' }, 'previous-plugin-stopped': { type: 'boolean' } } },
+  'image-diff': { usage: 'image-diff <before.png|preview-job-id> <after.png|preview-job-id> [--threshold <0-255>] [--expect changed|unchanged]', positionals: [2, 2],
+    options: { threshold: { type: 'string' }, expect: { type: 'string' } } },
+  report: { usage: 'report [--since <ISO-time>]: summary of job durations, gaps and repeated runs (default: last 24 hours; a date alone means UTC midnight)', positionals: [0, 0], options: { since: { type: 'string' } } },
 };
 
 const integer = (value, min, max, message) => {

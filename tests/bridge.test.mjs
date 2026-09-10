@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:fs, node:os, node:path, node:net, node:crypto, node:child_process, node:timers/promises, node:url, ../src/bridge.mjs, ../src/project.mjs, ../src/session.mjs, ../src/png.mjs.
- * [OUTPUT]: Selected original node:test cases and their unchanged fixture setup.
+ * [OUTPUT]: Node.js test cases and fixture setup for this revision.
  * [POS]: Regression coverage for bridge; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */

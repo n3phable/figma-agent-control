@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:crypto, ../src/project.mjs, ../src/bridge.mjs, ../src/record.mjs, ../src/report.mjs.
- * [OUTPUT]: Selected original node:test cases and their unchanged fixture setup.
+ * [OUTPUT]: Node.js test cases and fixture setup for this revision.
  * [POS]: Regression coverage for record; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */

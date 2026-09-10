@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:fs, node:os, node:path, ../src/project.mjs, ../src/session.mjs, ../src/connection.mjs, ../src/bridge.mjs.
- * [OUTPUT]: Selected original node:test cases and their unchanged fixture setup.
+ * [OUTPUT]: Node.js test cases and fixture setup for this revision.
  * [POS]: Regression coverage for project session; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */

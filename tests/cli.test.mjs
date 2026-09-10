@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:net, node:path, node:vm, node:crypto, node:child_process, node:util, node:timers/promises, ./helpers/harness.mjs, ../src/bridge.mjs, ../src/project.mjs, ../src/session.mjs, ../src/png.mjs.
- * [OUTPUT]: Selected original node:test cases and their unchanged fixture setup.
+ * [OUTPUT]: Node.js test cases and fixture setup for this revision.
  * [POS]: Regression coverage for cli; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -547,7 +547,55 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
   });
 
   // -- Offline tools --------------------------------------------------------
-  
+  test('image-diff accepts files or single-image preview tasks, rejects multi-image tasks, exits 1 when expect changed sees no change, and writes project diffs/', async t => {
+    const h = await harness(t);
+    const png = (name, pixels) => fs.writeFile(path.join(h.cwd, name), encodePng(2, 2, Uint8Array.from(pixels.flat())));
+    const white = [255, 255, 255, 255], black = [0, 0, 0, 255], blue = [0, 0, 255, 255];
+    await Promise.all([png('a.png', [white, white, white, white]), png('b.png', [white, white, white, black]), png('blue.png', [blue, blue, blue, blue])]);
 
-  
+    const diff = await h.cli('image-diff', 'a.png', 'b.png');
+    assert.equal(diff.code, 0, JSON.stringify(diff.json));
+    assert.deepEqual([diff.json.changed, diff.json.changedPixels, diff.json.changedBounds], [true, 1, { x: 1, y: 1, width: 1, height: 1 }]);
+    assert.equal(path.dirname(diff.json.diffImage), path.join(root(await fs.realpath(h.cwd)), 'diffs'));
+    // The changed lower-right pixel is red in the diff.
+    assert.deepEqual([...decodePng(await fs.readFile(diff.json.diffImage)).data.subarray(12, 16)], [255, 0, 0, 255]);
+
+    const same = await h.cli('image-diff', 'a.png', 'a.png', '--expect', 'changed');
+    assert.deepEqual([same.code, same.json.changed, same.json.expectation], [1, false, 'failed']);
+    assert.match(same.json.hint, /rendering did not change/);
+
+    const single = await h.run('preview', '--node', '1:4');
+    const fromJob = await h.cli('image-diff', single.json.id, 'blue.png', '--expect', 'unchanged');
+    assert.equal(fromJob.code, 0, JSON.stringify(fromJob.json));
+    assert.deepEqual([fromJob.json.changed, fromJob.json.beforeFile], [false, single.json.images[0].file]);
+
+    const batch = await h.run('preview', '--node', '1:3', '--node', '1:4');
+    const refused = await h.cli('image-diff', batch.json.id, 'blue.png');
+    assert.equal(refused.code, 1);
+    assert.match(refused.json.error, /single-image preview/);
+  });
+
+  test('report --since counts tasks, durations, and repeated execution of the same script on the same target within the window', async t => {
+    const h = await harness(t);
+    const since = new Date().toISOString();
+    const bump = await writeScript(h.cwd, 'bump.js', 'target.characters += "+";');
+    await h.run('run', bump, '--node', '1:3');
+    await h.run('run', bump, '--node', '1:3');
+    await h.run('inspect', '--node', '1:2');
+    // Start the window at the second persisted task's createdAt without depending on wall-clock or directory-mtime precision.
+    const created = (await Promise.all((await fs.readdir(runsDir(h.cwd))).map(id => json(path.join(runsDir(h.cwd), id, 'job.json'))))).map(job => job.createdAt).sort();
+    const mid = created[1];
+
+    const all = await h.cli('report', '--since', since);
+    assert.equal(all.code, 0);
+    assert.deepEqual([all.json.jobs.count, all.json.jobs.byOperation, all.json.jobs.failed], [3, { run: 2, inspect: 1 }, 0]);
+    assert.deepEqual(all.json.repeats.map(r => [r.label, r.target, r.count]), [['bump.js', '1:3', 2]]);
+    assert.deepEqual([all.json.timing.total.count, all.json.timing.queue.count, all.json.timing.plugin.count], [3, 3, 3]);
+    const journals = await Promise.all((await fs.readdir(runsDir(h.cwd))).map(id => json(path.join(runsDir(h.cwd), id, 'job.json'))));
+    assert.equal(all.json.timing.total.sumMs, journals.reduce((sum, job) => sum + Date.parse(job.finishedAt) - Date.parse(job.createdAt), 0));
+
+    const later = await h.cli('report', '--since', mid);
+    assert.equal(later.json.jobs.count, 2);
+    assert.deepEqual(later.json.repeats, []);
+  });
 });
