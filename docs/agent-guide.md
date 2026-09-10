@@ -4,7 +4,7 @@
 
 ## Available commands
 
-`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`, `run`, `doctor`
+`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`, `run`, `doctor`, `stop`, `resolve`
 
 Run the CLI in the project working directory and use help for this revision's syntax.
 
@@ -39,3 +39,7 @@ figma-agent-control run <script.js> --node 12:34
 ```
 
 The script is a function body with figma, target and data. The target defines snapshot coverage; the full Plugin API remains available for the current file. Read instruction, executionStarted and the saved result before continuing.
+
+## Stop and recover
+
+`stop` shuts down the local bridge and preserves outstanding evidence. Delivered writes without a result block later writes. Stop the previous plugin, inspect the original target in the current session, then use `resolve <job-id> --inspect <inspect-id> --previous-plugin-stopped`. Resolution records the review without undoing edits or inventing a successful result.

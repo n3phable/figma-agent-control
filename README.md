@@ -16,6 +16,7 @@ Local workspace, execution and evidence modules for Figma automation.
 - Submit built-in reads and persist immutable job results.
 - Execute trusted scripts with approval, checkpoints and Undo boundaries.
 - Submit scripts with run options and diagnose the connection.
+- Stop owned bridges and resolve inspected unknown writes.
 
 ## Install from source
 
@@ -26,6 +27,6 @@ npm link
 figma-agent-control help
 ```
 
-`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`, `run`, `doctor`
+`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`, `run`, `doctor`, `stop`, `resolve`
 
 [Agent guide](docs/agent-guide.md) · [Protocol](docs/protocol.md) · [Architecture](docs/architecture.md) · [MIT](LICENSE)

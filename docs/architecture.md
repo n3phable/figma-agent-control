@@ -23,3 +23,5 @@
 - **Plugin script execution:** The plugin compiles a function body with `figma`, `target` and `data`, validates the target, obtains any high-risk approval, and waits for the saved before-snapshot. Target revalidation precedes the before-render export. Undo boundaries enclose script execution. Scripts receive the full Plugin API; snapshots and visual checks cover the selected target.
 
 - **Run CLI and diagnosis:** `run` accepts a script file, repeated `--lib` files, JSON `--data`, target/depth options and optional visual expectations. It prints a job receipt before waiting for evidence. `doctor` diagnoses binding, session, plugin and pending-job issues. An uncertain executed write is inspected rather than submitted again.
+
+- **Shutdown and unknown writes:** `stop` shuts down the local bridge and preserves outstanding evidence. Delivered writes without a result block later writes. Stop the previous plugin, inspect the original target in the current session, then use `resolve <job-id> --inspect <inspect-id> --previous-plugin-stopped`. Resolution records the review without undoing edits or inventing a successful result.

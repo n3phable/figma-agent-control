@@ -123,7 +123,11 @@ test('run validates UUID --request-id and nonempty --high-risk reasons, and pres
 
 // ── resolve ─────────────────────────────────────────────────────────────
 
-
+test('resolve requires both --inspect and --previous-plugin-stopped, with UUIDs for both task IDs', () => {
+  assert.deepEqual(opts('resolve', ID, '--inspect', ID2, '--previous-plugin-stopped'), { inspectId: ID2, previousPluginStopped: true });
+  for (const argv of [[ID, '--previous-plugin-stopped'], [ID, '--inspect', ID2], [ID, '--inspect', 'abc', '--previous-plugin-stopped'], ['abc', '--inspect', ID2, '--previous-plugin-stopped']])
+    assert.throws(() => parse(['resolve', ...argv]), ({ message }) => message.startsWith('Usage: resolve') && message.includes('first confirm the previous plugin has stopped'), argv.join(' '));
+});
 
 // ── report ──────────────────────────────────────────────────────────────
 

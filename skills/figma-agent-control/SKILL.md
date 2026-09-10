@@ -9,7 +9,7 @@ Read the [agent guide](../../docs/agent-guide.md), [protocol](../../docs/protoco
 
 ## Commands
 
-Use `figma-agent-control help` to inspect syntax. Available commands: `help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`, `run`, `doctor`.
+Use `figma-agent-control help` to inspect syntax. Available commands: `help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`, `run`, `doctor`, `stop`, `resolve`.
 
 ## Connection
 
@@ -22,3 +22,7 @@ Submit jobs sequentially. Read instruction and use the receipt's job ID for resu
 ## Scripts
 
 Choose a target covering authorized writes. Scripts receive the full Plugin API. Use local --lib files for helpers and --data for parameters; inspect the saved execution outcome before continuing after a failure.
+
+## Unknown writes
+
+Stop the previous plugin, inspect the original target in the current session, then resolve the original job with that inspection and --previous-plugin-stopped. Stop a bridge you started when its work is complete.

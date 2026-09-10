@@ -254,7 +254,14 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       const limit = (u.pathname === '/complete' ? 72 : 16) * 1024 * 1024;
       for await (const c of req) { size += c.length; if (size > limit) return reply(413, { error: 'Request too large' }); chunks.push(c); }
       const data = JSON.parse(Buffer.concat(chunks).toString() || 'null') ?? {};
-      
+      if (u.pathname === '/shutdown') {
+        if (typeof data.force !== 'boolean') throw Error('shutdown requires a boolean force');
+        if (active && !data.force) return reply(409, { code: 'ACTIVE_JOB', error: `A job is unfinished (queued or running); wait for it first (figma-agent-control wait ${active}); add --force only if you must interrupt it`, active });
+        stopping = true;
+        // Finish the response before closing, since close cuts every connection. Premature client disconnect also emits close.
+        res.once('close', () => { void close(); });
+        return reply(202, { stopping: true, sessionId, pid: process.pid, active, unresolved: [...unresolved] });
+      }
       if (u.pathname === '/approve') {
         const job = jobs.get(data.id);
         // Prior-session tasks already declared unknown cannot be approved or started again; subsequent writes would invalidate resolution evidence.
@@ -316,7 +323,21 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
         wakePolls();
         return reply(202, { id: candidate.id, state: 'queued', evidence: runDir(candidate.id) });
       }
-      
+      if (u.pathname === '/resolve') {
+        // Resolve unknown writes only with a current-session inspect of the original target. The original result remains unknown; never replay or undo it.
+        const job = jobs.get(data.id), review = jobs.get(data.inspectId);
+        if (!job || !unresolved.has(job.id) || data.previousPluginStopped !== true) throw Error('Confirm the previous plugin has stopped and provide the current unresolved job');
+        if (active || !connection.connected || !review || review.recovered === true || review.operation !== 'inspect' || !['done', 'failed'].includes(review.state)) throw Error('Complete an independent inspect in the current session first');
+        const reviewTarget = review.targetNodeId ?? binding.nodeId, reviewed = await optional(path.join(runDir(review.id), 'result.json'));
+        const targetRead = reviewed?.ok === true && reviewed.output?.id === reviewTarget && reviewed.bindingVerified?.fileKey === binding.fileKey && reviewed.bindingVerified?.nodeId === reviewTarget;
+        const targetMissing = reviewed?.ok === false && reviewed.executionStarted === false && reviewed.targetMissing === true && reviewed.missingNodeId === reviewTarget && reviewed.fileVerified === binding.fileKey;
+        if (reviewTarget !== (job.targetNodeId ?? binding.nodeId) || (!targetRead && !targetMissing)) throw Error('Verification must query the original job\'s target directly; a parent page snapshot or a generic error does not count');
+        const resolution = { id: job.id, bindingId: binding.id, inspectId: review.id, status: 'reviewed-without-replay', previousPluginStopped: true, targetMissing,
+          reviewedAt: new Date().toISOString(), instruction: 'Checked the current document and ended the wait; the original job\'s outcome stays unresolved; it was neither replayed nor undone' };
+        await save(path.join(runDir(job.id), 'resolution.json'), resolution);
+        unresolved.delete(job.id);
+        return reply(200, resolution);
+      }
       if (u.pathname === '/complete') {
         // Persist late results from prior sessions: they provide stronger evidence than unknown and clear unresolved state after persistence.
         // Completed tasks are absent from memory after restart. Acknowledge repeated results idempotently when an earlier response was lost, preventing endless plugin uploads.

@@ -11,7 +11,7 @@ import { init, json, pluginHome, installPlugin } from '../src/project.mjs';
 import { start, DEFAULT_PORT } from '../src/bridge.mjs';
 import { pairingToken } from '../src/session.mjs';
 import { COMMANDS, parse } from '../src/args.mjs';
-import { call } from '../src/client.mjs';
+import { call, stop } from '../src/client.mjs';
 import { doctor } from '../src/doctor.mjs';
 import { localResult, summarizeRecord, exitCode, waitForResult } from '../src/record.mjs';
 
@@ -61,9 +61,14 @@ try {
     const close = () => { void bridge.close(); };
     process.once('SIGINT', close); process.once('SIGTERM', close);
   }
+  else if (command === 'stop') { const { exitCode: code, ...result } = await stop(cwd, o.force === true); out(result); process.exitCode = code; }
   else if (command === 'status') { const { ok, data } = await call(cwd, '/status'); out(data); if (!ok) process.exitCode = 1; }
   else if (command === 'doctor') { const result = await doctor(cwd); out(result); if (!result.ready) process.exitCode = 1; }
   else if (COMMANDS[command].submit) process.exitCode = await submit(command, positionals, o);
   else if (command === 'result') { const record = await localResult(cwd, positionals[0]); out(o.full ? record : summarizeRecord(record)); process.exitCode = exitCode(record); }
   else if (command === 'wait') { const record = await waitForResult(cwd, positionals[0], o.timeoutSeconds); out(o.full ? record : summarizeRecord(record)); process.exitCode = exitCode(record); }
+  else if (command === 'resolve') {
+    const { ok, data } = await call(cwd, '/resolve', { id: positionals[0], inspectId: o.inspectId, previousPluginStopped: true });
+    out(data); if (!ok) process.exitCode = 1;
+  }
 } catch (error) { out({ error: error.message, code: error.code || 'COMMAND_FAILED' }); process.exitCode = 1; }

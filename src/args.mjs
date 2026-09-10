@@ -14,6 +14,7 @@ export const COMMANDS = {
   help: { usage: 'help', positionals: [0, 0], options: {} },
   init: { usage: 'init <figma-url>: bind the current directory to a scope node in one file', positionals: [1, 1], options: {} },
   connect: { usage: 'connect: start the local bridge in the foreground (stop with Ctrl-C or stop)', positionals: [0, 0], options: {} },
+  stop: { usage: 'stop [--force]: stop only the local bridge process; does not modify the Figma document or affect cloud sync; requires --force while a job is unfinished (queued or running); exit code 2 if still shutting down after about 5 s, confirm later with status', positionals: [0, 0], options: { force: { type: 'boolean' } } },
   status: { usage: 'status: live status of the bridge and plugin', positionals: [0, 0], options: {} },
   doctor: { usage: 'doctor: diagnose binding, session, lock, plugin files, and connection in order', positionals: [0, 0], options: {} },
   run: { usage: 'run <script.js> [--node <ID>] [--lib <file.js>]... [--data <file.json>] [--depth <1-31>] [--expect changed|unchanged] [--tolerance <pixels>] [--scale <0.1-4>] [--request-id <uuid>] [--high-risk <reason>] [--timeout <seconds>] [--no-wait] [--full]',
@@ -23,7 +24,9 @@ export const COMMANDS = {
   preview: { usage: 'preview [--node <ID>]... [--scale <0.1-4>]: export PNG; repeat --node for batch export', positionals: [0, 0], submit: true, options: { node: { type: 'string', multiple: true }, scale: { type: 'string' }, ...wait } },
   variables: { usage: 'variables [--node <ID>]: local variable catalog and binding counts within the target', positionals: [0, 0], submit: true, options: { ...node, ...wait } },
   result: { usage: 'result <job-id> [--full]: read local evidence', positionals: [1, 1], options: { full: { type: 'boolean' } } },
-  wait: { usage: 'wait <job-id> [--timeout <seconds>] [--full]: wait for the original result without resubmitting', positionals: [1, 1], options: { timeout: { type: 'string' }, full: { type: 'boolean' } } }
+  wait: { usage: 'wait <job-id> [--timeout <seconds>] [--full]: wait for the original result without resubmitting', positionals: [1, 1], options: { timeout: { type: 'string' }, full: { type: 'boolean' } } },
+  resolve: { usage: 'resolve <original-job-id> --inspect <inspect-job-id> --previous-plugin-stopped: after verification, end the unresolved wait without replaying the script', positionals: [1, 1],
+    options: { inspect: { type: 'string' }, 'previous-plugin-stopped': { type: 'boolean' } } }
 };
 
 const integer = (value, min, max, message) => {

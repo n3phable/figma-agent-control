@@ -116,7 +116,50 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     assert.equal(run.json.output?.omitted, true, `Output was not omitted (${Buffer.byteLength(JSON.stringify(run.json.output))} bytes)`);
   });
 
-  
+  test('--no-wait only submits; stop rejects active work, wait retrieves results, later stop releases the lock, and result reads evidence offline', async t => {
+    const h = await harness(t);
+    const dir = root(h.cwd), sessionFile = path.join(dir, 'session.json'), lockFile = path.join(dir, 'bridge.lock');
+    const session = await json(sessionFile);
+    const ready = await h.cli('doctor');
+    assert.equal(ready.code, 0);
+    assert.equal(ready.json.ready, true);
+    assert.deepEqual(ready.json.checks.map(c => [c.code, c.status]),
+      [['NODE_VERSION', 'ok'], ['BINDING', 'ok'], ['SESSION', 'ok'], ['LOCK', 'ok'], ['PLUGIN_FILES', 'ok'], ['BRIDGE', 'ok'], ['PLUGIN_CONNECTION', 'ok']]);
+    assert.equal(JSON.stringify(ready.json).includes(session.token), false);
+
+    await h.pause();
+    const queued = await h.cli('run', await writeScript(h.cwd, 'append.js', APPEND), '--node', '1:3', '--no-wait');
+    assert.equal(queued.code, 0);
+    const id = queued.json.id;
+    assert.deepEqual([queued.json.state, queued.json.evidence], ['queued', path.join(runsDir(h.cwd), id)]);
+
+    const busy = await h.cli('doctor');
+    const active = busy.json.checks.find(c => c.code === 'ACTIVE_JOB');
+    assert.equal(active?.status, 'warning');
+    assert.ok(active.message.includes(id));
+    assert.match(active.action, /wait/);
+    assert.match(active.message, /is queued/, 'An undelivered task must not be reported as executing');
+    assert.ok(active.action.includes(id));
+
+    const refused = await h.cli('stop');
+    assert.equal(refused.code, 1);
+    assert.deepEqual([refused.json.bridge, refused.json.code, refused.json.active], ['running', 'ACTIVE_JOB', id]);
+    assert.equal(await exists(lockFile), true);
+
+    const waited = await h.run('wait', id);
+    assert.equal(waited.code, 0);
+    assert.deepEqual([waited.json.waitStatus, waited.json.output], ['completed', '\u539f\u6587+']);
+
+    const stopped = await h.cli('stop');
+    assert.equal(stopped.code, 0, JSON.stringify(stopped.json));
+    assert.deepEqual([stopped.json.bridge, stopped.json.sessionId], ['stopped', session.sessionId]);
+    assert.deepEqual([await exists(lockFile), await exists(sessionFile)], [false, false]);
+
+    const offline = await h.cli('result', id);
+    assert.equal(offline.code, 0);
+    assert.deepEqual([offline.json.ok, offline.json.output, offline.json.journalComplete], [true, '\u539f\u6587+', true]);
+    assert.equal(h.doc.text.characters, '\u539f\u6587+');
+  });
 
   test('--timeout expires with exit 2 without resubmitting, then wait retrieves the same task result', async t => {
     const h = await harness(t);
@@ -270,9 +313,87 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
   });
 
   // -- Writes with unknown results ------------------------------------------
-  
+  test('Forced stop during execution requires review after restart and blocks run; inspect the original target then resolve without replay or undo', async t => {
+    const h = await harness(t);
+    const started = Promise.withResolvers();
+    // Suspend after a write so the plugin is still executing when the bridge stops.
+    h.figma.hold = () => { started.resolve(); return new Promise(() => {}); };
+    const queued = await h.cli('run', await writeScript(h.cwd, 'hang.js', 'target.characters += "+"; await figma.hold(); return "\u4e0d\u4f1a\u5230\u8fbe";'), '--node', '1:3', '--no-wait');
+    const id = queued.json.id;
+    await h.tick();
+    await started.promise;
 
-  
+    const stopped = await h.cli('stop', '--force');
+    assert.equal(stopped.code, 0, JSON.stringify(stopped.json));
+    assert.deepEqual([stopped.json.bridge, stopped.json.activeJob], ['stopped', id]);
+
+    const bridge = await start(h.cwd, 0, { pollHoldMs: 50, pluginToken: await pairingToken(h.home) });
+    t.after(() => bridge.close().catch(() => {}));
+    const plugin = await reopenPlugin(bridge, h);
+    assert.deepEqual((await h.cli('status')).json.unresolved, [id]);
+    const pending = await h.cli('wait', id);
+    assert.equal(pending.code, 2);
+    assert.deepEqual([pending.json.waitStatus, pending.json.recovery], ['needs-review', 'unknown-after-disconnect']);
+    const diagnosis = await h.cli('doctor');
+    assert.deepEqual([diagnosis.code, diagnosis.json.ready], [1, false]);
+    assert.match(diagnosis.json.checks.find(c => c.code === 'UNRESOLVED_JOB')?.action ?? '', /resolve/);
+
+    const reader = await writeScript(h.cwd, 'read.js', 'return target.characters;');
+    const blocked = await h.cli('run', reader, '--node', '1:3');
+    assert.deepEqual([blocked.code, blocked.json.code], [1, 'REVIEW_REQUIRED']);
+
+    // Inspecting the parent frame cannot replace directly querying the original target.
+    const parentReview = await plugin.drive(h.cli('inspect', '--node', '1:2'));
+    assert.equal(parentReview.code, 0);
+    const indirect = await h.cli('resolve', id, '--inspect', parentReview.json.id, '--previous-plugin-stopped');
+    assert.equal(indirect.code, 1);
+    assert.match(indirect.json.error, /original job's target/);
+    const review = await plugin.drive(h.cli('inspect', '--node', '1:3'));
+    assert.equal((await h.cli('resolve', id, '--inspect', review.json.id)).code, 1);
+    const resolved = await h.cli('resolve', id, '--inspect', review.json.id, '--previous-plugin-stopped');
+    assert.equal(resolved.code, 0, JSON.stringify(resolved.json));
+    assert.deepEqual([resolved.json.status, resolved.json.inspectId, resolved.json.targetMissing], ['reviewed-without-replay', review.json.id, false]);
+
+    const after = await plugin.drive(h.cli('run', reader, '--node', '1:3'));
+    assert.equal(after.code, 0, JSON.stringify(after.json));
+    assert.equal(after.json.output, '\u539f\u6587+');
+    assert.deepEqual(plugin.errors, []);
+    await bridge.close();
+  });
+
+  test('After resolve, wait/result on the original task exit 1; wait returns resolved with guidance from the review record', async t => {
+    const h = await harness(t);
+    const started = Promise.withResolvers();
+    h.figma.hold = () => { started.resolve(); return new Promise(() => {}); };
+    const queued = await h.cli('run', await writeScript(h.cwd, 'hang.js', 'target.characters += "+"; await figma.hold();'), '--node', '1:3', '--no-wait');
+    const id = queued.json.id;
+    await h.tick();
+    await started.promise;
+    // Closing during execution follows stop --force: write recovery guidance and require review after restart.
+    await h.close();
+    const bridge = await start(h.cwd, 0, { pollHoldMs: 50, pluginToken: await pairingToken(h.home) });
+    t.after(() => bridge.close().catch(() => {}));
+    const plugin = await reopenPlugin(bridge, h);
+    const pending = await h.cli('wait', id);
+    assert.deepEqual([pending.code, pending.json.waitStatus], [2, 'needs-review']);
+
+    const review = await plugin.drive(h.cli('inspect', '--node', '1:3'));
+    const resolved = await h.cli('resolve', id, '--inspect', review.json.id, '--previous-plugin-stopped');
+    assert.equal(resolved.code, 0, JSON.stringify(resolved.json));
+    assert.equal(typeof resolved.json.instruction, 'string');
+
+    // Review records take precedence over recovery hints: waiting cannot help and exits 1; offline result returns the same review guidance.
+    const waited = await h.cli('wait', id);
+    assert.equal(waited.code, 1, JSON.stringify(waited.json));
+    assert.deepEqual([waited.json.waitStatus, waited.json.resolution, waited.json.ok, waited.json.instruction],
+      ['resolved', 'reviewed-without-replay', null, resolved.json.instruction]);
+    const stored = await h.cli('result', id);
+    assert.equal(stored.code, 1, JSON.stringify(stored.json));
+    assert.deepEqual([stored.json.waitStatus, stored.json.resolution, stored.json.ok, stored.json.instruction],
+      [undefined, 'reviewed-without-replay', null, resolved.json.instruction]);
+    assert.deepEqual(plugin.errors, []);
+    await bridge.close();
+  });
 
   // -- Inactive bridges -----------------------------------------------------
   test('doctor identifies every plugin lease rejection in remedy order, offers action only on the first, and prioritizes tasks owned by another project', async t => {
@@ -330,9 +451,100 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     assert.ok(check.action.includes(FIGMA_URL), check.action);
   });
 
-  
+  test('Switching from project A to B during execution prevents B delivery, preserves late results without content-error reduction, and persists the original result when A returns', async t => {
+    const h = await harness(t);
+    const started = Promise.withResolvers(), finish = Promise.withResolvers();
+    h.figma.hold = () => { started.resolve(); return finish.promise; };
+    const queued = await h.cli('run', await writeScript(h.cwd, 'slow.js', 'target.characters += "+"; await figma.hold(); return target.characters;'), '--node', '1:3', '--no-wait');
+    const id = queued.json.id, port = h.bridge.port, pluginToken = await pairingToken(h.home);
+    await h.tick(); await started.promise;
+    await h.close();
 
-  
+    // B binds the same file, so file checks cannot distinguish it; identify ownership by the held task being unknown to B.
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'figma-agent-control-\u9879\u76eeB-'));
+    t.after(() => fs.rm(other, { recursive: true, force: true }));
+    await init(other, FIGMA_URL);
+    const b = await start(other, port, { pollHoldMs: 50, pluginToken });
+    try {
+      // The script remains in hold: pump one heartbeat but do not settle, which would wait for execution.
+      await h.tick();
+      assert.equal(h.element('state').textContent, 'Waiting for original project');
+      assert.match(h.element('state-detail').textContent, new RegExp(path.basename(h.cwd)));
+      const status = async () => (await cli(other, 'status')).json;
+      assert.deepEqual([(await status()).connected, Object.keys((await status()).pluginIssues)], [false, ['FOREIGN_JOB']], 'An instance holding another project job does not renew the lease for B');
+      assert.equal((await cli(other, 'inspect', '--no-wait')).json.code, 'RECONNECTING');
+
+      // Drive retries until B receives five completions, exceeding the three-rejection fallback threshold; every attempt must retain the original result.
+      finish.resolve(); await h.settle();
+      const completes = () => h.requests.filter(r => r.path === '/complete').map(r => r.body);
+      while (completes().length < 5) { await h.tick(); await delay(5); }
+      await h.pause(); h.resume(); await delay(20);
+      assert.deepEqual(completes().map(body => [body.id, body.ok, body.output]), Array(5).fill([id, true, '\u539f\u6587+']), 'Repeated rejection by B preserves the original result without degrading it to failure');
+      assert.equal(h.element('state').textContent, 'Waiting for original project');
+      assert.deepEqual(await runIds(other), [], 'B does not persist another project\'s result');
+    } finally { await b.close(); }
+
+    const a = await start(h.cwd, port, { pollHoldMs: 50, pluginToken });
+    t.after(() => a.close().catch(() => {}));
+    await h.tick(); await h.settle();
+    const result = await json(path.join(runsDir(h.cwd), id, 'result.json'));
+    assert.deepEqual([result.ok, result.output, result.error], [true, '\u539f\u6587+', undefined], 'Returning to A persists the actual result unchanged');
+    assert.deepEqual(h.errors, []);
+    await a.close();
+  });
+
+  test('Without a bridge, doctor identifies each blocking stage, stop distinguishes no session/empty/stale locks, and network errors map to NO_SESSION or BRIDGE_DOWN', async t => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'figma-agent-control-cli-'));
+    t.after(() => fs.rm(cwd, { recursive: true, force: true }));
+    const dir = root(cwd), lockFile = path.join(dir, 'bridge.lock');
+    const check = (result, code) => result.json.checks.find(c => c.code === code);
+
+    const bare = await cli(cwd, 'doctor');
+    assert.deepEqual([bare.code, bare.json.ready], [1, false]);
+    assert.deepEqual(bare.json.checks.map(c => c.code), ['NODE_VERSION', 'BINDING']);
+    assert.match(check(bare, 'BINDING').action, /init/);
+
+    // Legacy bindings lack format:2.
+    await save(path.join(dir, 'binding.json'), { id: randomUUID(), fileKey: 'example', nodeId: '1:2', sourceUrl: FIGMA_URL });
+    const legacy = await cli(cwd, 'doctor');
+    assert.equal(legacy.json.ready, false);
+    assert.match(check(legacy, 'BINDING').message, /legacy format/);
+    await fs.rm(dir, { recursive: true });
+
+    assert.equal((await cli(cwd, 'init', FIGMA_URL)).code, 0);
+    const idle = await cli(cwd, 'doctor');
+    assert.deepEqual([idle.json.ready, check(idle, 'BINDING').status, check(idle, 'SESSION').status], [false, 'ok', 'error']);
+    assert.match(check(idle, 'SESSION').action, /connect/);
+    assert.equal(check(idle, 'BRIDGE'), undefined);
+
+    const noSession = await cli(cwd, 'status');
+    assert.deepEqual([noSession.code, noSession.json.code], [1, 'NO_SESSION']);
+    const notRunning = await cli(cwd, 'stop');
+    assert.deepEqual([notRunning.code, notRunning.json.bridge], [0, 'not-running']);
+
+    // An empty lock means another connect is writing its PID. stop/doctor agree with connect without claiming no bridge or cleaning the lock.
+    await fs.writeFile(lockFile, '');
+    const starting = await cli(cwd, 'stop');
+    assert.deepEqual([starting.code, starting.json.code], [1, 'BRIDGE_RUNNING']);
+    assert.match(starting.json.error, /another connect/);
+    const emptyLock = check(await cli(cwd, 'doctor'), 'LOCK');
+    assert.deepEqual([emptyLock.status, emptyLock.message], ['warning', starting.json.error]);
+    assert.equal(await fs.readFile(lockFile, 'utf8'), '');
+    // PIDs beyond safe integers are invalid for both doctor and acquireLock and are not probed.
+    await fs.writeFile(lockFile, '99999999999999999999');
+    assert.match(check(await cli(cwd, 'doctor'), 'LOCK').message, /Invalid PID/);
+
+    await fs.writeFile(lockFile, '424242');
+    const orphan = await cli(cwd, 'stop');
+    assert.deepEqual([orphan.code, orphan.json.code], [1, 'LOCK_WITHOUT_SESSION']);
+    assert.equal(await fs.readFile(lockFile, 'utf8'), '424242');
+    await fs.rm(lockFile);
+
+    await save(path.join(dir, 'session.json'), { port: await closedPort(), token: 'a'.repeat(64), sessionId: randomUUID(), pid: process.pid });
+    const down = await cli(cwd, 'status');
+    assert.deepEqual([down.code, down.json.code], [1, 'BRIDGE_DOWN']);
+    assert.equal(check(await cli(cwd, 'doctor'), 'BRIDGE_DOWN')?.status, 'error');
+  });
 
   // -- Offline tools --------------------------------------------------------
   

@@ -4,7 +4,7 @@
 
 ## 可用命令
 
-`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`, `run`, `doctor`
+`help`, `init`, `result`, `wait`, `connect`, `status`, `inspect`, `preview`, `variables`, `run`, `doctor`, `stop`, `resolve`
 
 在项目工作目录运行 CLI，使用 help 查看本版本的具体语法。
 
@@ -39,3 +39,7 @@ figma-agent-control run <script.js> --node 12:34
 ```
 
 脚本是可使用 figma、target、data 的函数体。目标范围决定快照覆盖；完整 Plugin API 仍可访问当前文件。读 instruction、executionStarted 和已保存结果后再决定下一步。
+
+## 关闭与恢复
+
+`stop` 关闭本机桥接并保留未完成证据。已交付但没有结果的写入会阻止后续写入。先停止旧插件，在当前会话 inspect 原目标，再执行 `resolve <job-id> --inspect <inspect-id> --previous-plugin-stopped`。resolve 记录核验，不撤销改动，也不把未知结果当作成功。
