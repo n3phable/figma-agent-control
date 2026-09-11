@@ -1,0 +1,223 @@
+<!doctype html><html lang="en"><meta charset="utf-8">
+<!--
+[INPUT]: Figma Plugin API, bridge configuration and the sandbox/iframe message channel.
+[OUTPUT]: Plugin panel and authenticated message relay.
+[POS]: Iframe network relay and connection/task panel between the local bridge and Figma sandbox.
+[PROTOCOL]: When changing this file, update this header and check AGENTS.md.
+-->
+<style>
+:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;padding:16px;font:12px/1.6 system-ui;color:var(--figma-color-text,#242424);background:var(--figma-color-bg,#fff)}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}h1{font-size:14px;margin:0;font-weight:650}
+button{font:inherit;cursor:pointer;border:1px solid var(--figma-color-border,#ddd);border-radius:6px;background:var(--figma-color-bg,#fff);color:inherit;padding:6px 10px}button:focus-visible{outline:2px solid #3478f6;outline-offset:3px}
+.label{font-size:11px;color:var(--figma-color-text-secondary,#737373)}.name{font-weight:600;margin:2px 0 12px;overflow-wrap:anywhere}
+#state{font-size:14px;font-weight:600;margin:0}#state-detail{margin:4px 0 0;overflow-wrap:anywhere}
+#approval{border-top:1px solid var(--figma-color-border,#ddd);margin-top:16px;padding-top:12px}#approval-reason{margin:0 0 12px;overflow-wrap:anywhere}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto;font:11px/1.5 ui-monospace,monospace}summary{cursor:pointer;margin-bottom:8px}#approve{background:#1769e0;color:#fff;border-color:#1769e0}
+</style>
+<header><h1>Figma Agent Control</h1><button id="hide-panel">Hide</button></header>
+<div id="target-label" class="label">Bound target</div><div id="target-name" class="name">Checking...</div>
+<p id="state" role="status" aria-live="polite">Connecting</p><p id="state-detail">Connecting to the local bridge.</p>
+<section id="approval" hidden><p id="approval-reason"></p><details><summary>View scope and script</summary><pre id="approval-details"></pre></details><button id="approve">Allow changes</button> <button id="reject">Reject changes</button></section>
+<script>
+const config = SESSION_CONFIG;
+const client = Math.random().toString(36).slice(2) + Date.now();
+const headers = { 'Content-Type': 'application/json', 'X-Session-Token': config.token, 'X-Plugin-Version': config.version };
+let pending = null, busy = false, polling = false, again = false, activeId = null, activeOperation = null, channelNonce = null;
+let serverSessionId = null, lastFailure = null, targetIssue = null, completeRejects = 0;
+// main reports fileKey; null means it is not yet known, so do not poll. project is the current bridge project; activeProject owns the held job.
+let fileKey = null, project = '', activeProject = '';
+let review = null, deciding = false;
+document.getElementById('hide-panel').onclick = () => parent.postMessage({ pluginMessage: { type: 'hide-ui' } }, '*');
+
+// -- Panel state --------------------------------------------------------
+function showState(label, detail) {
+  document.getElementById('state').textContent = label;
+  document.getElementById('state-detail').textContent = detail;
+}
+function showCurrentState() {
+  if (review) showState("Review changes", 'Choose Allow or Reject below.');
+  else if (lastFailure) showState('Check the task', 'Return to the agent conversation to review the result.');
+  else if (busy) showState("Working", pending ? 'Saving the result; keep the plugin running.' : 'The agent is working on the current target.');
+  else if (targetIssue) showState("Target needs attention", targetIssue);
+  else showState("Connected", 'You can hide the panel and continue in the agent conversation.');
+}
+function connectionError(message, response, code) {
+  const error = Error(message);
+  error.needsAction = Number.isInteger(response?.status) && response.status >= 400;
+  error.code = code;
+  return error;
+}
+function showConnectionError(error) {
+  if (error.code === 'PLUGIN_OUTDATED') return showState("Reopen the plugin", "The tool was updated. Close the plugin and run it again.");
+  if (error.code === 'FOREIGN_JOB') return showState("Waiting for original project", `The current task belongs to project ${activeProject || "(unknown)"}. Run figma-agent-control connect there to return the result automatically. If no longer needed, close and reopen the plugin; the task will be treated as having an unknown result.`);
+  if (error.code === 'PAIRING_MISMATCH') return showState("Plugin credentials do not match", "This is not the current local Figma Agent Control installation; it may be an older per-project plugin with the same name. Run the plugin for the manifest printed by figma-agent-control connect, then remove the old plugin.");
+  if (error.needsAction) return showState("Check the connection", "Keep the plugin running and return to the agent conversation to investigate.");
+  showState("Reconnecting", error?.name === 'TimeoutError' || /timed? ?out|timeout|\u8d85\u65f6/i.test(error?.message || '') ? "The connection timed out. Reconnecting automatically." : "The local bridge is temporarily unavailable. The plugin will reconnect when it starts.");
+}
+const route = path => path + '?client=' + client + '&visibility=' + (document.visibilityState === 'hidden' ? 'hidden' : 'visible')
+  + '&file=' + encodeURIComponent(fileKey) + (busy && activeId ? '&job=' + encodeURIComponent(activeId) : '');
+const hello = () => parent.postMessage({ pluginMessage: { type: 'hello' } }, '*');
+const randomNonce = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
+// The bridge holds long polls for up to 10 s, so /poll allows 15 s; other requests allow 3 s.
+async function request(path, options = {}, timeoutMs = 3000) {
+  const response = await fetch('http://localhost:' + config.port + path, { ...options, headers, signal: AbortSignal.timeout(timeoutMs) });
+  // Recheck that the bound target belongs to the open file after a bridge restart.
+  const session = response.ok && response.headers?.get?.('X-Figma-Session');
+  // One global plugin receives binding/project metadata through headers; the panel updates when the bridge switches projects.
+  if (session && session !== serverSessionId) {
+    serverSessionId = session;
+    let binding = null;
+    try { binding = JSON.parse(response.headers.get('X-Figma-Binding')); } catch {}
+    project = typeof binding?.project === 'string' ? binding.project : '';
+    document.getElementById('target-label').textContent = project ? 'Bound target - ' + project : 'Bound target';
+    parent.postMessage({ pluginMessage: { type: 'check-target', binding } }, '*');
+  }
+  return response;
+}
+async function failed(response, message) {
+  let code;
+  try { code = (await response.json())?.code; } catch {}
+  return connectionError(message, response, code);
+}
+
+// -- Result size --------------------------------------------------------
+// Images/binaries have a separate 48 MB plugin limit. Structured results are capped at 16 MB; larger payloads become reduced failure evidence.
+const maxResultBytes = 16 * 1024 * 1024 - 1024;
+const binaryBytes = value => [...(value.images || []).map(image => image?.base64), ...(value.binaries || []), value.renders?.before, value.renders?.after]
+  .reduce((n, text) => n + (typeof text === 'string' ? text.length : 0), 0);
+const fitsResult = value => new TextEncoder().encode(JSON.stringify(value)).byteLength - binaryBytes(value) <= maxResultBytes;
+function compactFailure(message, minimal = false, error = 'Result exceeds the return size limit; large fields were omitted. Verify the execution state against the before-snapshot and an independent read-back') {
+  const result = { id: message.id, ok: false, error,
+    executionStarted: typeof message.executionStarted === 'boolean' ? message.executionStarted : activeOperation === 'run',
+    recovery: 'Keep the existing evidence; narrow the target and inspect independently; do not replay the script' };
+  for (const field of ['bindingVerified', 'undoBoundaries']) if (message[field] !== undefined) result[field] = message[field];
+  if (!minimal) for (const field of ['after', 'before']) {
+    if (message[field] === undefined) continue;
+    result[field] = message[field];
+    if (!fitsResult(result)) delete result[field];
+  }
+  return result;
+}
+
+// -- High-risk approval -------------------------------------------------
+async function decide(approved) {
+  if (!review || deciding) return;
+  deciding = true;
+  const current = review;
+  try {
+    const response = await request('/approve', { method: 'POST', body: JSON.stringify({ id: current.id, scriptHash: current.scriptHash, approved }) });
+    if (!response.ok) throw Error("Approval not saved");
+    const decision = await response.json();
+    review = null; document.getElementById('approval').hidden = true;
+    parent.postMessage({ pluginMessage: { type: 'approval-ack', id: current.id, channelNonce, approved: decision.approved === true } }, '*');
+    showCurrentState();
+  } catch { showState("Review changes", "Approval was not saved. Please try again."); }
+  finally { deciding = false; }
+}
+document.getElementById('approve').onclick = () => decide(true);
+document.getElementById('reject').onclick = () => decide(false);
+
+// -- main.js messages ---------------------------------------------------
+window.onmessage = async event => {
+  // Desktop-host message sources may differ from parent; authenticate replies with a random per-task credential.
+  let message = event.data?.pluginMessage;
+  if (message?.type === 'file') {
+    if (fileKey === null && typeof message.fileKey === 'string') { fileKey = message.fileKey; if (document.visibilityState === 'hidden') void reportVisibility(); }
+    return;
+  }
+  if (message?.type === 'target-info') {
+    document.getElementById('target-name').textContent = message.name || "Target temporarily unavailable";
+    targetIssue = message.issue || null;
+    if (!busy) showCurrentState();
+    return;
+  }
+  if (message?.type === 'serialized-result') {
+    if (!channelNonce || message.channelNonce !== channelNonce || message.id !== activeId || typeof message.serialized !== 'string') return;
+    try { message = JSON.parse(message.serialized); }
+    catch { pending = { id: activeId, ok: false, executionStarted: activeOperation === 'run', error: 'Result could not be parsed; check the current canvas, do not replay the script' }; void tick(); return; }
+  }
+  if (!channelNonce || message?.channelNonce !== channelNonce || message.id !== activeId) return;
+  if (message.type === 'approval-request') {
+    review = message;
+    document.getElementById('approval-reason').textContent = message.reason;
+    document.getElementById('approval-details').textContent = `Reason: ${message.reason}\nFile: ${message.binding.fileKey}\nNode: ${message.binding.nodeId}\nScript hash: ${message.scriptHash}\n\n${message.code}`;
+    document.getElementById('approval').hidden = false;
+    showCurrentState();
+    return;
+  }
+  if (message.type === 'checkpoint') {
+    let ok = false;
+    try {
+      const response = await request('/checkpoint', { method: 'POST', body: JSON.stringify(message) });
+      ok = response.ok && (await response.json()).saved === true;
+    } catch {}
+    parent.postMessage({ pluginMessage: { type: 'checkpoint-ack', id: message.id, channelNonce, ok } }, '*');
+    return;
+  }
+  if (typeof message.ok === 'boolean' && !pending) {
+    const { channelNonce: omitted, ...result } = message;
+    pending = fitsResult(result) ? result : compactFailure(result);
+    review = null; document.getElementById('approval').hidden = true;
+    // Return results and claim the next task immediately upon receipt, without waiting for the next polling tick.
+    void tick();
+  }
+};
+
+// -- Polling ------------------------------------------------------------
+// Serialize upload before claim. Reentrant requests schedule only one additional pass, preventing concurrent requests from reordering work.
+async function tick() {
+  if (fileKey === null) return hello();
+  if (polling) { again = true; return; }
+  polling = true;
+  try {
+    // Upload pending results directly: /complete does not require a lease, so late results can persist after restart even when another instance owns the lease.
+    if (busy && !pending) {
+      const heartbeat = await request(route('/heartbeat'));
+      if (!heartbeat.ok) throw await failed(heartbeat, "Heartbeat failed; retaining the current task and forbidding replay");
+    }
+    if (pending) {
+      const response = await request('/complete', { method: 'POST', body: JSON.stringify(pending) });
+      if (response.status === 413) { pending = compactFailure(pending, true); throw connectionError("Result size rejected; saving reduced failure evidence on the next attempt", response); }
+      // After three content rejections of the same result, save reduced failure evidence so the task cannot remain running forever. Network failures do not count or reset the total.
+      if (response.status === 400 && ++completeRejects >= 3) {
+        pending = compactFailure(pending, true, 'The bridge rejected this result content; saved compact failure evidence instead. Verify the execution state against the before-snapshot and an independent read-back');
+        completeRejects = 0;
+      }
+      if (!response.ok) throw await failed(response, "The result was not saved. Keep the plugin running and ask the agent to investigate");
+      if (!pending.ok) lastFailure = pending.error || "This task did not complete";
+      completeRejects = 0;
+      pending = null; busy = false; activeId = null; channelNonce = null; activeOperation = null; activeProject = '';
+    }
+    if (!busy) {
+      const nextNonce = randomNonce();
+      const response = await request(route('/poll'), {}, 15000);
+      if (!response.ok) throw await failed(response, "Connection not restored; retaining the current task");
+      const job = await response.json();
+      // Immediately continue after an empty long-poll response. Network callbacks keep claim latency independent of hidden-panel timer throttling.
+      if (!job && response.headers?.get?.('X-Long-Poll')) again = true;
+      if (job) { lastFailure = null; busy = true; activeId = job.id; activeOperation = job.operation; activeProject = project; channelNonce = nextNonce; parent.postMessage({ pluginMessage: { ...job, channelNonce } }, '*'); }
+    }
+    showCurrentState();
+  } catch (error) { showConnectionError(error); }
+  finally {
+    polling = false;
+    if (again) { again = false; void tick(); }
+  }
+}
+// Report visibility changes immediately so the bridge can extend leases when background timers reduce heartbeat frequency.
+async function reportVisibility() {
+  if (fileKey === null) return;
+  if (polling) { again = true; return; }
+  polling = true;
+  try {
+    const response = await request(route('/heartbeat'));
+    if (!response.ok) throw await failed(response, "Heartbeat failed; retaining the current task and forbidding replay");
+  } catch (error) { showConnectionError(error); }
+  finally { polling = false; if (again) { again = false; void tick(); } }
+}
+document.addEventListener('visibilitychange', reportVisibility);
+hello();
+// The 750 ms timer handles steps not continued by network callbacks: hello retries before fileKey, initial/error polling, active heartbeats, /complete retries,
+// Also poll again after empty replies without X-Long-Poll (wrong file or stopping bridge) and refresh panel state. Hidden-panel timers throttle to roughly once a minute.
+setInterval(tick, 750);
+</script></html>
