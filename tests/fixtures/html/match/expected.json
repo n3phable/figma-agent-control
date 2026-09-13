@@ -1,0 +1,114 @@
+{
+  "generator": "Synthetic RGBA geometry/glyphs; pixelmatch 7.2.0; independent grid reference",
+  "threshold": 0.1,
+  "fixtures": [
+    {
+      "name": "alpha-edges",
+      "size": [
+        128,
+        80
+      ],
+      "mismatched": 4,
+      "aa": 133,
+      "imageSha256": "2960858c1732d46d",
+      "maskSha256": "9cbcde0b03c52851",
+      "blocks": []
+    },
+    {
+      "name": "alpha-shift",
+      "size": [
+        160,
+        96
+      ],
+      "mismatched": 250,
+      "aa": 159,
+      "imageSha256": "1509976fd605b6a4",
+      "maskSha256": "e1ae0c8de9416aeb",
+      "blocks": []
+    },
+    {
+      "name": "clear-vs-solid",
+      "size": [
+        128,
+        96
+      ],
+      "mismatched": 3618,
+      "aa": 219,
+      "imageSha256": "b2761dc841f634ad",
+      "maskSha256": "0187dff5bf91048e",
+      "blocks": [
+        {
+          "x": 16,
+          "y": 16,
+          "w": 96,
+          "h": 64,
+          "diffPx": 3530
+        }
+      ]
+    },
+    {
+      "name": "gradient-image",
+      "size": [
+        160,
+        96
+      ],
+      "mismatched": 842,
+      "aa": 22,
+      "imageSha256": "9649ba5213f12d8f",
+      "maskSha256": "4376d1b556f397eb",
+      "blocks": [
+        {
+          "x": 16,
+          "y": 16,
+          "w": 48,
+          "h": 48,
+          "diffPx": 444
+        }
+      ]
+    },
+    {
+      "name": "opaque-vs-clear",
+      "size": [
+        128,
+        80
+      ],
+      "mismatched": 9938,
+      "aa": 302,
+      "imageSha256": "fc15d8c85c82a72b",
+      "maskSha256": "777b1847464f4e68",
+      "blocks": [
+        {
+          "x": 0,
+          "y": 0,
+          "w": 128,
+          "h": 80,
+          "diffPx": 9938
+        }
+      ]
+    },
+    {
+      "name": "statusbar-aa",
+      "size": [
+        192,
+        48
+      ],
+      "mismatched": 12,
+      "aa": 290,
+      "imageSha256": "21676aa6bbdb998a",
+      "maskSha256": "8be0014ee69edaf3",
+      "blocks": []
+    },
+    {
+      "name": "text-offset",
+      "size": [
+        192,
+        64
+      ],
+      "mismatched": 170,
+      "aa": 454,
+      "imageSha256": "1d401dddb68afcf4",
+      "maskSha256": "c5eeaab6467a50d6",
+      "blocks": []
+    }
+  ]
+}

@@ -31,27 +31,40 @@ export function decodePng(bytes) {
     offset += 12 + length;
   }
   // Derive the decompression limit from IHDR so malformed data cannot expand beyond its declared dimensions.
-  const stride = width * channels, raw = zlib.inflateSync(Buffer.concat(idat), { maxOutputLength: (stride + 1) * height }), pixels = Buffer.alloc(stride * height);
+  const stride = width * channels, raw = zlib.inflateSync(Buffer.concat(idat), { maxOutputLength: (stride + 1) * height });
   if (raw.length < (stride + 1) * height) throw Error('PNG data is incomplete');
-  // Unfilter by row: 0 None, 1 Sub, 2 Up, 3 Average, 4 Paeth.
+  // Unfilter RGBA directly into output; other formats first recover raw samples, then expand to RGBA.
+  const pixels = new Uint8Array(stride * height), none = new Uint8Array(stride);
+  // Unfilter by row: 0 None, 1 Sub, 2 Up, 3 Average, 4 Paeth. Dispatch per row with no allocations in the hot loop;
+  // treat the preceding row as zeros for the first row, byte-equivalent to checking y per byte (Uint8Array assignment wraps modulo 256).
   for (let y = 0; y < height; y++) {
     const filter = raw[y * (stride + 1)], line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)), row = y * stride;
-    for (let x = 0; x < stride; x++) {
-      const left = x >= channels ? pixels[row + x - channels] : 0, up = y ? pixels[row - stride + x] : 0, corner = y && x >= channels ? pixels[row - stride + x - channels] : 0;
-      const p = left + up - corner, pa = Math.abs(p - left), pb = Math.abs(p - up), pc = Math.abs(p - corner);
-      const predictor = [0, left, up, (left + up) >> 1, pa <= pb && pa <= pc ? left : pb <= pc ? up : corner][filter];
-      if (predictor === undefined) throw Error('Invalid PNG filter type');
-      pixels[row + x] = (line[x] + predictor) & 0xff;
-    }
+    const up = y ? pixels.subarray(row - stride, row) : none, out = pixels.subarray(row, row + stride);
+    if (filter === 0) out.set(line);
+    else if (filter === 1) { out.set(line.subarray(0, channels)); for (let x = channels; x < stride; x++) out[x] = line[x] + out[x - channels]; }
+    else if (filter === 2) for (let x = 0; x < stride; x++) out[x] = line[x] + up[x];
+    else if (filter === 3) {
+      for (let x = 0; x < channels; x++) out[x] = line[x] + (up[x] >> 1);
+      for (let x = channels; x < stride; x++) out[x] = line[x] + ((out[x - channels] + up[x]) >> 1);
+    } else if (filter === 4) {
+      // The first pixel has no left or upper-left neighbor, so Paeth reduces to up.
+      for (let x = 0; x < channels; x++) out[x] = line[x] + up[x];
+      for (let x = channels; x < stride; x++) {
+        const left = out[x - channels], above = up[x], corner = up[x - channels], p = left + above - corner;
+        const pa = Math.abs(p - left), pb = Math.abs(p - above), pc = Math.abs(p - corner);
+        out[x] = line[x] + (pa <= pb && pa <= pc ? left : pb <= pc ? above : corner);
+      }
+    } else throw Error('Invalid PNG filter type');
   }
+  if (colorType === 6) return { width, height, data: pixels };
   const rgba = new Uint8Array(width * height * 4);
-  for (let i = 0; i < width * height; i++) {
-    const s = i * channels, d = i * 4;
-    if (colorType === 6) rgba.set(pixels.subarray(s, s + 4), d);
-    // RGB and grayscale tRNS use 16-bit color keys; matching pixels are fully transparent.
-    else if (colorType === 2) { rgba.set(pixels.subarray(s, s + 3), d); rgba[d + 3] = transparency?.length >= 6 && [0, 1, 2].every(c => pixels[s + c] === transparency.readUInt16BE(c * 2)) ? 0 : 255; }
-    else if (colorType === 0 || colorType === 4) { rgba.fill(pixels[s], d, d + 3); rgba[d + 3] = colorType === 4 ? pixels[s + 1] : transparency?.length >= 2 && pixels[s] === transparency.readUInt16BE(0) ? 0 : 255; }
-    else { const k = pixels[s]; if (!palette || k * 3 + 2 >= palette.length) throw Error('Invalid PNG palette'); rgba.set(palette.subarray(k * 3, k * 3 + 3), d); rgba[d + 3] = transparency && k < transparency.length ? transparency[k] : 255; }
+  // RGB and grayscale tRNS use 16-bit color keys: matching pixels are transparent. An 8-bit sample never matches a key with a nonzero high byte.
+  const key = c => colorType === 2 ? (transparency?.length >= 6 ? transparency.readUInt16BE(c * 2) : -1) : (transparency?.length >= 2 ? transparency.readUInt16BE(0) : -1);
+  const [k0, k1, k2] = [key(0), key(1), key(2)];
+  for (let i = 0, s = 0, d = 0; i < width * height; i++, s += channels, d += 4) {
+    if (colorType === 2) { rgba[d] = pixels[s]; rgba[d + 1] = pixels[s + 1]; rgba[d + 2] = pixels[s + 2]; rgba[d + 3] = pixels[s] === k0 && pixels[s + 1] === k1 && pixels[s + 2] === k2 ? 0 : 255; }
+    else if (colorType === 0 || colorType === 4) { rgba[d] = rgba[d + 1] = rgba[d + 2] = pixels[s]; rgba[d + 3] = colorType === 4 ? pixels[s + 1] : pixels[s] === k0 ? 0 : 255; }
+    else { const k = pixels[s]; if (!palette || k * 3 + 2 >= palette.length) throw Error('Invalid PNG palette'); rgba[d] = palette[k * 3]; rgba[d + 1] = palette[k * 3 + 1]; rgba[d + 2] = palette[k * 3 + 2]; rgba[d + 3] = transparency && k < transparency.length ? transparency[k] : 255; }
   }
   return { width, height, data: rgba };
 }

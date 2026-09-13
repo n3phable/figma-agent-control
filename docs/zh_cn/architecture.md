@@ -35,7 +35,7 @@ iframe 在接受确认或结果前，逐条核对任务 ID 和随机 nonce。
 
 ## 模块结构
 
-主机侧依赖无环。完整成员清单见 [src/AGENTS.md](../../src/AGENTS.md)、src/html/AGENTS.md、[plugin/AGENTS.md](../../plugin/AGENTS.md) 和 lib/AGENTS.md。
+主机侧依赖无环。完整成员清单见 [src/AGENTS.md](../../src/AGENTS.md)、[src/html/AGENTS.md](../../src/html/AGENTS.md)、[plugin/AGENTS.md](../../plugin/AGENTS.md) 和 lib/AGENTS.md。
 
 ### 主机侧职责
 
@@ -81,3 +81,7 @@ CLI 观察证据文件等待结果，等待前先向 stderr 写任务 ID。终�
 `result.json` 是提交点。从未交付的 queued 任务可证明未执行；已交付而无结果的 run 是未知状态，会阻止新 run。内置读操作保持可用，以便先检查目标。resolve 要求当前会话直接 inspect 原目标，并确认旧插件停止；它结束等待，不虚构成功，也不撤销。
 
 恢复任务仍可接受迟到结果。其他项目的结果收到 `FOREIGN_JOB`，留在 iframe 等原桥接回来。诊断优先处理它，避免通用的“重启插件”建议丢掉真实结果。
+
+## HTML 模块
+
+- match 比较解码后的 PNG 像素，使用 YIQ 差异和抗锯齿处理。

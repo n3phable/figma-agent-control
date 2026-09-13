@@ -35,7 +35,7 @@ The iframe matches each task message against its ID and random nonce before acce
 
 ## Module structure
 
-The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.md](../src/AGENTS.md), src/html/AGENTS.md, [plugin/AGENTS.md](../plugin/AGENTS.md), and lib/AGENTS.md.
+The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.md](../src/AGENTS.md), [src/html/AGENTS.md](../src/html/AGENTS.md), [plugin/AGENTS.md](../plugin/AGENTS.md), and lib/AGENTS.md.
 
 ### Host responsibilities
 
@@ -81,3 +81,7 @@ The CLI waits by observing evidence files and writes the job ID to stderr first.
 `result.json` is the commit point. A queued job that was never delivered can be recorded as nonexecuted. A delivered run without a result is unknown and blocks future runs. Built-in reads remain available so the user/agent can inspect the target. Resolve requires a current-session direct inspection and an assertion that the previous plugin stopped; it ends the wait without inventing success or undoing anything.
 
 Late results can still land for recovered jobs. Results belonging to another project receive `FOREIGN_JOB` and stay in the iframe until their bridge returns. Diagnostics prioritize that cause so a generic “restart the plugin” instruction does not discard a real result.
+
+## HTML modules
+
+- match compares decoded PNG pixels with antialiasing-aware YIQ differences.
