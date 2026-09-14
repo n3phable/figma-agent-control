@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:path, ./project.mjs, ./client.mjs, ./session.mjs.
+ * [INPUT]: Imports node:fs/promises, node:path, ./project.mjs, ./client.mjs, ./session.mjs, ./html/chrome.mjs.
  * [OUTPUT]: Exports doctor.
  * [POS]: Diagnoses workspace bindings, bridge connectivity and local execution prerequisites.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -9,6 +9,7 @@ import path from 'node:path';
 import { root, json, parseTarget, readBinding, pluginHome } from './project.mjs';
 import { call } from './client.mjs';
 import { emptyLock, validPid } from './session.mjs';
+import { findChrome, chromeVersion } from './html/chrome.mjs';
 
 export async function doctor(cwd) {
   const checks = [];
@@ -16,6 +17,9 @@ export async function doctor(cwd) {
   const dir = root(cwd);
   const report = () => ({ ready: checks.every(c => c.status !== 'error'), checks, instruction: 'Once connected, inspect the target first to verify it; visuals and interaction need separate verification' });
   add('NODE_VERSION', Number(process.versions.node.split('.')[0]) >= 22 ? 'ok' : 'error', `Node.js ${process.versions.node}`, 'Requires Node.js 22+');
+  // Only html commands require Chrome, so its absence does not affect ready. Check before binding so uninitialized directories also report it.
+  try { const file = findChrome(); add('CHROME', 'ok', `${await chromeVersion(file)} (${file})`); }
+  catch (error) { add('CHROME', 'warning', error.code === 'CHROME_NOT_FOUND' ? error.message : `Cannot read the Chrome version: ${error.message}`, 'Only html commands require Chrome: install Google Chrome or set FIGMA_AGENT_CONTROL_CHROME to its executable'); }
   let binding;
   try {
     binding = await readBinding(cwd);

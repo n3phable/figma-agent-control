@@ -82,6 +82,10 @@ The CLI waits by observing evidence files and writes the job ID to stderr first.
 
 Late results can still land for recovered jobs. Results belonging to another project receive `FOREIGN_JOB` and stay in the iframe until their bridge returns. Diagnostics prioritize that cause so a generic “restart the plugin” instruction does not discard a real result.
 
+## Browser comparison layer
+
+The host can render HTML through a Chrome debugging pipe and compare PNG pixels with a supplied reference. Use the comparison module API for this stage.
+
 ## HTML modules
 
 - match compares decoded PNG pixels with antialiasing-aware YIQ differences.

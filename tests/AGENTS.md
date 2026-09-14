@@ -12,6 +12,7 @@ Behavioral tests for the implementation in this revision.
 - `fixtures/`: Related implementation, fixtures or configuration.
 - `helpers/`: Isolated synthetic document, bridge and media fixtures.
 - `html-match.test.mjs`: Tests for html match behavior in this revision.
+- `html-render.test.mjs`: Tests for html render behavior in this revision.
 - `plugin.test.mjs`: Tests for plugin behavior in this revision.
 - `png.test.mjs`: Tests for png behavior in this revision.
 - `project-session.test.mjs`: Tests for project session behavior in this revision.

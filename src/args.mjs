@@ -16,7 +16,7 @@ export const COMMANDS = {
   connect: { usage: 'connect: start the local bridge in the foreground (stop with Ctrl-C or stop)', positionals: [0, 0], options: {} },
   stop: { usage: 'stop [--force]: stop only the local bridge process; does not modify the Figma document or affect cloud sync; requires --force while a job is unfinished (queued or running); exit code 2 if still shutting down after about 5 s, confirm later with status', positionals: [0, 0], options: { force: { type: 'boolean' } } },
   status: { usage: 'status: live status of the bridge and plugin', positionals: [0, 0], options: {} },
-  doctor: { usage: 'doctor: diagnose binding, session, lock, plugin files, and connection in order', positionals: [0, 0], options: {} },
+  doctor: { usage: 'doctor: diagnose binding, session, lock, plugin files and connection; also report Chrome, required only by html commands', positionals: [0, 0], options: {} },
   run: { usage: 'run <script.js> [--node <ID>] [--lib <file.js>]... [--data <file.json>] [--depth <1-31>] [--expect changed|unchanged] [--tolerance <pixels>] [--scale <0.1-4>] [--request-id <uuid>] [--high-risk <reason>] [--timeout <seconds>] [--no-wait] [--full]',
     positionals: [1, 1], submit: true, options: { ...node, lib: { type: 'string', multiple: true }, data: { type: 'string' }, depth: { type: 'string' }, expect: { type: 'string' }, tolerance: { type: 'string' },
       scale: { type: 'string' }, 'request-id': { type: 'string' }, 'high-risk': { type: 'string' }, ...wait } },
