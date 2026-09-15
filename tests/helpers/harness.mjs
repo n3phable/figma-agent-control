@@ -60,7 +60,8 @@ export function fakeFigma(doc, { fileKey = 'example', onUi = () => {} } = {}) {
 // -- End-to-end fixture ---------------------------------------------------
 // Real bridge on a random port with real main.js and ui.html in VMs. Replace UI setInterval with manual tick;
 // drive(promise) pumps polling until the promise settles.
-export async function harness(t, { url = 'https://www.figma.com/design/example/Test?node-id=1-2', fileKey = 'example' } = {}) {
+// doc can use another synthetic document, such as tests/fixtures/html/doc.mjs; attach its globals (mixed, getImageByHash and others) to figma.
+export async function harness(t, { url = 'https://www.figma.com/design/example/Test?node-id=1-2', fileKey = 'example', doc: given } = {}) {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'figma-agent-control-test-'));
   await init(cwd, url);
   // Follow connect: global pairing credentials, bridge startup, then plugin installation. Use a test-owned temporary global plugin directory;
@@ -71,11 +72,11 @@ export async function harness(t, { url = 'https://www.figma.com/design/example/T
   t.after(async () => { if (!closed) await bridge.close(); await fs.rm(cwd, { recursive: true, force: true }); });
   await installPlugin(home, bridge.plugin);
   const { 'ui.html': html, 'main.js': main } = bridge.plugin;
-  const doc = createDoc(), pending = new Set(), errors = [];
+  const doc = given ?? createDoc(), pending = new Set(), errors = [];
   const track = promise => { const work = Promise.resolve(promise).catch(error => errors.push(error)).finally(() => pending.delete(work)); pending.add(work); };
   const window = {}, elements = new Map();
   const element = id => { if (!elements.has(id)) elements.set(id, { textContent: '', hidden: false }); return elements.get(id); };
-  const figma = fakeFigma(doc, { fileKey, onUi: message => track(window.onmessage({ data: { pluginMessage: structuredClone(message) } })) });
+  const figma = Object.assign(fakeFigma(doc, { fileKey, onUi: message => track(window.onmessage({ data: { pluginMessage: structuredClone(message) } })) }), doc.globals);
   const parent = { postMessage: message => track(figma.ui.onmessage(structuredClone(message.pluginMessage))) };
   // Gate continuous long-poll delivery: pause() blocks new plugin requests and drains in-flight ones, leaving tasks queued. drive releases the gate automatically.
   // requests records each plugin request path and JSON body in send order, avoiding panel-refresh timing dependencies in retry assertions.

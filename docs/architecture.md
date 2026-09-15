@@ -89,3 +89,7 @@ The host can render HTML through a Chrome debugging pipe and compare PNG pixels 
 ## HTML modules
 
 - match compares decoded PNG pixels with antialiasing-aware YIQ differences.
+
+## Extraction engine
+
+The read-only extractor in plugin/main.js serializes the visible node tree, reference PNG and assets while enforcing extraction budgets. VM cases exercise this execution unit directly.

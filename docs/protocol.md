@@ -212,3 +212,7 @@ The bridge uses port 32523. Keep only one project bridge active on the machine. 
 ## Preparation ordering
 
 Target revalidation currently precedes the before-render and later preparation reads. Keep the target unchanged throughout preparation.
+
+## Extraction engine
+
+The read-only extractor in plugin/main.js serializes the visible node tree, reference PNG and assets while enforcing extraction budgets. VM cases exercise this execution unit directly.

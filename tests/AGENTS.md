@@ -9,6 +9,7 @@ Behavioral tests for the implementation in this revision.
 - `args.test.mjs`: Tests for args behavior in this revision.
 - `bridge.test.mjs`: Tests for bridge behavior in this revision.
 - `cli.test.mjs`: Tests for cli behavior in this revision.
+- `extract.test.mjs`: Tests for extract behavior in this revision.
 - `fixtures/`: Related implementation, fixtures or configuration.
 - `helpers/`: Isolated synthetic document, bridge and media fixtures.
 - `html-match.test.mjs`: Tests for html match behavior in this revision.
