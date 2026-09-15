@@ -1,16 +1,23 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:vm, node:timers/promises, ./fixtures/html/doc.mjs, ./helpers/harness.mjs, ../src/png.mjs.
+ * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:vm, node:timers/promises, ./fixtures/html/doc.mjs, ./helpers/harness.mjs, ../src/bridge.mjs, ../src/project.mjs, ../src/session.mjs, ../src/record.mjs, ../src/png.mjs.
  * [OUTPUT]: Node.js test cases and fixture setup for this revision.
  * [POS]: Regression coverage for extract; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import vm from 'node:vm';
 import { setTimeout as delay } from 'node:timers/promises';
 import { extractDoc, T } from './fixtures/html/doc.mjs';
-import { fakeFigma, pluginSource } from './helpers/harness.mjs';
-import { pngSize } from '../src/png.mjs';
+import { fakeFigma, pluginSource, harness } from './helpers/harness.mjs';
+import { start } from '../src/bridge.mjs';
+import { init, root, json } from '../src/project.mjs';
+import { pairingToken } from '../src/session.mjs';
+import { localResult } from '../src/record.mjs';
+import { encodePng, pngSize } from '../src/png.mjs';
 
 const BINDING = { fileKey: 'example', nodeId: '1:2' };
 const BINARY = '__figmaAgentControlBinary';
@@ -431,4 +438,148 @@ test('Exceeding 200 binaries, 48 MB including explicit islands, estimated 12 MB 
   const page = await plugin().send({ targetNodeId: '1:1', binding: { fileKey: 'example', nodeId: '1:1' } });
   assert.match(page.error, /not a page/);
   assert.match((await plugin().send({ targetNodeId: '2:11' })).error, /Extract target is not visible/);
+});
+
+// -- Bridge layer ---------------------------------------------------------
+const uuid = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+async function bridge(t) {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'figma-agent-control-extract-'));
+  await init(cwd, 'https://www.figma.com/design/example/Test?node-id=1-2');
+  // Inject a fixed connection clock so leases expire only with b.clock, independent of execution speed.
+  const b = { cwd, home: path.join(cwd, 'plugin-home'), clock: 0, run: id => path.join(root(cwd), 'runs', id) };
+  b.boot = async () => {
+    b.pairing = await pairingToken(b.home);
+    b.bridge = await start(cwd, 0, { now: () => b.clock, pollHoldMs: 0, pluginToken: b.pairing });
+    b.token = (await json(path.join(root(cwd), 'session.json'))).token;
+  };
+  await b.boot();
+  t.after(async () => { await b.bridge.close(); await fs.rm(cwd, { recursive: true, force: true }); });
+  const send = async (route, headers, body) => {
+    const response = await fetch(`http://127.0.0.1:${b.bridge.port}${route}`, { method: body === undefined ? 'GET' : 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: response.status, body: await response.json() };
+  };
+  b.cli = (route, body) => send(route, { 'X-Session-Token': b.token }, body);
+  b.plugin = (route, body) => send(route, { 'X-Session-Token': b.pairing, 'X-Plugin-Version': b.bridge.version }, body);
+  b.poll = (client = 'plugin') => b.plugin(`/poll?client=${client}&file=example`);
+  return b;
+}
+const exists = file => fs.access(file).then(() => true, () => false);
+
+test('Bridge accepts islands only for extract with 1-500 distinct node IDs, permits extract scale, compares islands for requestId, and keeps interrupted extracts from blocking run', { timeout: 10000 }, async t => {
+  const b = await bridge(t);
+  await b.poll();
+  const original = { operation: 'extract', requestId: uuid(1), islands: ['1:3'], scale: 2 };
+  assert.equal((await b.cli('/job', original)).status, 202);
+  const ids = n => Array.from({ length: n }, (_, i) => `3:${i}`);
+  const rejected = { 'empty list': { islands: [] }, '501 entries': { islands: ids(501) }, 'duplicates': { islands: ['1:3', '1:3'] }, 'invalid ID': { islands: ['x'] },
+    'not an array': { islands: '1:3' }, 'used with inspect': { operation: 'inspect', islands: ['1:3'] }, 'scale above 4': { scale: 4.01 } };
+  for (const [name, body] of Object.entries(rejected)) assert.equal((await b.cli('/job', { operation: 'extract', ...body })).status, 400, name);
+  for (const body of [{ islands: ids(500), scale: 4 }, { islands: ['I1:2;3:4'], scale: 0.1 }, {}])
+    assert.equal((await b.cli('/job', { operation: 'extract', ...body })).body.code, 'ACTIVE_JOB', JSON.stringify(body).slice(0, 80));
+  assert.equal((await b.cli('/job', { ...original, islands: ['1:4'] })).status, 400, 'Same requestId with changed islands');
+  assert.deepEqual(await b.cli('/job', original).then(r => [r.status, r.body.reused]), [200, true]);
+  const delivered = (await b.poll()).body;
+  assert.deepEqual([delivered.id, delivered.islands, delivered.scale], [uuid(1), ['1:3'], 2]);
+
+  // Restart after delivery: recovery guidance treats the task as read-only; it loads as recovered without becoming unresolved or blocking run.
+  await b.bridge.close();
+  assert.equal((await json(path.join(b.run(uuid(1)), 'recovery.json'))).instruction, 'Read-only job interrupted; the document was not modified; resubmit it');
+  await b.boot();
+  assert.deepEqual((await b.cli('/status')).body.unresolved, []);
+  await b.poll();
+  assert.equal((await b.cli('/job', { operation: 'run', code: 'return 1;' })).status, 202);
+  const record = await localResult(b.cwd, uuid(1));
+  assert.equal(record.instruction, 'Read-only job interrupted; the document was not modified; resubmit it');
+  assert.equal(await exists(path.join(b.run(uuid(1)), 'before.json')), false);
+});
+
+test('After an extract disconnects and its lease expires, a new instance takes over and marks the task unexecuted, discarding late old results; runs still become unknown', { timeout: 10000 }, async t => {
+  const b = await bridge(t);
+  await b.poll();
+  const { body: { id } } = await b.cli('/job', { operation: 'extract' });
+  assert.equal((await b.poll()).body.id, id);
+  assert.equal((await b.poll('reopened')).body.code, 'CONNECTION_IN_USE', 'Do not take over a fresh old-instance lease');
+  b.clock = 15000;
+  const taken = await b.poll('reopened');
+  assert.equal(taken.status, 200, JSON.stringify(taken.body));
+  const failed = await json(path.join(b.run(id), 'result.json'));
+  assert.deepEqual([failed.ok, failed.executionStarted], [false, false]);
+  assert.match(failed.error, /disconnected while running a read-only job.*the document was not modified; it can be resubmitted/);
+  assert.equal((await b.plugin('/complete', { id, ok: true, output: { schema: 1 } })).status, 200);
+  assert.deepEqual(await json(path.join(b.run(id), 'result.json')), failed);
+  assert.equal((await b.poll('plugin')).body.code, 'RETIRED_CLIENT');
+
+  const write = await b.cli('/job', { operation: 'run', code: 'return 1;' });
+  assert.equal(write.status, 202, JSON.stringify(write.body));
+  assert.equal((await b.poll('reopened')).body.id, write.body.id);
+  b.clock = 30000;
+  assert.equal((await b.poll('third')).body.code, 'OPERATION_UNCERTAIN');
+  assert.equal(await exists(path.join(b.run(write.body.id), 'result.json')), false);
+});
+
+test('Extract binaries persist as files/output-<n> PNG/GIF/SVG/WebP descriptors without pixel summaries, before.json, or change sets', { timeout: 10000 }, async t => {
+  const b = await bridge(t);
+  await b.poll();
+  const { body: { id } } = await b.cli('/job', { operation: 'extract', islands: ['1:3'] });
+  await b.poll();
+  const png = encodePng(2, 1, new Uint8Array(8).fill(255)), gif = Buffer.from('GIF89a\x01\x00\x01\x00', 'latin1'), svg = Buffer.from('<svg data-node="1:3"/>');
+  const webp = Buffer.from('RIFF\x1a\x00\x00\x00WEBPVP8L', 'latin1');
+  const output = { schema: 1, reference: { [BINARY]: 0 }, images: { g: { bytes: { [BINARY]: 1 }, width: 1, height: 1 }, w: { bytes: { [BINARY]: 3 }, width: 1, height: 1 } },
+    islands: { '1:3': 'b0' }, svgs: { b0: { [BINARY]: 2 } }, islandsSkipped: [] };
+  const done = await b.plugin('/complete', { id, ok: true, output, binaries: [png, gif, svg, webp].map(x => Buffer.from(x).toString('base64')),
+    bindingVerified: { fileKey: 'example', pageId: '1:1', nodeId: '1:2' } });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  const result = await json(path.join(b.run(id), 'result.json'));
+  assert.deepEqual([result.output.reference.file, result.output.reference.type, result.output.reference.width, result.output.reference.pixels], ['files/output-1.png', 'png', 2, undefined]);
+  assert.deepEqual([result.output.images.g.bytes.file, result.output.images.g.bytes.type], ['files/output-2.gif', 'gif']);
+  assert.deepEqual([result.output.images.w.bytes.file, result.output.images.w.bytes.type], ['files/output-4.webp', 'webp']);
+  assert.deepEqual([result.output.svgs.b0.file, result.output.svgs.b0.type], ['files/output-3.svg', 'svg']);
+  assert.equal(await fs.readFile(path.join(b.run(id), 'files/output-3.svg'), 'utf8'), '<svg data-node="1:3"/>');
+  assert.deepEqual([result.binaryErrors, result.binaries, result.changes, result.before], [undefined, undefined, undefined, undefined]);
+  assert.equal(await exists(path.join(b.run(id), 'before.json')), false);
+  assert.equal((await json(path.join(b.run(id), 'job.json'))).state, 'done');
+});
+
+// -- CLI end to end -------------------------------------------------------
+test('CLI extract persists reference/bitmap/explicit-island files with shape/stats summaries; skipped islands keep ok true but exit 1, invalid islands fail before submission, and forced stop gives read-only recovery guidance', { timeout: 20000 }, async t => {
+  const h = await harness(t, { doc: extractDoc() });
+  const ok = await h.run('extract', '--scale', '2', '--island', '2:9');
+  assert.equal(ok.code, 0, JSON.stringify(ok.json).slice(0, 400));
+  assert.deepEqual([ok.json.operation, ok.json.ok, ok.json.extract.stats.nodes, ok.json.extract.islandsSkipped, ok.json.output.omitted], ['extract', true, 27, [], true]);
+  const result = JSON.parse(await fs.readFile(ok.json.resultFile, 'utf8')), out = result.output;
+  assert.deepEqual([out.reference.type, out.reference.width, out.reference.height], ['png', 320, 320]);
+  assert.equal((await fs.stat(path.join(ok.json.evidence, out.reference.file))).size, out.reference.bytes);
+  assert.equal(out.images.h1.bytes.type, 'png');
+  const island = out.svgs[out.islands['2:9']];
+  assert.equal(island.type, 'svg');
+  assert.equal(await fs.readFile(path.join(ok.json.evidence, island.file), 'utf8'), '<svg data-node="2:9"/>');
+  assert.equal(typeof out.svgs[out.islands['2:5']], 'string');
+  assert.deepEqual([result.binaryErrors, result.changes], [undefined, undefined]);
+  assert.equal(await exists(path.join(ok.json.evidence, 'before.json')), false);
+
+  const skipped = await h.run('extract', '--island', '2:11', '--island', '3-10');
+  assert.equal(skipped.code, 1);
+  assert.equal(skipped.json.ok, true);
+  assert.deepEqual(skipped.json.extract.islandsSkipped, ['2:11', '3:10']);
+  assert.ok(skipped.json.extract.warnings.includes('Island node has no rendered content (fully clipped, a mask, or opacity 0); skipped: 3:10'));
+  assert.match(skipped.json.instruction, /2 explicit island\(s\) have no result/);
+  assert.equal((await h.cli('result', skipped.json.id)).code, 1);
+
+  const runs = await fs.readdir(path.join(root(h.cwd), 'runs'));
+  const bad = await h.cli('extract', '--island', 'oops');
+  assert.equal(bad.code, 1);
+  assert.match(bad.json.error, /^--island needs a valid node ID/);
+  assert.deepEqual(await fs.readdir(path.join(root(h.cwd), 'runs')), runs);
+  assert.deepEqual(h.errors, []);
+
+  // stop --force interrupts an active extract with the same guidance as result: resubmit it as a read-only task.
+  const started = Promise.withResolvers();
+  h.doc.frame.exportAsync = () => { started.resolve(); return new Promise(() => {}); };
+  const hung = await h.cli('extract', '--no-wait');
+  await h.tick();
+  await started.promise;
+  const stopped = await h.cli('stop', '--force');
+  assert.equal(stopped.code, 0, JSON.stringify(stopped.json));
+  assert.equal(stopped.json.recovery, `Recovery instruction written for running job ${hung.json.id}: Read-only job interrupted; the document was not modified; resubmit it`);
 });

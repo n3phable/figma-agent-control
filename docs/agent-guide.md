@@ -2,6 +2,8 @@
 
 [Simplified Chinese](zh_cn/agent-guide.md)
 
+Figma Agent Control has one execution primitive: run a trusted Plugin API script against a target node inside a bound scope. `inspect`, `preview`, `variables`, and `extract` are built-in reads. Other commands manage the connection, interpret evidence, or analyze and export results.
+
 ## Getting started
 
 Check `command -v figma-agent-control` before using the CLI. If it is unavailable, follow the [source installation instructions](../README.md#install-from-source). Installing a global command or skill is a separate setup action: follow the user's chosen installation scope. An already authorized installation does not need another confirmation. If you have a checkout but no global command, use a shell function:
@@ -144,6 +146,7 @@ Read `instruction` first, then the evidence needed to choose the next action:
 | Exit code | Meaning | Action |
 |---|---|---|
 | `0` | Success | Continue |
+| `1` | Execution or visual-check failure, incomplete cleanup/extraction, or a reviewed but unknown result | Read `instruction`. Only `executionStarted: false` proves that the script did not start |
 | `2` | Still pending or needs review | For `waitStatus: timeout`, wait for the same ID. For `needs-review`, follow the review procedure |
 
 ### Parsing output

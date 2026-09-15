@@ -85,6 +85,7 @@ figma-agent-control stop
 | 命令 | 用途 |
 |---|---|
 | `init`, `connect`, `stop`, `status`, `doctor` | 绑定范围、管理桥接、诊断连接 |
+| `inspect`, `preview`, `variables`, `extract` | 读取节点与变量、导出 PNG，或提取生成 HTML 所需的数据 |
 | `run` | 执行可信脚本，支持 `--lib`、`--data`，以及可选的 `--expect changed\|unchanged` |
 | `clean` | 重新检查并删除失败 run 留下的符合条件的节点，形成独立的 Undo 步骤 |
 | `image-diff`, `report` | 比较 PNG，或汇总任务耗时、失败与重复执行 |

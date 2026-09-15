@@ -82,6 +82,14 @@ The CLI waits by observing evidence files and writes the job ID to stderr first.
 
 Late results can still land for recovered jobs. Results belonging to another project receive `FOREIGN_JOB` and stay in the iframe until their bridge returns. Diagnostics prioritize that cause so a generic “restart the plugin” instruction does not discard a real result.
 
+### Extraction and HTML
+
+Background-dependent effects need special handling: an SVG export does not include the underlying scene. Automatic island selection avoids them, and the host independently vetoes unsafe inlining unless an override explicitly requests it. Reference baking is different: it crops the complete reference rectangle, freezes the visible content there, and must remain a reported limitation.
+
+## Extraction ownership
+
+Read-only extraction runs inside plugin/main.js and shares its document-access helpers.
+
 ## Browser comparison layer
 
 The host can render HTML through a Chrome debugging pipe and compare PNG pixels with a supplied reference. Use the comparison module API for this stage.
@@ -89,7 +97,3 @@ The host can render HTML through a Chrome debugging pipe and compare PNG pixels 
 ## HTML modules
 
 - match compares decoded PNG pixels with antialiasing-aware YIQ differences.
-
-## Extraction engine
-
-The read-only extractor in plugin/main.js serializes the visible node tree, reference PNG and assets while enforcing extraction budgets. VM cases exercise this execution unit directly.

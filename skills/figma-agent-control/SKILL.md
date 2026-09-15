@@ -5,6 +5,8 @@ description: Operate the local Figma CLI using the capabilities documented in th
 
 # Figma Agent Control
 
+FAC executes a trusted Plugin API function body with full access to the current file. The binding defines valid task targets, and the selected target defines evidence coverage. `inspect`, `preview`, `variables`, and `extract` provide built-in reads.
+
 This skill defines the working order and recovery rules. Read the [agent guide](../../docs/agent-guide.md) for command examples and [protocol](../../docs/protocol.md) for exact fields. The installed version's `figma-agent-control help` is the command syntax authority.
 
 ## Start

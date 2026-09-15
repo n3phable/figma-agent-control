@@ -83,6 +83,7 @@ A submitting command waits by default and returns one JSON object. Its stderr re
 | Commands | Purpose |
 |---|---|
 | `init`, `connect`, `stop`, `status`, `doctor` | Bind a scope, manage the bridge, and diagnose the connection |
+| `inspect`, `preview`, `variables`, `extract` | Read nodes and variables, export PNGs, or extract HTML inputs |
 | `run` | Execute a trusted script with `--lib`, `--data`, and optional `--expect changed\|unchanged` |
 | `clean` | Recheck and delete eligible nodes left by a failed run, as a separate Undo step |
 | `image-diff`, `report` | Compare PNGs or summarize job timings, failures, and repeated executions |

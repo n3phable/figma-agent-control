@@ -2,6 +2,8 @@
 
 [English](../agent-guide.md) · [中文文档索引](README.md)
 
+Figma Agent Control 只有一个执行原语：以绑定范围内的节点为目标，运行可信的 Plugin API 脚本。`inspect`、`preview`、`variables` 和 `extract` 是内置只读操作；其他命令管理连接、解释证据，或分析与导出结果。
+
 ## 开始
 
 使用前先运行 `command -v figma-agent-control`。命令不存在时，按[源码安装说明](../../README.md#install-from-source)处理。全局命令和 Skill 安装属于单独的环境设置，应遵循用户选择的安装范围；已经授权的安装无需再次确认。如果已有源码但没有全局命令，可以定义 shell 函数：
@@ -144,6 +146,7 @@ for (const node of target.findAllWithCriteria({ types: ['INSTANCE'] })) {
 | 退出码 | 含义 | 行动 |
 |---|---|---|
 | `0` | 成功 | 继续 |
+| `1` | 执行或画面判定失败、清理/提取不完整，或已核验但结果未知 | 读 `instruction`；只有 `executionStarted:false` 能证明脚本未开始 |
 | `2` | 尚未结束或需要核验 | `waitStatus:timeout` 时等待原 ID；`needs-review` 时走核验流程 |
 
 ### 解析输出

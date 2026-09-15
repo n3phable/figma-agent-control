@@ -19,7 +19,7 @@ const URL_ = 'https://www.figma.com/design/k/n?node-id=1-2';
 // Valid positional arguments from the documented usage; resolve also needs two required flags. Independent of COMMANDS to verify the command table itself.
 const POSITIONALS = {
   help: [], init: [URL_], connect: [], stop: [], status: [], doctor: [],
-  run: ['a.js'], inspect: [], preview: [], variables: [], result: [ID], wait: [ID],
+  run: ['a.js'], inspect: [], preview: [], variables: [], extract: [], result: [ID], wait: [ID],
   resolve: [ID], 'image-diff': ['a.png', 'b.png'], report: [],
 };
 const FLAGS = { resolve: ['--inspect', ID2, '--previous-plugin-stopped'] };
@@ -78,6 +78,18 @@ test('preview allows repeated --node: use the first target, deduplicate normaliz
   const many = n => Array.from({ length: n }, (_, i) => ['--node', `1:${i + 1}`]).flat();
   assert.equal(opts('preview', ...many(50)).nodes.length, 50);
   assert.throws(() => parse(['preview', ...many(51)]), /at most 50/);
+});
+
+test('extract accepts --scale and repeated --island: normalize IDs, reject duplicates or more than 500, name invalid options, and reject script options', () => {
+  assert.deepEqual(opts('extract', '--node', '1-2', '--scale', '2', '--island', '3-4', '--island', 'I5:6;7:8'), { targetNodeId: '1:2', scale: 2, islands: ['3:4', 'I5:6;7:8'] });
+  assert.deepEqual(opts('extract', '--timeout', '60', '--full'), { timeoutSeconds: 60, full: true });
+  assert.throws(() => parse(['extract', '--island', 'x']), /^Error: --island needs a valid node ID/);
+  assert.throws(() => parse(['extract', '--node', 'x']), /^Error: --node needs a valid node ID/);
+  assert.throws(() => parse(['extract', '--island', '1:2', '--island', '1-2']), /--island has a duplicate node: 1:2/);
+  const many = n => Array.from({ length: n }, (_, i) => ['--island', `1:${i + 1}`]).flat();
+  assert.equal(opts('extract', ...many(500)).islands.length, 500);
+  assert.throws(() => parse(['extract', ...many(501)]), /^Error: --island takes at most 500 nodes$/);
+  for (const flag of [['--lib', 'a.js'], ['--depth', '1'], ['--expect', 'changed'], ['--node', '1:2', '--node', '1:3']]) assert.throws(() => parse(['extract', ...flag]), /extract \[--node/, flag[0]);
 });
 
 test('Commands other than preview reject repeated --node instead of silently writing to the last target', () => {

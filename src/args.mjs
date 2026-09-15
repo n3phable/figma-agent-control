@@ -23,6 +23,8 @@ export const COMMANDS = {
   inspect: { usage: 'inspect [--node <ID>] [--depth <1-31>]: read the node tree (including masks and the ancestor visibility chain)', positionals: [0, 0], submit: true, options: { ...node, depth: { type: 'string' }, ...wait } },
   preview: { usage: 'preview [--node <ID>]... [--scale <0.1-4>]: export PNG; repeat --node for batch export', positionals: [0, 0], submit: true, options: { node: { type: 'string', multiple: true }, scale: { type: 'string' }, ...wait } },
   variables: { usage: 'variables [--node <ID>]: local variable catalog and binding counts within the target', positionals: [0, 0], submit: true, options: { ...node, ...wait } },
+  extract: { usage: 'extract [--node <ID>] [--scale <0.1-4>] [--island <ID>]... [--timeout <seconds>] [--no-wait] [--full]: read-only extraction of pixel-replica data (node tree, reference PNG, bitmaps, SVG islands); --island adds islands, exit code 1 if any is skipped',
+    positionals: [0, 0], submit: true, options: { ...node, scale: { type: 'string' }, island: { type: 'string', multiple: true }, ...wait } },
   result: { usage: 'result <job-id> [--full]: read local evidence', positionals: [1, 1], options: { full: { type: 'boolean' } } },
   wait: { usage: 'wait <job-id> [--timeout <seconds>] [--full]: wait for the original result without resubmitting', positionals: [1, 1], options: { timeout: { type: 'string' }, full: { type: 'boolean' } } },
   resolve: { usage: 'resolve <original-job-id> --inspect <inspect-job-id> --previous-plugin-stopped: after verification, end the unresolved wait without replaying the script', positionals: [1, 1],
@@ -36,9 +38,9 @@ const integer = (value, min, max, message) => {
   if (!/^\d+$/.test(value) || Number(value) < min || Number(value) > max) throw Error(message);
   return Number(value);
 };
-const nodeId = value => {
+const nodeId = (value, flag = '--node') => {
   const id = value.replace(/-/g, ':');
-  if (!isNodeId(id)) throw Error('--node needs a valid node ID, such as 1:2 or I1:2;3:4');
+  if (!isNodeId(id)) throw Error(`${flag} needs a valid node ID, e.g. 1:2 or I1:2;3:4`);
   return id;
 };
 const scale = value => {
@@ -66,7 +68,7 @@ export function parse(argv) {
   if (positionals.length < spec.positionals[0] || positionals.length > spec.positionals[1]) throw Error('Usage: ' + spec.usage);
   const o = {};
   if (v.node !== undefined) {
-    const ids = [].concat(v.node).map(nodeId);
+    const ids = [].concat(v.node).map(id => nodeId(id));
     if (new Set(ids).size !== ids.length || ids.length > 50) throw Error('preview accepts at most 50 nodes without duplicates');
     o.targetNodeId = ids[0];
     if (ids.length > 1) o.nodes = ids;
@@ -88,6 +90,12 @@ export function parse(argv) {
   }
   if (v['request-id'] !== undefined) { if (!isJobId(v['request-id'])) throw Error('--request-id must be a lowercase UUID'); o.requestId = v['request-id']; }
   if (v['high-risk'] !== undefined) { if (!v['high-risk'].trim()) throw Error('--high-risk requires a risk description'); o.risk = { level: 'high', reason: v['high-risk'] }; }
+  if (v.island !== undefined) {
+    o.islands = v.island.map(id => nodeId(id, '--island'));
+    const repeated = o.islands.find((id, i) => o.islands.indexOf(id) !== i);
+    if (repeated) throw Error(`--island has a duplicate node: ${repeated}`);
+    if (o.islands.length > 500) throw Error('--island takes at most 500 nodes');
+  }
   if (v.lib !== undefined) o.libFiles = v.lib;
   if (v.data !== undefined) o.dataFile = v.data;
   // Accept ISO format only: timestamps require Z or a time-zone offset; date-only values mean midnight UTC, never a guessed local time zone.

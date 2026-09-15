@@ -67,6 +67,6 @@ export async function stop(cwd, force = false) {
     plugin: 'a plugin panel that is still open shows that it is reconnecting; it reattaches automatically after connect, no reopen needed',
     ...(data.active ? { recovery: !released ? `Job ${data.active} is still finishing; check it later with figma-agent-control wait ${data.active}`
       : await exists(path.join(root(cwd), 'runs', data.active, 'result.json')) ? `Job ${data.active} was not yet delivered to the plugin and is recorded as not executed; it can be resubmitted`
-      : `Recovery instruction written for running job ${data.active} has recovery guidance recorded: reconnect, then inspect first; do not replay the script` } : {}),
+      : `Recovery instruction written for running job ${data.active}: ${(await json(path.join(root(cwd), 'runs', data.active, 'recovery.json')).catch(() => null))?.instruction ?? 'after reconnecting, inspect first; do not replay the script'}` } : {}),
     ...(released ? {} : { note: 'The bridge is still shutting down; run figma-agent-control status later to confirm' }), exitCode: released ? 0 : 2 };
 }

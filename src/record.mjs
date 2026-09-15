@@ -105,12 +105,17 @@ export async function localResult(cwd, id) {
 const OUTPUT_LIMIT = 16 * 1024;
 const clip = (value, limit) => typeof value === 'string' && value.length > limit ? value.slice(0, limit - 3) + '...' : value;
 const elapsed = (from, to) => from && to ? Math.max(0, Date.parse(to) - Date.parse(from)) : null;
-function boundedOutput(output, resultFile) {
+function boundedOutput(output, resultFile, limit = OUTPUT_LIMIT) {
   const bytes = Buffer.byteLength(JSON.stringify(output) ?? 'null');
-  if (bytes <= OUTPUT_LIMIT) return output;
+  if (bytes <= limit) return output;
   const shape = Array.isArray(output) ? { length: output.length } : output && typeof output === 'object' ? { keys: Object.keys(output).slice(0, 30) } : { type: typeof output };
   return { omitted: true, bytes, ...shape, read: `jq '.output' '${resultFile.replaceAll("'", "'\\''")}'` };
 }
+// Successful extracts can still be incomplete through missing explicit islands or binary persistence errors. Named islands require results, and read-only resubmission is harmless,
+// so both yield exit 1. Apply only to extract, not coincidentally named run output keys; html handles its internal submissions separately.
+const extractOk = ({ job, result }) => job?.operation === 'extract' && result?.ok === true;
+const skippedIslands = record => extractOk(record) && Array.isArray(record.result.output?.islandsSkipped) && record.result.output.islandsSkipped.length > 0;
+const lostBinaries = record => extractOk(record) && Array.isArray(record.result.binaryErrors) && record.result.binaryErrors.length > 0;
 function instruction(record) {
   const { result } = record;
   if (result?.ok === false) return result.executionStarted === false
@@ -118,6 +123,8 @@ function instruction(record) {
     : 'The script started running; the document may have been modified; keep the evidence; verify the current state with inspect first; do not replay the script';
   if (result?.verify?.error) return `The script ran, but the visual check did not run (${result.verify.error}); check the rendering with preview or inspect first; do not replay the script`;
   if (result?.verify && result.verify.pass !== true) return `The script ran, but the visual check failed (expect ${result.verify.expect}); review the diff image in verify; do not replay the script; fix it with a new script`;
+  if (lostBinaries(record)) return 'Binary files were not fully saved (see binaryErrors); the document was not modified; resubmit extract';
+  if (skippedIslands(record)) return `${result.output.islandsSkipped.length} explicit island(s) have no result (outside the target's visible subtree, nothing drawn, or export failed; reasons in extract.warnings); the rest of the output is complete; check the node IDs and resubmit`;
   return record.instruction;
 }
 export function summarizeRecord(record) {
@@ -132,18 +139,25 @@ export function summarizeRecord(record) {
   }
   const target = result?.bindingVerified?.nodeId ?? job.targetNodeId;
   if (target) summary.target = target;
-  if (result && 'output' in result) summary.output = boundedOutput(result.output, resultFile);
+  // Extracted trees are not useful in terminal summaries: output always gives shape and a jq command; expose statistics, up to 50 skipped islands and up to 20 warnings separately.
+  const extract = job.operation === 'extract';
+  if (result && 'output' in result) summary.output = boundedOutput(result.output, resultFile, extract ? 0 : OUTPUT_LIMIT);
   for (const key of ['ancestors', 'changes', 'verify', 'binaryErrors']) if (result?.[key] !== undefined) summary[key] = result[key];
+  if (extract && result?.ok === true && result.output) {
+    const { stats, islandsSkipped = [], warnings = [] } = result.output;
+    summary.extract = { stats, islandsSkipped: islandsSkipped.slice(0, 50), ...(islandsSkipped.length > 50 ? { islandsSkippedOmitted: islandsSkipped.length - 50 } : {}),
+      warnings: warnings.slice(0, 20).map(text => clip(text, 300)), ...(warnings.length > 20 ? { warningsOmitted: warnings.length - 20 } : {}) };
+  }
   if (result?.images) summary.images = result.images.map(({ nodeId, name, file, width, height, pixels }) => ({ nodeId, ...(name ? { name } : {}), file: path.join(record.evidence, file), width, height, ...(pixels ? { pixels } : {}) }));
   if (result) summary.timing = { queueMs: elapsed(job.createdAt, job.claimedAt), pluginMs: result.pluginMs ?? null, ...(result.approvalMs ? { approvalMs: result.approvalMs } : {}), totalMs: elapsed(job.createdAt, result.finishedAt) };
   if (record.recovery) summary.recovery = record.recovery.status ?? 'present';
   if (record.resolution) summary.resolution = record.resolution.status;
   return { ...summary, evidence: record.evidence, ...(result ? { resultFile } : {}), instruction: instruction(record) };
 }
-// Exit 0: success; 1: execution/visual failure or a reviewed-but-unknown result where waiting cannot help; 2: pending, including wait expiry or required review.
-export const exitCode = ({ result, resolution }) => result
-  ? (result.ok === false || (result.verify && result.verify.pass !== true) ? 1 : 0)
-  : resolution ? 1 : 2;
+// Exit 0: success; 1: execution/visual failure, missing explicit extract islands, binary persistence errors, or reviewed-but-unknown results where waiting cannot help; 2: pending, including wait expiry or required review.
+export const exitCode = record => record.result
+  ? (record.result.ok === false || (record.result.verify && record.result.verify.pass !== true) || skippedIslands(record) || lostBinaries(record) ? 1 : 0)
+  : record.resolution ? 1 : 2;
 
 // -- Waiting ------------------------------------------------------------
 // Observe evidence files only. Ending a wait neither stops the script nor resubmits it. Expiry returns exit 2 and the task ID for another wait.

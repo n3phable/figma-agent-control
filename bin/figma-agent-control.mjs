@@ -25,11 +25,11 @@ const HELP = {
   lib: '--lib is repeatable: each library executes in a separate enclosing scope, and the body can call its functions directly; same-name declarations shadow outer scopes without conflicts',
   expect: '--expect changed|unchanged: export the target once before and once after the script and compare them to check whether the write changed the rendering; --tolerance sets the number of changed pixels allowed',
   output: 'Submission commands wait by default and print a compact summary; --no-wait only submits, and --full prints the complete record',
-  exitCodes: { 0: 'success', 1: 'failure, failed visual verification, or a reviewed result that remains unknown', 2: 'not complete (wait expired or review pending; for stop, the bridge is still finishing shutdown, so check status later)' }
+  exitCodes: { 0: 'success', 1: 'failure, failed visual verification, skipped explicit extract islands, or a reviewed result that remains unknown', 2: 'not complete (wait expired or review pending; for stop, the bridge is still finishing shutdown, so check status later)' }
 };
 
 async function submit(command, [file], o) {
-  const body = { operation: command, targetNodeId: o.targetNodeId, nodes: o.nodes, snapshotDepth: o.snapshotDepth, scale: o.scale, risk: o.risk, requestId: o.requestId, expect: o.expect, tolerance: o.tolerance };
+  const body = { operation: command, targetNodeId: o.targetNodeId, nodes: o.nodes, snapshotDepth: o.snapshotDepth, scale: o.scale, risk: o.risk, requestId: o.requestId, expect: o.expect, tolerance: o.tolerance, islands: o.islands };
   if (command === 'run') {
     body.code = await fs.readFile(path.resolve(file), 'utf8');
     body.label = path.basename(file);

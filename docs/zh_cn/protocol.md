@@ -29,6 +29,7 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 | `runs/<job-id>/` | 桥接/session | 任务证据；目录权限 `0700` |
 | `recoveries/<id>/` | session | 归档的陈旧锁与接管报告 |
 | `diffs/` | `image-diff` | PNG 比对产物 |
+| `check/<extract-job-id>/` | HTML 命令 | 渲染比对证据 |
 
 只有检查 PID 返回 `ESRCH` 时，锁才被视为陈旧。接管时先独占创建 `bridge.lock.takeover`，复读原锁，只有内容未变才归档。空锁可能处于创建与写入 PID 之间：`connect`、无会话时的 `stop` 和 `doctor` 都把它视为已占用，绝不删除。存活的 PID 一律视为占用，即使操作系统可能复用了它；诊断会给出人工检查步骤。
 
@@ -53,11 +54,15 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 
 | 字段 | 适用操作 | 约束 |
 |---|---|---|
+| `operation` | 全部 | `run`、`inspect`、`preview`、`variables` 或 `extract` |
 | `code` | Run | 非空 JavaScript 函数体 |
 | `libs` | Run | 最多 20 个 `{name, code}` 条目，UTF-8 合计不超过 2 MiB |
+| `targetNodeId` | 全部 | 缺省为绑定节点；插件核验其属于绑定范围；extract 不能以页面为目标 |
 | `snapshotDepth` | Run/inspect | `1`–`31` 的整数；显式限定快照深度 |
 | `nodes` | Preview | 2–50 个不同节点；第一个必须等于实际目标 |
 | `names` | Preview | 1–50 个不重复、非空且各不超过 200 字符的名称；与 `targetNodeId`、`nodes` 互斥 |
+| `scale` | Preview/extract；带 expect 的 run | `0.1`–`4`；extract 的倍率只影响参考图 |
+| `islands` | Extract | 1–500 个不重复的追加 SVG 导出节点 ID |
 | `data` | Run | JSON，UTF-8 不超过 1 MiB，以 `data` 传入脚本 |
 | `expect` | Run | `changed` 或 `unchanged` |
 | `tolerance` | 带 expect 的 run | 非负的变化像素容许数；缺省 `0` |
@@ -83,6 +88,8 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 
 3. 解析目标，并核验它属于绑定范围。目标不存在与越界分别报错。
 
+4. 获取修改前快照，预算为 2,000 个节点。缺省深度为 32；没有显式声明的截断会拒绝 run。显式 `snapshotDepth` 允许有意缩浅证据。Preview、variables 和 extract 只快照根节点。
+
 5. 高风险 run 最多等待面板确认 300 秒。拒绝或超时均不执行脚本。
 
 6. 把写前检查点发送给桥接，原子保存 `before.json` 并固定其哈希。十秒内未收到回执则不执行。
@@ -93,9 +100,13 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 
 10. 获取修改后快照，以及请求的修改后图片。成功且目标不是页面的 run 还会比较页面根子节点。修改后快照过大会使变更集不可用；修改后导出失败会使画面核验不可用，两者都不改变脚本自身的结果。
 
+11. 序列化结果并提取嵌套二进制数据。大型插件消息使用下文定义的序列化封装。
+
 可信脚本拥有当前文件的完整 Plugin API 访问能力。绑定定义有效目标，选中的目标定义快照、变更集和画面核验的覆盖范围。
 
 ### 二进制返回值
+
+Run 与 extract 输出共用二进制通道。
 
 - 嵌套输出中任意位置的 `Uint8Array` 等字节视图，以及完整的 PNG/JPEG 整数数组，都会被识别并替换为 `{"__figmaAgentControlBinary": index}` 占位。脚本自行返回这个保留键会导致任务失败。
 
@@ -103,9 +114,39 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 
 - 桥接写入 `files/output-<n>.<type>`，序号从 1 开始，再把占位替换为 `{file, bytes, sha256, type, width?, height?, pixels?}`。路径相对于任务目录。
 
+- 内容识别支持 PNG、JPEG、GIF、WebP、PDF、SVG、MP4（第 4–8 字节为 `ftyp`）和 WebM（前缀 `1A 45 DF A3`）；未知数据使用 `bin`。PNG 带尺寸。Run 的 PNG 还带透明度与主色摘要；单图超过 1,600 万像素，或任务累计分析超过 3,200 万像素时跳过，记为 `pixels.skipped: "too-large"`。Extract 不计算像素摘要。
+
 - 无效占位替换为 `{binaryUnavailable:true}` 并追加 `binaryErrors`，其余证据照常保留。
 
 - 二进制数据不计入 iframe 的结构化结果上限。脚本返回的 base64 字符串不在豁免范围内，可能导致整个返回值被丢弃。
+
+### Extract
+
+Extract 是内建读取，不执行脚本。它没有确认、写前检查点或 Undo 边界。它加载目标页，但不改变用户正在查看的页面。所有失败都带 `executionStarted:false`；中断的 extract 可以重新提交。
+
+提取只序列化可见节点，丢弃不可见子树。目标不能是页面，也不能不可见。自动 SVG 孤岛选择最大的纯图形子树：至少包含一个矢量类节点，没有文字、路径文字或可见位图，没有依赖背景的效果，且根节点有绘制、不是蒙版，也不是提取目标。背景依赖包括 GLASS、背景模糊，以及 NORMAL/PASS_THROUGH 之外的混合模式。自动 SVG 字符串按内容去重。
+
+显式 `islands` 在自动导出之外追加。已自动导出的节点直接复用，其他显式孤岛使用二进制 SVG，不去重。可见目标树之外、没有绘制或导出失败的节点会跳过：`islandsSkipped` 与 `warnings` 给出说明，`ok` 仍为 true，CLI 退出码为 `1`。
+
+提取期间目标页有变化时，追加 `documentChangedDuringExtract`：树、参考图与孤岛可能对应不同时间点。
+
+| 限制 | 上限 | 处理方式 |
+|---|---|---|
+| 可见节点 | 10,000 | 缩小目标 |
+| 参考图、位图、显式 SVG 二进制 | 200 项，base64 合计 48 MB | 缩小目标或降低倍率 |
+| 结构化输出 | 估算 UTF-8 上界 12 MB | 缩小目标 |
+
+| 字段 | 含义 |
+|---|---|
+| `schema`, `islandRule` | Schema 为 `1`；自动孤岛规则版本为 `2` |
+| `root` | 节点树，包含 `id`、`name`、`type`、目标坐标系变换 `[[a,c,tx],[b,d,ty]]`、尺寸，以及裁切后的目标坐标系 `renderBounds` 或 null。根变换为单位矩阵。其他属性省略默认值；文字样式放在 `segments` |
+| `colorProfile`, `scale` | 文档颜色配置与提取倍率 |
+| `reference` | 通过 `useAbsoluteBounds` 导出的节点自身盒子 PNG，应用倍率，优先使用 sRGB；回退到文档颜色配置时追加警告 |
+| `images` | 按 image hash 去重的 `{bytes, width, height}` 条目；字节取不到时追加警告 |
+| `islands`, `svgs` | 节点到 SVG key 的映射；`s<n>` 是自动孤岛字符串，`b<n>` 是显式孤岛二进制 |
+| `islandsSkipped` | 跳过的显式节点 ID |
+| `stats` | `nodes`、`islands`、`svgs`、`images`、`svgMs`、`componentMs`、`svgSrgb`、`lineHeightMissing`、`postScriptMissing` |
+| `warnings` | 非致命的导出、图片、颜色配置或一致性问题 |
 
 ### 结果文件
 
@@ -196,6 +237,10 @@ iframe 与执行代码使用 postMessage。每个任务都有随机 `channelNonc
 
 Stdout 只包含一个 JSON 对象。错误形状为 `{error,code}`，错误文字最多 2,000 字符。不要把 stderr 合并进 JSON 输出。
 
+提交类命令默认等待并打印摘要；`--full` 打印完整记录；`--no-wait` 直接返回桥接响应。开始等待时，stderr 输出一行 `{submitted,next,reused?}` JSON，因此 CLI 被外部终止后仍可按 ID 继续。HTML 每提交一个 extract 都写一行回执。重复请求会等待原任务并返回原任务结果。
+
+摘要 `output` 超过 16 KiB UTF-8 时，替换为读取命令。Extract 输出始终只给结构形状/读取命令，另带 `extract:{stats,islandsSkipped,warnings}`；最多展开五十个跳过 ID，以及二十条各不超过 600 字符的警告，并给出省略数量。
+
 | `waitStatus` | 含义 |
 |---|---|
 | `completed` | 结果已落盘 |
@@ -205,9 +250,14 @@ Stdout 只包含一个 JSON 对象。错误形状为 `{error,code}`，错误文�
 | 退出码 | 通用命令 |
 |---|---|
 | `0` | 成功 |
+| `1` | 失败、画面核验失败/不可用、跳过/拒绝清理、跳过显式孤岛或提取二进制不完整，或已核验但结果未知 |
 | `2` | 尚未完成：等待超时或待核验。对 stop，表示已接受关闭，但约五秒后仍未释放锁；应稍后检查状态 |
 
 `report --since` 接受 ISO 日期/时间；带时间时必须提供 `Z` 或时区偏移，只有日期则按 UTC 零点处理。`jobs.failed` 统计 `ok:false`；`jobs.verifyFailed` 统计执行成功但画面核验失败/不可用的任务，两者互斥。
+
+## 提取实现位置
+
+只读提取在 plugin/main.js 内实现，并共享文档读取辅助函数。
 
 ## 连接范围
 
@@ -216,7 +266,3 @@ Stdout 只包含一个 JSON 对象。错误形状为 `{error,code}`，错误文�
 ## 准备阶段顺序
 
 当前目标复核发生在前图导出及后续准备读取之前。准备期间保持目标不变。
-
-## 提取引擎
-
-plugin/main.js 中的只读提取器序列化可见节点树、参考 PNG 与资源，并检查提取预算。VM 用例直接验证此执行单元。

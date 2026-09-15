@@ -17,16 +17,16 @@ import { changeSet } from './record.mjs';
 
 export const DEFAULT_PORT = 32523;
 const assets = fileURLToPath(new URL('../plugin/', import.meta.url));
-const OPERATIONS = new Set(['run', 'inspect', 'preview', 'variables']);
+const OPERATIONS = new Set(['run', 'inspect', 'preview', 'variables', 'extract']);
 const PLUGIN_ROUTES = new Set(['/poll', '/heartbeat', '/checkpoint', '/approve', '/complete']);
 const BINARY_KEY = '__figmaAgentControlBinary';
 // Pixel decoding blocks the event loop: skip summaries above 16 million pixels per image or 32 million per task.
 const PIXEL_LIMIT = 16e6, JOB_PIXEL_LIMIT = 32e6;
 
 const normalizeRisk = risk => risk?.level === 'high' ? { level: 'high', reason: risk.reason } : { level: 'normal' };
-// A requestId must always describe identical work: resubmission retrieves the original job and cannot run different content under the old ID.
+// A requestId must always describe identical work: resubmission retrieves the original job, never new content. Append islands to preserve comparisons with older records.
 const specKey = job => JSON.stringify([job.bindingId, job.operation, job.code ?? '', job.libs ?? [], job.targetNodeId ?? null, job.snapshotDepth ?? null,
-  job.nodes ?? null, job.scale ?? null, job.data ?? null, normalizeRisk(job.risk), job.expect ?? null, job.tolerance ?? null]);
+  job.nodes ?? null, job.scale ?? null, job.data ?? null, normalizeRisk(job.risk), job.expect ?? null, job.tolerance ?? null, job.islands ?? null]);
 
 // -- Task validation ----------------------------------------------------
 // Pure normalization of CLI requests into task records; reject every out-of-range field.
@@ -42,14 +42,15 @@ function buildJob(data, binding) {
   if (data.nodes !== undefined && (data.operation !== 'preview' || !Array.isArray(data.nodes) || data.nodes.length < 2 || data.nodes.length > 50 || data.nodes.some(id => !isNodeId(id)) || new Set(data.nodes).size !== data.nodes.length || data.nodes[0] !== (data.targetNodeId ?? binding.nodeId))) throw Error('nodes is only for preview: 2-50 unique node IDs, the first equal to the target node');
   if (data.expect !== undefined && (!run || !['changed', 'unchanged'].includes(data.expect))) throw Error('expect is only for run: changed or unchanged');
   if (data.tolerance !== undefined && (data.expect === undefined || !Number.isInteger(data.tolerance) || data.tolerance < 0 || data.tolerance > 1e8)) throw Error('tolerance requires expect and must be a non-negative integer pixel count');
-  if (data.scale !== undefined && ((data.operation !== 'preview' && data.expect === undefined) || typeof data.scale !== 'number' || !Number.isFinite(data.scale) || data.scale < 0.1 || data.scale > 4)) throw Error('scale is for preview or run with expect and must be between 0.1 and 4');
+  if (data.islands !== undefined && (data.operation !== 'extract' || !Array.isArray(data.islands) || !data.islands.length || data.islands.length > 500 || data.islands.some(id => !isNodeId(id)) || new Set(data.islands).size !== data.islands.length)) throw Error('islands is only for extract: 1-500 unique node IDs');
+  if (data.scale !== undefined && ((!['preview', 'extract'].includes(data.operation) && data.expect === undefined) || typeof data.scale !== 'number' || !Number.isFinite(data.scale) || data.scale < 0.1 || data.scale > 4)) throw Error('scale is for preview, extract, or run with expect, and must be 0.1-4');
   if (data.data !== undefined && (!run || Buffer.byteLength(JSON.stringify(data.data) ?? '') > 1024 * 1024)) throw Error('data is only for run; JSON <= 1 MiB (UTF-8)');
   if (data.label !== undefined && (typeof data.label !== 'string' || !data.label.trim() || data.label.length > 200)) throw Error('label must be non-empty text of <= 200 characters');
   const risk = normalizeRisk(data.risk);
   if (data.risk !== undefined && !['normal', 'high'].includes(data.risk?.level)) throw Error('Invalid risk declaration');
   if (risk.level === 'high' && (!run || typeof risk.reason !== 'string' || !risk.reason.trim() || risk.reason.length > 1000)) throw Error('A high-risk declaration is only for run and needs a reason of <= 1000 characters');
   if (data.requestId !== undefined && !isJobId(data.requestId)) throw Error('requestId must be a UUID');
-  const optional = Object.fromEntries(['libs', 'targetNodeId', 'snapshotDepth', 'nodes', 'scale', 'label', 'data', 'expect', 'tolerance'].filter(key => data[key] !== undefined).map(key => [key, data[key]]));
+  const optional = Object.fromEntries(['libs', 'targetNodeId', 'snapshotDepth', 'nodes', 'scale', 'label', 'data', 'expect', 'tolerance', 'islands'].filter(key => data[key] !== undefined).map(key => [key, data[key]]));
   const code = run ? data.code : '';
   return { id: data.requestId ?? crypto.randomUUID(), operation: data.operation, code, ...optional, risk, state: 'queued', createdAt: new Date().toISOString(),
     scriptHash: hash(JSON.stringify([data.libs ?? [], code])), bindingId: binding.id };
@@ -60,6 +61,7 @@ function buildJob(data, binding) {
 const POLL_HOLD_MS = 10000;
 // A plugin task belongs to another project, since the global plugin serves all projects: retain the result in the plugin until its original bridge returns.
 const FOREIGN_JOB = { code: 'FOREIGN_JOB', error: 'The plugin holds a job from another project; run connect in that project to deliver its result before this project\'s jobs can be claimed' };
+const ABANDONED = 'The plugin disconnected during a read-only job and a new instance took over; the document was not modified, so the job can be resubmitted';
 
 export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs = POLL_HOLD_MS, ...connectionOptions } = {}) {
   const dir = root(cwd), binding = await readBinding(cwd);
@@ -71,7 +73,8 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   const version = hash(main + uiTemplate).slice(0, 16);
   // pluginIssues records recent request rejection times per reason for status and doctor, covering plugins that reached the bridge but could not acquire a connection.
   // Concurrent instances can have different causes (a foreign task in the bound file and an idle plugin in another file); one shared slot would overwrite evidence.
-  let active = null, stopping = false;
+  // claimer identifies the instance that claimed the active task, allowing takeover to detect an owner change.
+  let active = null, stopping = false, claimer = null;
   const pluginIssues = {}, noteIssue = code => { pluginIssues[code] = new Date().toISOString(); };
   // Response headers tell the global plugin which project and binding this bridge serves; bindings no longer live in generated plugin files.
   // Headers must be ASCII: project directory names may contain non-ASCII characters, encoded as JSON \uXXXX escapes and restored by plugin JSON.parse.
@@ -110,10 +113,11 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       return { nodeId: image.nodeId, name: String(image.name ?? '').slice(0, 200), ...await writeFile(job, `images/${i + 1}-${image.nodeId.replace(/[^0-9A-Za-z]+/g, '-')}.png`, bytes), ...size, ...pixelSummary(bytes, budget) };
     }));
   }
-  // Persist run byte arrays as files/output-<n>.<ext> and replace placeholders with file descriptors.
+  // Persist run/extract byte arrays as files/output-<n>.<ext>, replacing placeholders with file descriptors.
   // Scripts have already executed, so content defects must not block evidence persistence: record invalid data or placeholders in binaryErrors and save the rest.
+  // Skip pixel summaries for extract references and bitmaps: synchronous decoding multiplies transfer time near size limits, and the host decodes them separately.
   async function saveBinaries(job, data, budget) {
-    const errors = [], list = job.operation === 'run' && Array.isArray(data.binaries) ? data.binaries.slice(0, 200) : [];
+    const errors = [], list = ['run', 'extract'].includes(job.operation) && Array.isArray(data.binaries) ? data.binaries.slice(0, 200) : [];
     if (list.length !== (Array.isArray(data.binaries) ? data.binaries.length : -1)) errors.push('Binary return values are invalid or exceed 200');
     const saved = await Promise.all(list.map(async (value, i) => {
       let bytes;
@@ -121,8 +125,9 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       const head = bytes.subarray(0, 8).toString('latin1');
       let size = null;
       if (head.startsWith('\x89PNG')) { try { size = pngSize(bytes); } catch { size = null; } }
-      const type = size ? 'png' : bytes[0] === 0xff && bytes[1] === 0xd8 ? 'jpg' : head.startsWith('%PDF') ? 'pdf' : /^\s*(?:<\?xml|<svg)/.test(bytes.subarray(0, 64).toString('utf8')) ? 'svg' : 'bin';
-      return { ...await writeFile(job, `files/output-${i + 1}.${type}`, bytes), type, ...(size ? { ...size, ...pixelSummary(bytes, budget) } : {}) };
+      const type = size ? 'png' : bytes[0] === 0xff && bytes[1] === 0xd8 ? 'jpg' : head.startsWith('GIF8') ? 'gif' : head.startsWith('RIFF') && bytes.subarray(8, 12).toString('latin1') === 'WEBP' ? 'webp'
+        : head.startsWith('%PDF') ? 'pdf' : /^\s*(?:<\?xml|<svg)/.test(bytes.subarray(0, 64).toString('utf8')) ? 'svg' : 'bin';
+      return { ...await writeFile(job, `files/output-${i + 1}.${type}`, bytes), type, ...(size ? { ...size, ...(job.operation === 'run' ? pixelSummary(bytes, budget) : {}) } : {}) };
     }));
     const used = new Set();
     const replace = value => {
@@ -162,6 +167,13 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   }
   // -- Commit point -------------------------------------------------------
   // Atomic result.json persistence means completion; job.json is then a derived status update. session repairs it after a crash between the two writes.
+  // complete persists each task once: /complete can race with read-only abandonment during takeover. The later caller waits for the first write, then discards its duplicate.
+  async function complete(job, data) {
+    let pending = completing.get(job.id);
+    if (!pending) { pending = persistCompletion(job, data); completing.set(job.id, pending); }
+    try { await pending; }
+    finally { if (completing.get(job.id) === pending) completing.delete(job.id); }
+  }
   async function persistCompletion(job, data) {
     let result = await optional(path.join(runDir(job.id), 'result.json'));
     if (result && (result.id !== job.id || typeof result.ok !== 'boolean')) throw Error('Existing result.json is invalid; keep the evidence and inspect it');
@@ -216,8 +228,12 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
         if (file !== binding.fileKey) { noteIssue(file ? 'WRONG_FILE' : 'NO_FILE_KEY'); return reply(200, null); }
         const held = u.searchParams.get('job');
         if (held && !jobs.has(held)) { noteIssue('FOREIGN_JOB'); return reply(409, FOREIGN_JOB); }
-        const lease = connection.touch(u.searchParams.get('client'), active !== null, u.searchParams.get('visibility') || 'visible');
+        // Read-only tasks cannot leave unknown writes, so they do not lock the connection: new instances take over expired leases. Mark the old instance's active read-only task unexecuted;
+        // discard late results because the task is no longer running. Runs remain unresolved and never transfer to the new instance.
+        const client = u.searchParams.get('client'), current = active && jobs.get(active), readOnly = !!current && current.operation !== 'run';
+        const lease = connection.touch(client, active !== null && !readOnly, u.searchParams.get('visibility') || 'visible');
         if (!lease.ok) return reply(409, { code: lease.code, error: lease.code === 'OPERATION_UNCERTAIN' ? 'The previous operation\'s result is not confirmed yet; repeated execution was blocked' : 'Reconnecting', retryable: lease.code === 'CONNECTION_IN_USE' });
+        if (readOnly && current.state === 'running' && claimer !== client) await complete(current, { id: current.id, ok: false, executionStarted: false, error: ABANDONED });
         if (u.pathname === '/heartbeat') return reply(200, { connected: true, active });
         const claimable = () => !stopping && active && jobs.get(active)?.state === 'queued' && !deliveries.has(active);
         if (!claimable() && !stopping && pollHoldMs > 0) {
@@ -227,7 +243,6 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
             waiters.add(wake);
           });
           // Keep the lease fresh throughout a pending request. If ownership changed unexpectedly, return as though no task exists.
-          const client = u.searchParams.get('client');
           if (!connection.owns(client) || !connection.touch(client, active !== null, u.searchParams.get('visibility') || 'visible').ok) return reply(200, null);
           if (!claimable()) { if (!stopping) res.setHeader('X-Long-Poll', '1'); return reply(200, null); }
         }
@@ -237,7 +252,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
         const claimedAt = new Date().toISOString();
         const delivery = save(path.join(runDir(job.id), 'job.json'), { ...job, state: 'running', claimedAt }, true);
         deliveries.set(job.id, delivery);
-        try { await delivery; Object.assign(job, { state: 'running', claimedAt }); }
+        try { await delivery; Object.assign(job, { state: 'running', claimedAt }); claimer = client; }
         finally { deliveries.delete(job.id); }
         return reply(200, { ...job, binding });
       }
@@ -349,10 +364,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
         if (!['running', 'done', 'failed'].includes(job.state)) throw Error('Job not delivered yet');
         if (job.state !== 'running') return reply(200, { received: true });
         if (typeof data.ok !== 'boolean') throw Error('Result is missing its ok status');
-        let pending = completing.get(job.id);
-        if (!pending) { pending = persistCompletion(job, data); completing.set(job.id, pending); }
-        try { await pending; }
-        finally { if (completing.get(job.id) === pending) completing.delete(job.id); }
+        await complete(job, data);
         return reply(200, { received: true });
       }
       reply(404, { error: 'Unknown endpoint' });
@@ -401,7 +413,8 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
     // /poll atomically writes running before delivery; queued here proves the plugin never received the task. Record non-execution without creating an unresolved write.
     const pending = active && jobs.get(active);
     if (pending?.state === 'queued') await persistCompletion(pending, { id: active, ok: false, executionStarted: false, error: NOT_DELIVERED }).catch(() => {});
-    else if (active) await save(path.join(runDir(active), 'recovery.json'), { status: 'unknown-after-disconnect', instruction: 'After reconnecting, inspect first; do not replay the script' });
+    else if (active) await save(path.join(runDir(active), 'recovery.json'), { status: 'unknown-after-disconnect',
+      instruction: pending?.operation === 'run' ? 'After reconnecting, inspect first; do not replay the script' : 'Read-only job interrupted; the document was not modified; resubmit it' });
     await fs.rm(path.join(dir, 'session.json'), { force: true });
     await lock.close(); await fs.unlink(path.join(dir, 'bridge.lock'));
   })();
