@@ -11,8 +11,11 @@ import { call } from './client.mjs';
 import { emptyLock, validPid } from './session.mjs';
 import { findChrome, chromeVersion } from './html/chrome.mjs';
 
+/** @param {string} cwd */
 export async function doctor(cwd) {
+  /** @type {{ code: string, status: 'ok' | 'warning' | 'error', message: string, action?: string }[]} */
   const checks = [];
+  /** @param {string} code @param {'ok' | 'warning' | 'error'} status @param {string} message @param {string} [action] */
   const add = (code, status, message, action) => checks.push({ code, status, message, ...(action ? { action } : {}) });
   const dir = root(cwd);
   const report = () => ({ ready: checks.every(c => c.status !== 'error'), checks, instruction: 'Once connected, inspect the target first to verify it; visuals and interaction need separate verification' });
@@ -67,6 +70,7 @@ export async function doctor(cwd) {
     // Classify rejected plugin requests using the shared reason codes so diagnostics identify the connection issue.
     // Multiple causes may coexist: order them by remedy and offer instructions for the first only. FOREIGN_JOB must come first because
     // that instance holds a real result for another project; reopening the plugin to address another cause would lose it.
+    /** @type {Record<string, [string, string]>} */
     const ISSUES = {
       FOREIGN_JOB: ['The plugin holds a job from another project and does not take jobs from this project for now', 'Go back to that project and run figma-agent-control connect so the result is delivered; if it is no longer needed, close the plugin in Figma and rerun it (the original project then treats the job as unresolved)'],
       PAIRING_MISMATCH: ['A plugin with a mismatched pairing token is running in Figma, most likely an old same-name plugin imported per project', `In Figma, Plugins -> Development, remove the old Figma Agent Control, import ${manifestFile}, then run it in the bound file`],
@@ -80,7 +84,7 @@ export async function doctor(cwd) {
       data.connected ? undefined : `Open the bound file in Figma and run the Figma Agent Control plugin; first use on this machine requires importing ${manifestFile}`);
     // Enqueueing claims active; only plugin delivery changes state to running. Do not call queued work "executing" (jobs may briefly lack the entry during enqueue persistence; treat it as queued).
     if (data.active) {
-      const running = data.jobs?.find(job => job.id === data.active)?.state === 'running';
+      const running = data.jobs?.find((/** @type {{ id: string, state: string }} */ job) => job.id === data.active)?.state === 'running';
       add('ACTIVE_JOB', 'warning', running ? `Job ${data.active} is running` : `Job ${data.active} is queued; the plugin has not taken it yet`,
         `Run figma-agent-control wait ${data.active} ${running ? 'to read the result' : 'to wait for the plugin to take and run it'}; do not replay the script`);
     }

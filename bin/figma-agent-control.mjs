@@ -18,6 +18,7 @@ import { imageDiff } from '../src/image-diff.mjs';
 import { report } from '../src/report.mjs';
 
 const cwd = process.cwd();
+/** @param {unknown} value */
 const out = value => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
 const HELP = {
   commands: Object.values(COMMANDS).map(c => c.usage),
@@ -28,7 +29,9 @@ const HELP = {
   exitCodes: { 0: 'success', 1: 'failure, failed visual verification, skipped explicit extract islands, or a reviewed result that remains unknown', 2: 'not complete (wait expired or review pending; for stop, the bridge is still finishing shutdown, so check status later)' }
 };
 
+/** @param {string} command @param {string[]} positionals @param {import('../src/args.mjs').Options} o */
 async function submit(command, [file], o) {
+  /** @type {Record<string, unknown>} */
   const body = { operation: command, targetNodeId: o.targetNodeId, nodes: o.nodes, snapshotDepth: o.snapshotDepth, scale: o.scale, risk: o.risk, requestId: o.requestId, expect: o.expect, tolerance: o.tolerance, islands: o.islands };
   if (command === 'run') {
     body.code = await fs.readFile(path.resolve(file), 'utf8');

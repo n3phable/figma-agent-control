@@ -9,6 +9,7 @@ Behavioral tests for the implementation in this revision.
 - `args.test.mjs`: Tests for args behavior in this revision.
 - `bridge.test.mjs`: Tests for bridge behavior in this revision.
 - `cli.test.mjs`: Tests for cli behavior in this revision.
+- `contract-samples.mjs`: Check explicitly provided extraction evidence against its types.
 - `extract.test.mjs`: Tests for extract behavior in this revision.
 - `fixtures/`: Related implementation, fixtures or configuration.
 - `helpers/`: Isolated synthetic document, bridge and media fixtures.
@@ -19,6 +20,7 @@ Behavioral tests for the implementation in this revision.
 - `project-session.test.mjs`: Tests for project session behavior in this revision.
 - `record.test.mjs`: Tests for record behavior in this revision.
 - `smoke.test.mjs`: Tests for smoke behavior in this revision.
+- `typecheck.mjs`: Run the local pinned TypeScript checker for available environments.
 - `ui.test.mjs`: Tests for ui behavior in this revision.
 
 ## Contract maintenance

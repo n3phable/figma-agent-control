@@ -185,6 +185,9 @@ test('Node trees preserve target-space transforms, mask geometry, renderBounds/n
   assert.match(find(o.output.root, '2:12').componentError, /existing errors/);
   assert.match(o.output.warnings.join('\n'), /Some text segment fields are unavailable; fell back to base fields: Error: unknown field/);
   assert.deepEqual(find(o.output.root, '2:15').segments.map(s => s.characters), ['A', 'B']);
+  // A stroked shape missing strokeGeometry fails the whole frame rather than silently losing geometry; main.js reads it without an in check.
+  const bare = await plugin(({ doc }) => { const n = doc.all.get('3:7'); n.strokes = [{ type: 'SOLID', visible: true, color: { r: 0, g: 0, b: 0 } }]; delete n.strokeGeometry; }).send({});
+  assert.deepEqual([bare.ok, bare.executionStarted], [false, false]);
 });
 
 // -- Islands --------------------------------------------------------------

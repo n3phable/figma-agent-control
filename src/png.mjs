@@ -9,10 +9,12 @@ import zlib from 'node:zlib';
 // -- PNG reading and writing --------------------------------------------
 // Support only the subset needed for Figma exports and difference images: 8-bit, non-interlaced; decode all formats to RGBA.
 const SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-const CHANNELS = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
+const CHANNELS = /** @type {Record<number, number>} */ ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 });
 const CRC = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+/** @param {Uint8Array} bytes */
 const crc32 = bytes => { let c = 0xffffffff; for (const b of bytes) c = CRC[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
 
+/** @param {Buffer} bytes */
 export function pngSize(bytes) {
   if (bytes.length < 24 || !bytes.subarray(0, 8).equals(SIGNATURE) || bytes.toString('latin1', 12, 16) !== 'IHDR') throw Error('File is not a valid PNG');
   const size = { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
@@ -20,6 +22,7 @@ export function pngSize(bytes) {
   return size;
 }
 
+/** @param {Buffer} bytes */
 export function decodePng(bytes) {
   const { width, height } = pngSize(bytes);
   const depth = bytes[24], colorType = bytes[25], interlace = bytes[28], channels = CHANNELS[colorType];
@@ -59,7 +62,8 @@ export function decodePng(bytes) {
   if (colorType === 6) return { width, height, data: pixels };
   const rgba = new Uint8Array(width * height * 4);
   // RGB and grayscale tRNS use 16-bit color keys: matching pixels are transparent. An 8-bit sample never matches a key with a nonzero high byte.
-  const key = c => colorType === 2 ? (transparency?.length >= 6 ? transparency.readUInt16BE(c * 2) : -1) : (transparency?.length >= 2 ? transparency.readUInt16BE(0) : -1);
+  /** @param {number} c */
+  const key = c => colorType === 2 ? (transparency && transparency.length >= 6 ? transparency.readUInt16BE(c * 2) : -1) : (transparency && transparency.length >= 2 ? transparency.readUInt16BE(0) : -1);
   const [k0, k1, k2] = [key(0), key(1), key(2)];
   for (let i = 0, s = 0, d = 0; i < width * height; i++, s += channels, d += 4) {
     if (colorType === 2) { rgba[d] = pixels[s]; rgba[d + 1] = pixels[s + 1]; rgba[d + 2] = pixels[s + 2]; rgba[d + 3] = pixels[s] === k0 && pixels[s + 1] === k1 && pixels[s + 2] === k2 ? 0 : 255; }
@@ -69,7 +73,9 @@ export function decodePng(bytes) {
   return { width, height, data: rgba };
 }
 
+/** @param {number} width @param {number} height @param {Uint8Array} rgba */
 export function encodePng(width, height, rgba) {
+  /** @param {string} type @param {Buffer} body */
   const chunk = (type, body) => {
     const head = Buffer.alloc(8); head.writeUInt32BE(body.length); head.write(type, 4, 'latin1');
     const tail = Buffer.alloc(4); tail.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), body])));
@@ -84,6 +90,7 @@ export function encodePng(width, height, rgba) {
 // -- Image summaries ----------------------------------------------------
 // Transparency ratio and dominant colors indicate whether the background rendered before viewing the image. Count exact RGB values
 // to distinguish #F6F6F6 from #FFFFFF; above one million pixels, evenly spaced sampling yields estimated ratios.
+/** @param {Buffer} bytes */
 export function imageStats(bytes) {
   const { width, height, data } = decodePng(bytes), total = width * height, step = Math.max(1, Math.floor(total / 1e6)), counts = new Map();
   let sampled = 0, transparent = 0, opaque = 0;
@@ -98,6 +105,7 @@ export function imageStats(bytes) {
   }
   let top = null, most = 0;
   for (const [key, n] of counts) if (n > most) { top = key; most = n; }
+  /** @param {number} n */
   const ratio = n => sampled ? Number((n / sampled).toFixed(4)) : 0;
   return { transparentRatio: ratio(transparent), opaqueRatio: ratio(opaque),
     dominant: top === null ? null : { color: '#' + top.toString(16).padStart(6, '0').toUpperCase(), ratio: ratio(most) }, ...(step > 1 ? { sampledEvery: step } : {}) };
@@ -106,6 +114,7 @@ export function imageStats(bytes) {
 // -- Pixel differences --------------------------------------------------
 // Compare the overlapping image area with premultiplied alpha, so nearly transparent antialiased edges do not count as full-intensity changes;
 // count alpha differences separately. Changed pixels are red; unchanged pixels show a pale grayscale version of the after image.
+/** @param {Buffer} beforeBytes @param {Buffer} afterBytes */
 export function diffPng(beforeBytes, afterBytes, threshold = 0) {
   const a = decodePng(beforeBytes), b = decodePng(afterBytes);
   const width = Math.min(a.width, b.width), height = Math.min(a.height, b.height), image = new Uint8Array(width * height * 4);

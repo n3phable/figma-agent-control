@@ -10,19 +10,27 @@ import { root, json, isJobId } from './project.mjs';
 
 // All durations use wall-clock time: totalMs from submission to persisted result; queueMs from submission to plugin claim; pluginMs inside the plugin, including snapshots and exports.
 const DAY_MS = 24 * 3600 * 1000;
+/** @param {string | null | undefined} from @param {string | null | undefined} to */
 const between = (from, to) => from && to ? Math.max(0, Date.parse(to) - Date.parse(from)) : null;
+/** @param {(number | null)[]} values */
 function stats(values) {
   const sorted = values.filter(v => typeof v === 'number').sort((a, b) => a - b);
   if (!sorted.length) return { count: 0 };
+  /** @param {number} q */
   const at = q => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)];
   return { count: sorted.length, sumMs: sorted.reduce((a, b) => a + b, 0), medianMs: at(0.5), p90Ms: at(0.9), maxMs: sorted.at(-1) };
 }
 
+/** @typedef {{ id: string, operation: string, state: string, label: string | null, createdAt: string, finishedAt: string | null, ok: boolean | null,
+ *   verifyPass: boolean | null, scriptHash: string, target: string | null, totalMs: number | null, queueMs: number | null, pluginMs: number | null }} ReportJob */
+/** @param {string} cwd @param {{ since?: string }} [options] */
 export async function report(cwd, { since = new Date(Date.now() - DAY_MS).toISOString() } = {}) {
   const dir = path.join(root(cwd), 'runs');
+  /** @type {import('node:fs').Dirent[]} */
   let entries = [];
   try { entries = (await fs.readdir(dir, { withFileTypes: true })).filter(e => e.isDirectory() && isJobId(e.name)); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
+  /** @type {ReportJob[]} */
   const jobs = [];
   for (const entry of entries) {
     // Filter by directory mtime before reading full history; allow 2 s for file systems that truncate mtime to whole seconds.
@@ -38,15 +46,17 @@ export async function report(cwd, { since = new Date(Date.now() - DAY_MS).toISOS
   }
   jobs.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   // Gaps run from the previous persisted result to the next submission, representing agent scripting, inspection and organization time.
-  const gaps = jobs.slice(1).map((job, i) => ({ gapMs: between(jobs[i].finishedAt, job.createdAt), after: jobs[i], next: job })).filter(g => g.gapMs !== null);
+  const gaps = /** @type {{ gapMs: number, after: ReportJob, next: ReportJob }[]} */ (jobs.slice(1).map((job, i) => ({ gapMs: between(jobs[i].finishedAt, job.createdAt), after: jobs[i], next: job })).filter(g => g.gapMs !== null));
+  /** @param {ReportJob} job */
   const describe = job => ({ id: job.id, operation: job.operation, ...(job.label ? { label: job.label } : {}), at: job.createdAt });
   const from = jobs[0]?.createdAt, to = jobs.map(j => j.finishedAt).filter(Boolean).sort().at(-1);
   const total = stats(jobs.map(j => j.totalMs)), wallMs = between(from, to);
   // Repeated scripts on the same target are candidates for rework or staged verification.
-  const runs = new Map();
+  const runs = /** @type {Map<string, ReportJob[]>} */ (new Map());
   for (const job of jobs.filter(j => j.operation === 'run')) runs.set(job.scriptHash + ' ' + job.target, [...(runs.get(job.scriptHash + ' ' + job.target) || []), job]);
   const repeats = [...runs.values()].filter(list => list.length > 1).sort((a, b) => b.length - a.length).slice(0, 10)
-    .map(list => ({ label: list.at(-1).label, target: list[0].target, count: list.length, at: list.map(j => j.createdAt) }));
+    .map(list => ({ label: /** @type {ReportJob} */ (list.at(-1)).label, target: list[0].target, count: list.length, at: list.map(j => j.createdAt) }));
+  /** @param {'operation' | 'state'} key */
   const count = key => Object.fromEntries([...new Set(jobs.map(j => j[key]))].map(v => [String(v), jobs.filter(j => j[key] === v).length]));
   return {
     window: { since, from: from ?? null, to: to ?? null, wallMs },

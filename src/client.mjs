@@ -10,10 +10,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { root, json } from './project.mjs';
 import { emptyLock } from './session.mjs';
 
+/** @param {string} file */
 const exists = file => fs.access(file).then(() => true, () => false);
 
+/** @param {string} message @param {string} code */
 const fail = (message, code) => Object.assign(Error(message), { code });
 
+/** @param {string} cwd */
 export async function readSession(cwd) {
   try { return await json(path.join(root(cwd), 'session.json')); }
   catch (error) {
@@ -23,14 +26,17 @@ export async function readSession(cwd) {
 }
 
 // fetch failure details live in error.cause.code; sandbox rejection and a stopped bridge require different remedies.
+/** @param {Error & { cause?: { code?: string }, code?: string }} error */
 function networkError(error) {
   const code = error?.cause?.code ?? error?.code;
-  if (['EPERM', 'EACCES'].includes(code)) return fail('Cannot reach the local bridge: the current environment blocks localhost networking; rerun this command with elevated permissions', 'SANDBOX_BLOCKED');
+  if (['EPERM', 'EACCES'].includes(/** @type {string} */ (code))) return fail('Cannot reach the local bridge: the current environment blocks localhost networking; rerun this command with elevated permissions', 'SANDBOX_BLOCKED');
   if (code === 'ECONNREFUSED') return fail('Bridge not running: the session file exists but the port does not respond; run figma-agent-control doctor to diagnose, and connect again if needed', 'BRIDGE_DOWN');
   if (error?.name === 'TimeoutError') return fail('Bridge response timed out; run figma-agent-control status to check its state', 'BRIDGE_TIMEOUT');
   return fail(`Failed to reach the bridge: ${error?.message}${code ? ` (${code})` : ''}`, code ?? 'BRIDGE_UNREACHABLE');
 }
 
+// data is a bridge JSON response; its shape and the caller's interpretation depend on the route.
+/** @param {string} cwd @param {string} route @param {unknown} [body] @returns {Promise<{ status: number, ok: boolean, data: any }>} */
 export async function call(cwd, route, body, timeoutMs = 10000) {
   const session = await readSession(cwd);
   let response;
@@ -44,6 +50,7 @@ export async function call(cwd, route, body, timeoutMs = 10000) {
 // -- Stopping -----------------------------------------------------------
 // Stopping affects only the local bridge process: it sends no Figma operation and does not touch Figma cloud synchronization.
 // Without a session, inspect the lock: an empty lock does not mean "not running".
+/** @param {string} cwd */
 export async function stop(cwd, force = false) {
   const lockFile = path.join(root(cwd), 'bridge.lock');
   let session;

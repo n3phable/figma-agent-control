@@ -7,9 +7,11 @@
 import { parseArgs } from 'node:util';
 import { isJobId, isNodeId } from './project.mjs';
 
-const wait = { timeout: { type: 'string' }, 'no-wait': { type: 'boolean' }, full: { type: 'boolean' } };
-const node = { node: { type: 'string' } };
+const wait = /** @type {const} */ ({ timeout: { type: 'string' }, 'no-wait': { type: 'boolean' }, full: { type: 'boolean' } });
+const node = /** @type {const} */ ({ node: { type: 'string' } });
 // positionals: [minimum, maximum]; submit: wait for the result by default after submitting a task.
+/** @typedef {{ usage: string, positionals: [number, number], submit?: true, options: import('node:util').ParseArgsOptionsConfig }} Command */
+/** @type {Record<string, Command>} */
 export const COMMANDS = {
   help: { usage: 'help', positionals: [0, 0], options: {} },
   init: { usage: 'init <figma-url>: bind the current directory to a scope node in one file', positionals: [1, 1], options: {} },
@@ -34,24 +36,37 @@ export const COMMANDS = {
   report: { usage: 'report [--since <ISO-time>]: summary of job durations, gaps and repeated runs (default: last 24 hours; a date alone means UTC midnight)', positionals: [0, 0], options: { since: { type: 'string' } } },
 };
 
+/** @param {string} value @param {number} min @param {number} max @param {string} message */
 const integer = (value, min, max, message) => {
   if (!/^\d+$/.test(value) || Number(value) < min || Number(value) > max) throw Error(message);
   return Number(value);
 };
+/** @param {string} value */
 const nodeId = (value, flag = '--node') => {
   const id = value.replace(/-/g, ':');
   if (!isNodeId(id)) throw Error(`${flag} needs a valid node ID, e.g. 1:2 or I1:2;3:4`);
   return id;
 };
+/** @param {string} value */
 const scale = value => {
   if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) || Number(value) < 0.1 || Number(value) > 4) throw Error('--scale must be 0.1-4');
   return Number(value);
 };
+/** @param {string} value */
 const expect = value => {
   if (!['changed', 'unchanged'].includes(value)) throw Error('--expect accepts only changed or unchanged');
   return value;
 };
 
+// parseArgs sees only ParseArgsOptionsConfig and a union of all option value types; COMMANDS above defines each option's exact type.
+/** @typedef {{ node?: string | string[], lib?: string[], island?: string[], data?: string, depth?: string, expect?: string, tolerance?: string, scale?: string,
+ *   'request-id'?: string, 'high-risk'?: string, timeout?: string, 'no-wait'?: boolean, full?: boolean, force?: boolean, inspect?: string,
+ *   'previous-plugin-stopped'?: boolean, threshold?: string, since?: string }} Values */
+// Normalized options, read by bin according to the command.
+/** @typedef {{ targetNodeId?: string, nodes?: string[], snapshotDepth?: number, timeoutSeconds?: number, threshold?: number, expect?: string, tolerance?: number,
+ *   scale?: number, requestId?: string, risk?: { level: 'high', reason: string }, islands?: string[], libFiles?: string[], dataFile?: string, since?: string,
+ *   inspectId?: string, previousPluginStopped?: true, force?: true, full?: true, noWait?: true }} Options */
+/** @param {string[]} argv @returns {{ command: string, positionals: string[], options: Options }} */
 export function parse(argv) {
   const [first = 'help', ...rest] = argv;
   if (first === '--help' || first === '-h' || rest.includes('--help') || rest.includes('-h')) return { command: 'help', positionals: [], options: {} };
@@ -61,14 +76,15 @@ export function parse(argv) {
   try { parsed = parseArgs({ args: rest, options: spec.options, allowPositionals: true, strict: true, tokens: true }); }
   catch (error) { throw Error(`Invalid arguments (${error.message}); usage: ${spec.usage}`); }
   // parseArgs silently takes the last repeated scalar option; reject duplicates so write targets cannot be ambiguous.
-  const given = parsed.tokens.filter(token => token.kind === 'option' && !spec.options[token.name].multiple).map(token => token.name);
+  const given = parsed.tokens.filter(token => token.kind === 'option' && !spec.options[token.name].multiple).map(token => /** @type {{ name: string }} */ (token).name);
   const repeated = given.find((name, i) => given.indexOf(name) !== i);
   if (repeated) throw Error(`Invalid arguments (--${repeated} may be given only once); usage: ${spec.usage}`);
-  const { values: v, positionals } = parsed;
+  const { values, positionals } = parsed, v = /** @type {Values} */ (values);
   if (positionals.length < spec.positionals[0] || positionals.length > spec.positionals[1]) throw Error('Usage: ' + spec.usage);
+  /** @type {Options} */
   const o = {};
   if (v.node !== undefined) {
-    const ids = [].concat(v.node).map(id => nodeId(id));
+    const ids = /** @type {string[]} */ ([]).concat(v.node).map(id => nodeId(id));
     if (new Set(ids).size !== ids.length || ids.length > 50) throw Error('preview accepts at most 50 nodes without duplicates');
     o.targetNodeId = ids[0];
     if (ids.length > 1) o.nodes = ids;
@@ -92,7 +108,7 @@ export function parse(argv) {
   if (v['high-risk'] !== undefined) { if (!v['high-risk'].trim()) throw Error('--high-risk requires a risk description'); o.risk = { level: 'high', reason: v['high-risk'] }; }
   if (v.island !== undefined) {
     o.islands = v.island.map(id => nodeId(id, '--island'));
-    const repeated = o.islands.find((id, i) => o.islands.indexOf(id) !== i);
+    const repeated = o.islands.find((id, i, all) => all.indexOf(id) !== i);
     if (repeated) throw Error(`--island has a duplicate node: ${repeated}`);
     if (o.islands.length > 500) throw Error('--island takes at most 500 nodes');
   }
@@ -109,7 +125,7 @@ export function parse(argv) {
     if (!isJobId(positionals[0]) || !isJobId(v.inspect) || !v['previous-plugin-stopped']) throw Error('Usage: ' + spec.usage + '; first confirm the previous plugin has stopped and check the current document');
     o.inspectId = v.inspect; o.previousPluginStopped = true;
   }
-  for (const key of ['force', 'full']) if (v[key]) o[key] = true;
+  for (const key of /** @type {const} */ (['force', 'full'])) if (v[key]) o[key] = true;
   if (v['no-wait']) o.noWait = true;
   return { command: first, positionals, options: o };
 }

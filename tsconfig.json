@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
+    "strict": true,
+    "useUnknownInCatchVariables": false,
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2024",
+    "lib": [
+      "es2024"
+    ],
+    "types": [
+      "node"
+    ],
+    "skipLibCheck": false
+  },
+  "include": [
+    "bin/**/*.mjs",
+    "src/**/*.mjs",
+    "src/**/*.d.ts"
+  ]
+}

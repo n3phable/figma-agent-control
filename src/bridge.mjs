@@ -23,26 +23,37 @@ const BINARY_KEY = '__figmaAgentControlBinary';
 // Pixel decoding blocks the event loop: skip summaries above 16 million pixels per image or 32 million per task.
 const PIXEL_LIMIT = 16e6, JOB_PIXEL_LIMIT = 32e6;
 
+/** @import { BinaryFile } from './html/extract-contract.js' */
+// Task records come from buildJob and persist to job.json; session reloads prior-session records as recovered.
+/** @typedef {{ id: string, operation: string, code: string, libs?: { name: string, code: string }[], targetNodeId?: string, snapshotDepth?: number,
+ *   nodes?: string[], scale?: number, label?: string, data?: unknown, expect?: string, tolerance?: number, islands?: string[],
+ *   risk: { level: string, reason?: string }, state: string, createdAt: string, claimedAt?: string, finishedAt?: string, scriptHash: string,
+ *   bindingId: string, recovered?: boolean }} Job */
+// Request bodies and plugin results are external JSON. Each route validates fields before use; the type system offers no stronger guarantee, so these parameters use any.
+
+/** @param {{ level?: string, reason?: string } | undefined} risk */
 const normalizeRisk = risk => risk?.level === 'high' ? { level: 'high', reason: risk.reason } : { level: 'normal' };
 // A requestId must always describe identical work: resubmission retrieves the original job, never new content. Append islands to preserve comparisons with older records.
+/** @param {Job} job */
 const specKey = job => JSON.stringify([job.bindingId, job.operation, job.code ?? '', job.libs ?? [], job.targetNodeId ?? null, job.snapshotDepth ?? null,
   job.nodes ?? null, job.scale ?? null, job.data ?? null, normalizeRisk(job.risk), job.expect ?? null, job.tolerance ?? null, job.islands ?? null]);
 
 // -- Task validation ----------------------------------------------------
 // Pure normalization of CLI requests into task records; reject every out-of-range field.
+/** @param {any} data @param {{ id: string, nodeId: string }} binding @returns {Job} */
 function buildJob(data, binding) {
   if (!OPERATIONS.has(data.operation)) throw Error('Unknown operation');
   const run = data.operation === 'run';
   if (data.targetNodeId !== undefined && !isNodeId(data.targetNodeId)) throw Error('Invalid local target ID');
   if (run && (typeof data.code !== 'string' || !data.code.trim())) throw Error('Missing trusted script');
   if (!run && data.code) throw Error('Only run accepts a script');
-  if (data.libs !== undefined && (!run || !Array.isArray(data.libs) || data.libs.length > 20 || data.libs.some(lib => typeof lib?.name !== 'string' || !lib.name || lib.name.length > 200 || typeof lib.code !== 'string')
-    || data.libs.reduce((n, lib) => n + Buffer.byteLength(lib.code), 0) > 2 * 1024 * 1024)) throw Error('libs is only for run: at most 20, total <= 2 MiB (UTF-8)');
+  if (data.libs !== undefined && (!run || !Array.isArray(data.libs) || data.libs.length > 20 || data.libs.some((/** @type {any} */ lib) => typeof lib?.name !== 'string' || !lib.name || lib.name.length > 200 || typeof lib.code !== 'string')
+    || data.libs.reduce((/** @type {number} */ n, /** @type {{ code: string }} */ lib) => n + Buffer.byteLength(lib.code), 0) > 2 * 1024 * 1024)) throw Error('libs is only for run: at most 20, total <= 2 MiB (UTF-8)');
   if (data.snapshotDepth !== undefined && (!['run', 'inspect'].includes(data.operation) || !Number.isInteger(data.snapshotDepth) || data.snapshotDepth < 1 || data.snapshotDepth > 31)) throw Error('snapshotDepth is only for run or inspect and must be an integer 1-31');
-  if (data.nodes !== undefined && (data.operation !== 'preview' || !Array.isArray(data.nodes) || data.nodes.length < 2 || data.nodes.length > 50 || data.nodes.some(id => !isNodeId(id)) || new Set(data.nodes).size !== data.nodes.length || data.nodes[0] !== (data.targetNodeId ?? binding.nodeId))) throw Error('nodes is only for preview: 2-50 unique node IDs, the first equal to the target node');
+  if (data.nodes !== undefined && (data.operation !== 'preview' || !Array.isArray(data.nodes) || data.nodes.length < 2 || data.nodes.length > 50 || data.nodes.some((/** @type {unknown} */ id) => !isNodeId(id)) || new Set(data.nodes).size !== data.nodes.length || data.nodes[0] !== (data.targetNodeId ?? binding.nodeId))) throw Error('nodes is only for preview: 2-50 unique node IDs, the first equal to the target node');
   if (data.expect !== undefined && (!run || !['changed', 'unchanged'].includes(data.expect))) throw Error('expect is only for run: changed or unchanged');
   if (data.tolerance !== undefined && (data.expect === undefined || !Number.isInteger(data.tolerance) || data.tolerance < 0 || data.tolerance > 1e8)) throw Error('tolerance requires expect and must be a non-negative integer pixel count');
-  if (data.islands !== undefined && (data.operation !== 'extract' || !Array.isArray(data.islands) || !data.islands.length || data.islands.length > 500 || data.islands.some(id => !isNodeId(id)) || new Set(data.islands).size !== data.islands.length)) throw Error('islands is only for extract: 1-500 unique node IDs');
+  if (data.islands !== undefined && (data.operation !== 'extract' || !Array.isArray(data.islands) || !data.islands.length || data.islands.length > 500 || data.islands.some((/** @type {unknown} */ id) => !isNodeId(id)) || new Set(data.islands).size !== data.islands.length)) throw Error('islands is only for extract: 1-500 unique node IDs');
   if (data.scale !== undefined && ((!['preview', 'extract'].includes(data.operation) && data.expect === undefined) || typeof data.scale !== 'number' || !Number.isFinite(data.scale) || data.scale < 0.1 || data.scale > 4)) throw Error('scale is for preview, extract, or run with expect, and must be 0.1-4');
   if (data.data !== undefined && (!run || Buffer.byteLength(JSON.stringify(data.data) ?? '') > 1024 * 1024)) throw Error('data is only for run; JSON <= 1 MiB (UTF-8)');
   if (data.label !== undefined && (typeof data.label !== 'string' || !data.label.trim() || data.label.length > 200)) throw Error('label must be non-empty text of <= 200 characters');
@@ -63,6 +74,7 @@ const POLL_HOLD_MS = 10000;
 const FOREIGN_JOB = { code: 'FOREIGN_JOB', error: 'The plugin holds a job from another project; run connect in that project to deliver its result before this project\'s jobs can be claimed' };
 const ABANDONED = 'The plugin disconnected during a read-only job and a new instance took over; the document was not modified, so the job can be resubmitted';
 
+/** @param {string} cwd @param {number} [port] @param {{ pluginToken?: string, pollHoldMs?: number } & Parameters<typeof createConnection>[0]} [options] */
 export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs = POLL_HOLD_MS, ...connectionOptions } = {}) {
   const dir = root(cwd), binding = await readBinding(cwd);
   if (!/^[a-f0-9]{64}$/.test(pluginToken ?? '')) throw Error('Invalid plugin pairing token');
@@ -74,28 +86,30 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   // pluginIssues records recent request rejection times per reason for status and doctor, covering plugins that reached the bridge but could not acquire a connection.
   // Concurrent instances can have different causes (a foreign task in the bound file and an idle plugin in another file); one shared slot would overwrite evidence.
   // claimer identifies the instance that claimed the active task, allowing takeover to detect an owner change.
-  let active = null, stopping = false, claimer = null;
-  const pluginIssues = {}, noteIssue = code => { pluginIssues[code] = new Date().toISOString(); };
+  let active = /** @type {string | null} */ (null), stopping = false, claimer = /** @type {string | null} */ (null);
+  const pluginIssues = /** @type {Record<string, string>} */ ({}), noteIssue = (/** @type {string} */ code) => { pluginIssues[code] = new Date().toISOString(); };
   // Response headers tell the global plugin which project and binding this bridge serves; bindings no longer live in generated plugin files.
   // Headers must be ASCII: project directory names may contain non-ASCII characters, encoded as JSON \uXXXX escapes and restored by plugin JSON.parse.
   const bindingHeader = JSON.stringify({ fileKey: binding.fileKey, nodeId: binding.nodeId, project: path.basename(path.resolve(cwd)) })
     .replace(/[^\x20-\x7e]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
-  const jobs = new Map(), unresolved = new Set();
+  const jobs = /** @type {Map<string, Job>} */ (new Map()), unresolved = /** @type {Set<string>} */ (new Set());
   const completing = new Map(), checkpoints = new Map(), approvals = new Map(), deliveries = new Map(), waiters = new Set();
   const wakePolls = () => { for (const wake of [...waiters]) wake(); };
-  const runDir = id => path.join(dir, 'runs', id);
-  const optional = async file => { try { return await json(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
+  const runDir = (/** @type {string} */ id) => path.join(dir, 'runs', id);
+  const optional = async (/** @type {string} */ file) => { try { return await json(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
 
   // -- File-backed evidence -----------------------------------------------
-  const bytesOf = value => {
+  const bytesOf = (/** @type {unknown} */ value) => {
     if (typeof value !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) throw Error('Invalid binary data');
     return Buffer.from(value, 'base64');
   };
+  /** @param {Job} job @param {string} file @param {Buffer} bytes */
   const writeFile = async (job, file, bytes) => {
     await fs.mkdir(path.dirname(path.join(runDir(job.id), file)), { recursive: true, mode: 0o700 });
     await fs.writeFile(path.join(runDir(job.id), file), bytes, { mode: 0o600 });
     return { file, bytes: bytes.length, sha256: hash(bytes) };
   };
+  /** @param {Buffer} bytes @param {{ used: number }} budget */
   const pixelSummary = (bytes, budget) => {
     try {
       const { width, height } = pngSize(bytes);
@@ -105,10 +119,11 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
     } catch { return {}; }
   };
   // preview writes images/ in request order; results contain only paths, dimensions and pixel summaries.
+  /** @param {Job} job @param {any} data @param {{ used: number }} budget */
   async function saveImages(job, data, budget) {
     const expected = job.nodes ?? [job.targetNodeId ?? binding.nodeId];
-    if (job.operation !== 'preview' || !Array.isArray(data.images) || data.images.length !== expected.length || data.images.some((image, i) => image?.nodeId !== expected[i])) throw Error('Preview images do not match the requested nodes');
-    data.images = await Promise.all(data.images.map(async (image, i) => {
+    if (job.operation !== 'preview' || !Array.isArray(data.images) || data.images.length !== expected.length || data.images.some((/** @type {any} */ image, /** @type {number} */ i) => image?.nodeId !== expected[i])) throw Error('Preview images do not match the requested nodes');
+    data.images = await Promise.all(data.images.map(async (/** @type {any} */ image, /** @type {number} */ i) => {
       const bytes = bytesOf(image.base64), size = pngSize(bytes);
       return { nodeId: image.nodeId, name: String(image.name ?? '').slice(0, 200), ...await writeFile(job, `images/${i + 1}-${image.nodeId.replace(/[^0-9A-Za-z]+/g, '-')}.png`, bytes), ...size, ...pixelSummary(bytes, budget) };
     }));
@@ -116,9 +131,12 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   // Persist run/extract byte arrays as files/output-<n>.<ext>, replacing placeholders with file descriptors.
   // Scripts have already executed, so content defects must not block evidence persistence: record invalid data or placeholders in binaryErrors and save the rest.
   // Skip pixel summaries for extract references and bitmaps: synchronous decoding multiplies transfer time near size limits, and the host decodes them separately.
+  /** @param {Job} job @param {any} data @param {{ used: number }} budget */
   async function saveBinaries(job, data, budget) {
-    const errors = [], list = ['run', 'extract'].includes(job.operation) && Array.isArray(data.binaries) ? data.binaries.slice(0, 200) : [];
+    const errors = /** @type {string[]} */ ([]), list = /** @type {unknown[]} */ (['run', 'extract'].includes(job.operation) && Array.isArray(data.binaries) ? data.binaries.slice(0, 200) : []);
     if (list.length !== (Array.isArray(data.binaries) ? data.binaries.length : -1)) errors.push('Binary return values are invalid or exceed 200');
+    // Persisted descriptors match BinaryFile (run PNGs also include pixel summaries); extract placeholders become LandedBinary. list stays unknown[] until map results are checked as BinaryFile.
+    /** @type {(BinaryFile | null)[]} */
     const saved = await Promise.all(list.map(async (value, i) => {
       let bytes;
       try { bytes = bytesOf(value); } catch { errors.push(`Binary value ${i + 1} is invalid`); return null; }
@@ -130,6 +148,8 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       return { ...await writeFile(job, `files/output-${i + 1}.${type}`, bytes), type, ...(size ? { ...size, ...(job.operation === 'run' ? pixelSummary(bytes, budget) : {}) } : {}) };
     }));
     const used = new Set();
+    // Walk arbitrary JSON recursively, recognizing a placeholder only when it has exactly one placeholder key.
+    /** @param {any} value @returns {any} */
     const replace = value => {
       if (Array.isArray(value)) return value.map(replace);
       if (!value || typeof value !== 'object') return value;
@@ -149,6 +169,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   // -- Visual verdict -----------------------------------------------------
   // The plugin exports the target before and after the script; compare those images against declared intent. A failed verdict does not change ok:
   // the script completed, but the image missed expectations. CLI returns exit 1 while still forbidding replay.
+  /** @param {Job} job @param {any} data */
   async function saveVerdict(job, data) {
     const renders = data.renders;
     delete data.renders;
@@ -168,12 +189,14 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   // -- Commit point -------------------------------------------------------
   // Atomic result.json persistence means completion; job.json is then a derived status update. session repairs it after a crash between the two writes.
   // complete persists each task once: /complete can race with read-only abandonment during takeover. The later caller waits for the first write, then discards its duplicate.
+  /** @param {Job} job @param {any} data */
   async function complete(job, data) {
     let pending = completing.get(job.id);
     if (!pending) { pending = persistCompletion(job, data); completing.set(job.id, pending); }
     try { await pending; }
     finally { if (completing.get(job.id) === pending) completing.delete(job.id); }
   }
+  /** @param {Job} job @param {any} data */
   async function persistCompletion(job, data) {
     let result = await optional(path.join(runDir(job.id), 'result.json'));
     if (result && (result.id !== job.id || typeof result.ok !== 'boolean')) throw Error('Existing result.json is invalid; keep the evidence and inspect it');
@@ -200,9 +223,10 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
     if (active === job.id) active = null;
   }
 
+  /** @type {() => Promise<void>} */
   let close;
   const server = http.createServer(async (req, res) => {
-    const reply = (status, data) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
+    const reply = (/** @type {number} */ status, /** @type {unknown} */ data) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(data)); };
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Session-Token,X-Plugin-Version');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
@@ -210,7 +234,8 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
     res.setHeader('X-Figma-Session', sessionId);
     if (req.method === 'OPTIONS') return reply(204, null);
     try {
-      const u = new URL(req.url, 'http://localhost');
+      // Server requests always have url; the optional type exists because IncomingMessage also represents client responses.
+      const u = new URL(/** @type {string} */ (req.url), 'http://localhost');
       const role = PLUGIN_ROUTES.has(u.pathname) ? 'plugin' : 'cli';
       if (req.headers['x-session-token'] !== tokens[role]) {
         if (role !== 'plugin') return reply(403, { error: 'Authentication failed' });
@@ -237,11 +262,11 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
         if (u.pathname === '/heartbeat') return reply(200, { connected: true, active });
         const claimable = () => !stopping && active && jobs.get(active)?.state === 'queued' && !deliveries.has(active);
         if (!claimable() && !stopping && pollHoldMs > 0) {
-          await new Promise(resolve => {
+          await /** @type {Promise<void>} */ (new Promise(resolve => {
             const wake = () => { clearTimeout(timer); waiters.delete(wake); resolve(); };
             const timer = setTimeout(wake, pollHoldMs);
             waiters.add(wake);
-          });
+          }));
           // Keep the lease fresh throughout a pending request. If ownership changed unexpectedly, return as though no task exists.
           if (!connection.owns(client) || !connection.touch(client, active !== null, u.searchParams.get('visibility') || 'visible').ok) return reply(200, null);
           if (!claimable()) { if (!stopping) res.setHeader('X-Long-Poll', '1'); return reply(200, null); }
@@ -376,8 +401,9 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   const { lock, recovered } = await acquireLock(dir);
   try {
     for (const job of await unfinishedOperations(dir, binding.id)) { jobs.set(job.id, job); if (job.operation === 'run') unresolved.add(job.id); }
-    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
-    port = server.address().port;
+    await /** @type {Promise<void>} */ (new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); }));
+    // Listening on TCP makes address() return AddressInfo; only pipes return strings.
+    port = /** @type {import('node:net').AddressInfo} */ (server.address()).port;
     // Plugin configuration contains only port, credentials and version, keeping generated files identical across projects using the same port and version.
     const config = { port, token: tokens.plugin, version };
     // Replace only the script's placeholder line, leaving matching words inside comments alone.
@@ -411,7 +437,8 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
     await Promise.allSettled([...checkpoints.values()].map(entry => entry.promise));
     await Promise.allSettled([...approvals.values()].map(entry => entry.promise));
     // /poll atomically writes running before delivery; queued here proves the plugin never received the task. Record non-execution without creating an unresolved write.
-    const pending = active && jobs.get(active);
+    // active is always null or a task ID, never an empty string.
+    const pending = /** @type {Job | null | undefined} */ (active && jobs.get(active));
     if (pending?.state === 'queued') await persistCompletion(pending, { id: active, ok: false, executionStarted: false, error: NOT_DELIVERED }).catch(() => {});
     else if (active) await save(path.join(runDir(active), 'recovery.json'), { status: 'unknown-after-disconnect',
       instruction: pending?.operation === 'run' ? 'After reconnecting, inspect first; do not replay the script' : 'Read-only job interrupted; the document was not modified; resubmit it' });

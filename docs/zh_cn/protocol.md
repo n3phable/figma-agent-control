@@ -136,6 +136,8 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 | 参考图、位图、显式 SVG 二进制 | 200 项，base64 合计 48 MB | 缩小目标或降低倍率 |
 | 结构化输出 | 估算 UTF-8 上界 12 MB | 缩小目标 |
 
+超限会失败，不返回部分输出。结构化估算把每个非 ASCII 码元按三字节计。输出契约见 [extract-contract.d.ts](../../src/html/extract-contract.d.ts)：
+
 | 字段 | 含义 |
 |---|---|
 | `schema`, `islandRule` | Schema 为 `1`；自动孤岛规则版本为 `2` |

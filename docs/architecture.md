@@ -37,6 +37,8 @@ The iframe matches each task message against its ID and random nonce before acce
 
 The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.md](../src/AGENTS.md), [src/html/AGENTS.md](../src/html/AGENTS.md), [plugin/AGENTS.md](../plugin/AGENTS.md), and lib/AGENTS.md.
 
+`project` has no internal dependencies. `connection` is pure in-memory state with an injectable clock. `png` uses only zlib. Bridge and HTML do not import each other: the bridge/record reference the shared extract type contract only through JSDoc. HTML submits through client and reads records. Shared interruption reasons live in session because both sides need them without a circular dependency.
+
 ### Host responsibilities
 
 | Module | Why it owns this work |
@@ -85,6 +87,17 @@ Late results can still land for recovered jobs. Results belonging to another pro
 ### Extraction and HTML
 
 Background-dependent effects need special handling: an SVG export does not include the underlying scene. Automatic island selection avoids them, and the host independently vetoes unsafe inlining unless an override explicitly requests it. Reference baking is different: it crops the complete reference rectangle, freezes the visible content there, and must remain a reported limitation.
+
+## Type checking and tests
+
+Runtime executes `.mjs`/`.js` source directly; JSDoc is checked with lockfile-pinned TypeScript and typings. The source bytes tested in VM are the bytes installed in Figma.
+
+| Environment | Scope |
+|---|---|
+| [Host tsconfig](https://github.com/n3phable/figma-agent-control/blob/main/tsconfig.json) | Node modules and shared extract contract, without Figma globals |
+| [Plugin tsconfig](../plugin/tsconfig.json) | Classic-script main/extract with Figma globals, without Node APIs |
+
+The [extract contract](../src/html/extract-contract.d.ts) distinguishes plugin byte arrays, transport placeholders, and landed files. External JSON and dynamic API field access still require assertions; types alone cannot validate real Figma behavior. The optional `node tests/contract-samples.mjs <runs-directory>` checks explicitly supplied extract evidence against the type contract. It does not require or ship a private corpus.
 
 ## Extraction ownership
 

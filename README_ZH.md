@@ -24,6 +24,14 @@ Figma Agent Control（FAC）通过 localhost 桥接，把本地 CLI 连接到 Fi
 
 ## 从源码安装
 
+```sh
+git clone https://github.com/n3phable/figma-agent-control.git
+cd figma-agent-control
+npm ci
+npm link
+figma-agent-control help
+```
+
 `npm link` 让 shell 可以调用 CLI。
 
 内置的 [Agent Skill](skills/figma-agent-control/SKILL.md) 提供操作与恢复规则。选择 Agent 应从哪个位置发现它，再创建指向 Skill 目录的链接：
@@ -121,10 +129,3 @@ figma-agent-control stop
 ## 当前命令用法
 
 运行 `figma-agent-control help` 查看此版本可用命令。核心命令为 init、connect、stop、status、doctor、run、inspect、preview、variables、result、wait、resolve、image-diff 和 report。等待超时不代表可以重放写入。
-
-## 从源码使用
-
-```sh
-npm link
-figma-agent-control help
-```

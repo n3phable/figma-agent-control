@@ -37,6 +37,8 @@ iframe 在接受确认或结果前，逐条核对任务 ID 和随机 nonce。
 
 主机侧依赖无环。完整成员清单见 [src/AGENTS.md](../../src/AGENTS.md)、[src/html/AGENTS.md](../../src/html/AGENTS.md)、[plugin/AGENTS.md](../../plugin/AGENTS.md) 和 lib/AGENTS.md。
 
+`project` 不依赖内部模块；`connection` 是时钟可注入的纯内存状态；`png` 只用 zlib。桥接与 HTML 不互相 import：bridge/record 仅在 JSDoc 中引用共享 extract 类型。HTML 经 client 提交、经 record 读回。两侧共用的中断原因放在 session，避免循环依赖。
+
 ### 主机侧职责
 
 | 模块 | 职责归属的原因 |
@@ -85,6 +87,17 @@ CLI 观察证据文件等待结果，等待前先向 stderr 写任务 ID。终�
 ### 提取与 HTML
 
 依赖背景的效果需单独处理，因为 SVG 不含底层场景。自动孤岛会避开它们；主机也独立否决不安全的内联，除非 override 显式要求。参考图烘焙不同：它冻结完整矩形内的可见内容，必须持续作为限制报告。
+
+## 类型检查与测试
+
+运行时直接执行 `.mjs`/`.js` 源码，JSDoc 由锁定版本的 TypeScript 和 typings 检查。VM 测试与 Figma 安装使用同一份源码字节。
+
+| 环境 | 范围 |
+|---|---|
+| [主机 tsconfig](https://github.com/n3phable/figma-agent-control/blob/main/tsconfig.json) | Node 模块与共享提取契约，不注入 Figma 全局 |
+| [插件 tsconfig](../../plugin/tsconfig.json) | 带 Figma 全局的经典脚本 main/extract，不允许 Node API |
+
+[提取契约](../../src/html/extract-contract.d.ts)区分插件字节、传输占位和落盘文件。外部 JSON 和动态 API 字段仍需断言，类型不能单独验证真实 Figma 行为。可选 `node tests/contract-samples.mjs <runs-directory>` 检查明确提供的提取证据，不需要或附带私有语料。
 
 ## 提取实现位置
 

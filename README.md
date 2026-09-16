@@ -22,6 +22,14 @@ Figma Agent Control (FAC) connects your local CLI to a Figma Desktop development
 
 ## Install from source
 
+```sh
+git clone https://github.com/n3phable/figma-agent-control.git
+cd figma-agent-control
+npm ci
+npm link
+figma-agent-control help
+```
+
 `npm link` makes the CLI available to your shell.
 
 The bundled [agent skill](skills/figma-agent-control/SKILL.md) gives an agent the operating and recovery rules. Choose where your agent should discover it, then link the skill directory:
@@ -119,10 +127,3 @@ The bridge uses port 32523. Keep only one project bridge active on the machine. 
 ## Available command syntax
 
 Run `figma-agent-control help` for the commands in this revision. Core commands are init, connect, stop, status, doctor, run, inspect, preview, variables, result, wait, resolve, image-diff and report. A timeout does not authorize replaying a write.
-
-## Use the source checkout
-
-```sh
-npm link
-figma-agent-control help
-```

@@ -136,6 +136,8 @@ Target-page changes during extraction add `documentChangedDuringExtract`: the tr
 | Reference, bitmaps, explicit SVG binaries | 200 items, 48 MB base64 combined | Narrow the target or lower scale |
 | Structured output | 12 MB estimated UTF-8 upper bound | Narrow the target |
 
+Exceeding a limit fails without partial output. The structured estimate counts non-ASCII code units as three bytes. The output contract is [extract-contract.d.ts](../src/html/extract-contract.d.ts):
+
 | Field | Meaning |
 |---|---|
 | `schema`, `islandRule` | Schema `1`; automatic-island rule version `2` |

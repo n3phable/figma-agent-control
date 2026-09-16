@@ -18,6 +18,7 @@ export const CHECKER = hash(['check.mjs', 'match.mjs', 'chrome.mjs', '../png.mjs
 // -- Rasterization ------------------------------------------------------
 // rects is a flat [k, x, y, w, h, ...] array in paint order. Later rectangles overwrite earlier ones, yielding per-pixel node indices; -1 means unowned.
 // Round outward to include partially covered pixels. Fill TypedArrays by row; cost depends on total rectangle area, not differing-pixel count.
+/** @param {number[]} rects @param {number} width @param {number} height */
 export function raster(rects, width, height) {
   const owner = new Int32Array(width * height).fill(-1);
   for (let i = 0; i < rects.length; i += 5) {
@@ -79,14 +80,19 @@ const RECTS = `(() => {
 // The caller supplies expected size (HTML derives round(w * s) by round(h * s) from the extract; regression uses frame.json). Require positive integers and reject missing fields or NaN;
 // preventing silent bypass of size checks. Reference differences above 1 px yield unchecked/REFERENCE_SIZE; 1 px differences from fractional origins compare at reference size and mark fractional.
 // Render timeout yields unchecked/RENDER_TIMEOUT; the caller should use a new page before continuing. Other errors propagate.
+// Only the page methods below are used, as provided by chrome.mjs launch().page(); evaluated page scripts determine their result shapes.
+/** @typedef {{ browser: unknown, open(url: string, width: number, height: number): Promise<void>, shot(): Promise<Buffer>, evaluate(expression: string): Promise<any> }} Page */
+/** @param {Page} page @param {{ url: string, reference: Buffer, expected: { width: number, height: number } }} input */
 export async function check(page, { url, reference, expected }) {
   if (![expected?.width, expected?.height].every(v => Number.isInteger(v) && v > 0)) throw Error(`Expected size must be positive integers: ${JSON.stringify(expected)}`);
   const size = pngSize(reference), sizes = { expected, reference: size };
   const dw = Math.abs(size.width - expected.width), dh = Math.abs(size.height - expected.height);
   if (dw > 1 || dh > 1) return { report: { verdict: 'unchecked', reason: 'REFERENCE_SIZE', ...sizes } };
-  const { width, height } = size, ms = {};
+  const { width, height } = size, ms = /** @type {Record<string, number>} */ ({});
   let t = performance.now();
+  /** @param {string} key */
   const lap = key => { const now = performance.now(); ms[key] = Math.round(now - t); t = now; };
+  /** @param {Error & { code?: string }} error */
   const timeout = error => { if (error.code !== 'RENDER_TIMEOUT') throw error; return { report: { verdict: 'unchecked', reason: 'RENDER_TIMEOUT', ...sizes, error: error.message } }; };
 
   let shot;
@@ -100,6 +106,7 @@ export async function check(page, { url, reference, expected }) {
   const found = blockscan(m.mask, width, height);
   lap('blocks');
 
+  /** @type {{ ids: string[], names: string[], rects: number[] }} */
   let painted;
   try { painted = await page.evaluate(RECTS); } catch (error) { return timeout(error); }
   const owner = raster(painted.rects, width, height), px = new Int32Array(painted.ids.length), area = new Int32Array(painted.ids.length);
@@ -110,6 +117,7 @@ export async function check(page, { url, reference, expected }) {
     area[k]++;
     if (m.mask[i] === 1) px[k]++;
   }
+  /** @param {number} k */
   const node = k => ({ node: painted.ids[k], name: painted.names[k] });
   const nodes = [...px.keys()].filter(k => px[k]).sort((p, q) => px[q] - px[p]).map(k => ({ ...node(k), px: px[k], area: area[k] }));
   // Count ownership within each structural-block bounding box and list the top three nodes. share divides by bboxPx, all differing pixels in the box including unowned pixels,
@@ -136,6 +144,7 @@ export async function check(page, { url, reference, expected }) {
 }
 
 // Evidence always includes check.json; when available, save render and diff images with gray background, red differences, and yellow antialiasing.
+/** @param {string} dir @param {object} report @param {{ width: number, height: number, render: Buffer, diff: Uint8Array }} [images] */
 export async function writeEvidence(dir, report, images) {
   await writeAtomic(path.join(dir, 'check.json'), JSON.stringify(report, null, 2) + '\n');
   if (!images) return;
