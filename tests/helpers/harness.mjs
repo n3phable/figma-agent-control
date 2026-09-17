@@ -60,7 +60,7 @@ export function fakeFigma(doc, { fileKey = 'example', onUi = () => {} } = {}) {
 // -- End-to-end fixture ---------------------------------------------------
 // Real bridge on a random port with real main.js and ui.html in VMs. Replace UI setInterval with manual tick;
 // drive(promise) pumps polling until the promise settles.
-// doc can use another synthetic document, such as tests/fixtures/html/doc.mjs; attach its globals (mixed, getImageByHash and others) to figma.
+// doc can replace the mock document (for example tests/helpers/doc.mjs); attach its globals, such as mixed and getImageByHash, to figma.
 export async function harness(t, { url = 'https://www.figma.com/design/example/Test?node-id=1-2', fileKey = 'example', doc: given } = {}) {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'figma-agent-control-test-'));
   await init(cwd, url);

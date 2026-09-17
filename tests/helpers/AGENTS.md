@@ -6,7 +6,9 @@ Isolated synthetic document, bridge and media fixtures.
 
 ## Members
 
+- `doc.mjs`: Synthetic document used by extraction and generation tests.
 - `harness.mjs`: Real bridge and VM-plugin integration fixture.
+- `match/`: Related implementation, fixtures or configuration.
 
 ## Contract maintenance
 

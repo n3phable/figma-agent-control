@@ -1,10 +1,10 @@
 /**
- * [INPUT]: Imports ../../../src/png.mjs.
+ * [INPUT]: Imports ../../src/png.mjs.
  * [OUTPUT]: Exports MIXED, T, extractDoc.
  * [POS]: Isolated test fixtures shared by the surrounding contract and integration suites.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
-import { encodePng } from '../../../src/png.mjs';
+import { encodePng } from '../../src/png.mjs';
 
 export const MIXED = Symbol('mixed');
 export const T = (x, y, a = 1, b = 0, c = 0, d = 1) => [[a, c, x], [b, d, y]];

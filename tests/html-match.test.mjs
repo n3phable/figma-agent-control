@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { match, blockscan } from '../src/html/match.mjs';
 import { decodePng } from '../src/png.mjs';
 
-const DIR = new URL('./fixtures/html/match/', import.meta.url);
+const DIR = new URL('./helpers/match/', import.meta.url);
 const { fixtures } = JSON.parse(fs.readFileSync(new URL('expected.json', DIR), 'utf8'));
 const sha = bytes => crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 16);
 // Solid-color image with optional pixel overrides: [[x, y, [r, g, b, a]], ...].

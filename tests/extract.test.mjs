@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:vm, node:timers/promises, ./fixtures/html/doc.mjs, ./helpers/harness.mjs, ../src/bridge.mjs, ../src/project.mjs, ../src/session.mjs, ../src/record.mjs, ../src/png.mjs.
+ * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:vm, node:timers/promises, ./helpers/doc.mjs, ./helpers/harness.mjs, ../src/bridge.mjs, ../src/project.mjs, ../src/session.mjs, ../src/record.mjs, ../src/png.mjs.
  * [OUTPUT]: Node.js test cases and fixture setup for this revision.
  * [POS]: Regression coverage for extract; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { setTimeout as delay } from 'node:timers/promises';
-import { extractDoc, T } from './fixtures/html/doc.mjs';
+import { extractDoc, T } from './helpers/doc.mjs';
 import { fakeFigma, pluginSource, harness } from './helpers/harness.mjs';
 import { start } from '../src/bridge.mjs';
 import { init, root, json } from '../src/project.mjs';
@@ -28,7 +28,7 @@ const walk = (tree, fn) => { fn(tree); for (const child of tree.children || []) 
 const AUTO = { '2:1': 's0', '2:5': 's1', '2:13': 's1', 'I2:12;4:1': 's2', '2:10': 's3', '3:2': 's4', '3:7': 's5', '3:9': 's6' };
 
 // -- Plugin fixtures ------------------------------------------------------
-// Read-only guard (design section 4.6): recursively proxy figma, nodes and Image. Guard writes through set, defineProperty and deleteProperty, except figma.skipInvisibleInstanceChildren
+// Deep-Proxy read-only guard around figma, nodes, and Image. Record and reject set/defineProperty/deleteProperty writes except figma.skipInvisibleInstanceChildren;
 // allow only whitelisted own methods, excluding inherited methods such as array iteration. base64Encode is pure encoding needed for binary return values;
 // figma.ui belongs to the plugin's own channel and is unguarded. Ignore calls before arm(), including load-time showUI.
 // Write APIs absent from the mock (setPluginData/remove/resize, etc.) return undefined, so optional calls or try blocks could bypass method whitelisting; record violations by name on property access.

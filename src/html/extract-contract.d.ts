@@ -18,7 +18,7 @@ type Copied<T> = T extends symbol ? Mixed : T;
 type Fields<T, K extends keyof T> = { -readonly [P in K]?: Copied<T[P]> };
 
 // -- Observed shapes differing from plugin-typings 1.141.0 ----------------
-// Checked against 13 real-device extract result.json samples; real-device output is authoritative, and the contract is widened only for observed shapes.
+// Checked against 13 real extract result.json samples in the local corpus; widen only to shapes actually observed in Figma.
 /** Observed GLASS includes splay, such as 0.2, absent from typings. */
 export type ExtractEffect = Exclude<Effect, GlassEffect> | (GlassEffect & { readonly splay?: number });
 /** Observed SLOT component properties have type and preferredValues but no value; typings require value. */
@@ -37,7 +37,7 @@ export interface ExtractRequest {
   label?: string;
 }
 
-// -- Nodes --------------------------------------------------------------
+// -- Nodes: field semantics are documented below -------------------------
 /** [x, y, width, height] in target coordinates. */
 export type Bounds = [x: number, y: number, width: number, height: number];
 

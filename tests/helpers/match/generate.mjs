@@ -10,7 +10,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { encodePng } from '../../../../src/png.mjs';
+import { encodePng } from '../../../src/png.mjs';
 
 // npm install --prefix /tmp/fac-pixelmatch --ignore-scripts --no-save pixelmatch@7.2.0
 // node tests/helpers/match/generate.mjs /tmp/fac-pixelmatch/node_modules/pixelmatch
