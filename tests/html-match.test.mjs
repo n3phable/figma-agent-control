@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { match, blockscan } from '../src/html/match.mjs';
+import { match, blockscan, crop } from '../src/html/match.mjs';
 import { decodePng } from '../src/png.mjs';
 
 const DIR = new URL('./helpers/match/', import.meta.url);
@@ -73,4 +73,16 @@ test('blockscan uses density 0.22 (57/256 passes, 56 fails), 8-connected merging
   assert.deepEqual(two, [{ x: 0, y: 0, w: 48, h: 16, diffPx: 171 }, { x: 80, y: 48, w: 16, h: 16, diffPx: 200 }].sort((p, q) => q.diffPx - p.diffPx));
   // Antialiasing pixels (mask 2) do not count.
   assert.deepEqual(blockscan(mask([[0, 0, 200]]).map(v => v * 2), W, H), []);
+});
+
+test('crop copies a half-open rectangle into independent packed RGBA rows and rejects empty, out-of-bounds, or noninteger rectangles', () => {
+  // A 3x2 image uses pixel ordinal i as [i, i, i, 255].
+  const img = new Uint8Array(24);
+  for (let i = 0; i < 6; i++) img.set([i, i, i, 255], i * 4);
+  const out = crop(img, 3, [1, 0, 3, 2]);
+  assert.deepEqual([...out].filter((_, i) => i % 4 === 0), [1, 2, 4, 5]);
+  out[0] = 99;
+  assert.equal(img[4], 1);
+  assert.deepEqual([...crop(img, 3, [0, 1, 3, 2])].filter((_, i) => i % 4 === 0), [3, 4, 5]);
+  for (const rect of [[0, 0, 0, 1], [2, 0, 4, 1], [0, 1, 1, 3], [-1, 0, 1, 1], [0.5, 0, 2, 1]]) assert.throws(() => crop(img, 3, rect), /Crop rectangle is outside the image/, String(rect));
 });

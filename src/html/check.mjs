@@ -82,8 +82,10 @@ const RECTS = `(() => {
 // Render timeout yields unchecked/RENDER_TIMEOUT; the caller should use a new page before continuing. Other errors propagate.
 // Only the page methods below are used, as provided by chrome.mjs launch().page(); evaluated page scripts determine their result shapes.
 /** @typedef {{ browser: unknown, open(url: string, width: number, height: number): Promise<void>, shot(): Promise<Buffer>, evaluate(expression: string): Promise<any> }} Page */
-/** @param {Page} page @param {{ url: string, reference: Buffer, expected: { width: number, height: number } }} input */
-export async function check(page, { url, reference, expected }) {
+// refs are caller-supplied reference crops in reference-pixel coordinates [x0, y0, x1, y1); other fields return unchanged in the report.
+/** @typedef {{ node: string, rect: [x0: number, y0: number, x1: number, y1: number] }} Ref */
+/** @param {Page} page @param {{ url: string, reference: Buffer, expected: { width: number, height: number }, refs?: ReadonlyArray<Ref> }} input */
+export async function check(page, { url, reference, expected, refs = [] }) {
   if (![expected?.width, expected?.height].every(v => Number.isInteger(v) && v > 0)) throw Error(`Expected size must be positive integers: ${JSON.stringify(expected)}`);
   const size = pngSize(reference), sizes = { expected, reference: size };
   const dw = Math.abs(size.width - expected.width), dh = Math.abs(size.height - expected.height);
@@ -134,11 +136,21 @@ export async function check(page, { url, reference, expected }) {
   });
   lap('attrib');
 
+  // Baked references compare the reference against itself within their rectangles, so they do not measure reproduction accuracy. Report each crop's differing px, ideally zero;
+  // bakedShare is the union-area fraction of the canvas. Any ref caps the verdict at pass-with-findings.
+  let baked = 0;
+  if (refs.length) for (const k of raster(refs.flatMap(r => [0, r.rect[0], r.rect[1], r.rect[2] - r.rect[0], r.rect[3] - r.rect[1]]), width, height)) if (k >= 0) baked++;
+  const inside = refs.map(r => {
+    let px = 0;
+    for (let y = Math.max(0, r.rect[1]); y < Math.min(height, r.rect[3]); y++) for (let x = Math.max(0, r.rect[0]); x < Math.min(width, r.rect[2]); x++) if (m.mask[y * width + x] === 1) px++;
+    return { ...r, px };
+  });
+
   const diffRatio = m.mismatched / (width * height);
-  const verdict = diffRatio > LIMIT ? 'fail' : blocks.length ? 'pass-with-findings' : 'clean';
+  const verdict = diffRatio > LIMIT ? 'fail' : blocks.length || refs.length ? 'pass-with-findings' : 'clean';
   return {
     report: { verdict, ...(dw || dh ? { sizeNote: 'fractional' } : {}), ...sizes, mismatched: m.mismatched, aa: m.aa, diffRatio,
-      blocks, nodes, unattributed, browser: page.browser, checker: CHECKER, ms },
+      blocks, nodes, unattributed, ...(refs.length ? { refs: inside, bakedShare: Number((baked / (width * height)).toFixed(4)) } : {}), browser: page.browser, checker: CHECKER, ms },
     images: { width, height, render: shot, diff: m.image }
   };
 }

@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { findChrome, launch } from '../src/html/chrome.mjs';
 import { check, raster, writeEvidence } from '../src/html/check.mjs';
-import { decodePng } from '../src/png.mjs';
+import { decodePng, encodePng } from '../src/png.mjs';
 
 let chrome = null, reason = '';
 try { chrome = findChrome(); } catch (error) { reason = `${error.code}: ${error.message}`; }
@@ -56,6 +56,32 @@ test('raster respects paint order, rounds partially covered pixels outward, and 
   const owner = raster([0, 0, 0, 4, 3, 1, 1.5, 0.5, 1, 1, 2, -5, 2, 100, 9], 4, 3);
   assert.deepEqual([...owner], [0, 1, 1, 0, 0, 1, 1, 0, 2, 2, 2, 2]);
   assert.deepEqual([...raster([], 2, 1)], [-1, -1]);
+});
+
+test('Refs prevent clean verdicts, report per-rectangle differences and union bakedShare, while failures still apply', async () => {
+  // Stub page with a fixed screenshot and no data-node elements: a 10x10 white reference differs at (1,1) and (6,6).
+  const W = 10, white = () => new Uint8Array(W * W * 4).fill(255), shot = white();
+  for (const [x, y] of [[1, 1], [6, 6]]) shot.set([0, 0, 0, 255], (y * W + x) * 4);
+  const fake = png => ({ browser: { version: 'fake' }, open: async () => {}, shot: async () => png, evaluate: async () => ({ ids: [], names: [], rects: [] }) });
+  const input = { url: 'about:blank', reference: encodePng(W, W, white()), expected: { width: W, height: W } };
+  assert.equal((await check(fake(encodePng(W, W, white())), input)).report.verdict, 'clean');
+  const refs = [{ node: '1:2', rect: [0, 0, 4, 4], share: 0.16 }, { node: '1:3', rect: [2, 2, 8, 8], share: 0.36 }];
+  const { report } = await check(fake(encodePng(W, W, shot)), { ...input, refs });
+  assert.deepEqual([report.verdict, report.mismatched, report.bakedShare], ['pass-with-findings', 2, 0.48], 'Union area is 16 + 36 - 4 = 48 pixels');
+  assert.deepEqual(report.refs, [{ node: '1:2', rect: [0, 0, 4, 4], share: 0.16, px: 1 }, { node: '1:3', rect: [2, 2, 8, 8], share: 0.36, px: 1 }]);
+  const plain = (await check(fake(encodePng(W, W, shot)), input)).report;
+  assert.deepEqual([plain.verdict, plain.refs, plain.bakedShare], ['clean', undefined, undefined], 'The same differences without refs are clean and omit both ref fields');
+  const dark = new Uint8Array(W * W * 4).fill(0);
+  assert.equal((await check(fake(encodePng(W, W, dark)), { ...input, refs })).report.verdict, 'fail');
+
+  // Rectangles are half-open and exclude antialiasing. A black/gray/white reference differs by a brighter gray antialiasing pixel at (4,2) and a black mismatch at (8,8).
+  const stripe = () => { const img = new Uint8Array(W * W * 4); for (let i = 0; i < W * W; i++) { const x = i % W, v = x < 4 ? 0 : x === 4 ? 128 : 255; img.set([v, v, v, 255], i * 4); } return img; };
+  const edge = stripe();
+  edge.set([230, 230, 230, 255], (2 * W + 4) * 4);
+  edge.set([0, 0, 0, 255], (8 * W + 8) * 4);
+  const rects = [[3, 0, 6, 4], [6, 6, 8, 9], [6, 6, 9, 8], [8, 8, 9, 9]].map((rect, i) => ({ node: `1:${i}`, rect }));
+  const half = (await check(fake(encodePng(W, W, edge)), { ...input, reference: encodePng(W, W, stripe()), refs: rects })).report;
+  assert.deepEqual([half.mismatched, half.aa, half.refs.map(x => x.px), half.bakedShare], [1, 1, [0, 0, 0, 1], 0.21], '(8,8) lies only in the final rectangle');
 });
 
 describe('Rendering and checking (requires Chrome)', () => {

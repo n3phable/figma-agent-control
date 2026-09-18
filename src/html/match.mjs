@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Inputs and types declared below; no runtime package dependencies.
- * [OUTPUT]: Exports match, blockscan.
+ * [OUTPUT]: Exports match, blockscan, crop.
  * [POS]: Pixel comparison, structural difference grouping and RGBA evidence helpers.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  *
@@ -121,4 +121,15 @@ export function blockscan(mask, width, height, { cell = 16, minDensity = 0.22, m
     if (px >= minPixels) regions.push({ x: x0 * cell, y: y0 * cell, w: (x1 - x0 + 1) * cell, h: (y1 - y0 + 1) * cell, diffPx: Math.round(px) });
   }
   return regions.sort((p, q) => q.diffPx - p.diffPx);
+}
+
+// -- RGBA cropping ------------------------------------------------------
+// Copy a half-open integer rectangle from width-wide RGBA into compact rows. Require a nonempty in-bounds rectangle and throw otherwise,
+// preventing subarray from silently truncating data.
+/** @param {Uint8Array} rgba @param {number} width @param {[x0: number, y0: number, x1: number, y1: number]} rect */
+export function crop(rgba, width, [x0, y0, x1, y1]) {
+  if (![x0, y0, x1, y1].every(Number.isInteger) || x0 < 0 || y0 < 0 || x1 <= x0 || y1 <= y0 || x1 > width || y1 * width * 4 > rgba.length) throw Error(`Crop rectangle is outside the image: ${[x0, y0, x1, y1]}`);
+  const w = x1 - x0, out = new Uint8Array(w * (y1 - y0) * 4);
+  for (let y = y0; y < y1; y++) out.set(rgba.subarray((y * width + x0) * 4, (y * width + x1) * 4), (y - y0) * w * 4);
+  return out;
 }
