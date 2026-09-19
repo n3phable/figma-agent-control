@@ -20,6 +20,8 @@ Figma Agent Control (FAC) connects your local CLI to a Figma Desktop development
 
 - **Local shell and localhost access** for the agent running the CLI.
 
+Font discovery searches macOS font directories.
+
 ## Install from source
 
 ```sh

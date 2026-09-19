@@ -110,3 +110,4 @@ The host can render HTML through a Chrome debugging pipe and compare PNG pixels 
 ## HTML modules
 
 - match compares decoded PNG pixels with antialiasing-aware YIQ differences.
+- fonts reads local font names and metrics for the rendering pipeline.

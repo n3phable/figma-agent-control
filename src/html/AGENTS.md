@@ -9,6 +9,7 @@ Host HTML and image-comparison modules available in this revision.
 - `check.mjs`: Render a page and compare pixels with a supplied reference.
 - `chrome.mjs`: Discover Chrome and drive owned rendering sessions through CDP.
 - `extract-contract.d.ts`: Shared type-only extraction contract.
+- `fonts.mjs`: Read local font tables and metrics.
 - `match.mjs`: Perceptual pixel comparison and structural-block analysis.
 
 ## Contract maintenance
