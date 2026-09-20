@@ -11,6 +11,7 @@ Host HTML and image-comparison modules available in this revision.
 - `css.mjs`: Map design paint, geometry and text values to CSS/SVG.
 - `extract-contract.d.ts`: Shared type-only extraction contract.
 - `fonts.mjs`: Read local font tables and metrics.
+- `generate.mjs`: Generate deterministic nested HTML from extracted design data.
 - `match.mjs`: Perceptual pixel comparison and structural-block analysis.
 
 ## Contract maintenance

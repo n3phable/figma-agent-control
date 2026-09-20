@@ -82,7 +82,7 @@ const RECTS = `(() => {
 // Render timeout yields unchecked/RENDER_TIMEOUT; the caller should use a new page before continuing. Other errors propagate.
 // Only the page methods below are used, as provided by chrome.mjs launch().page(); evaluated page scripts determine their result shapes.
 /** @typedef {{ browser: unknown, open(url: string, width: number, height: number): Promise<void>, shot(): Promise<Buffer>, evaluate(expression: string): Promise<any> }} Page */
-// refs are caller-supplied reference crops in reference-pixel coordinates [x0, y0, x1, y1); other fields return unchanged in the report.
+// refs are generator reference crops with half-open pixel rectangles [x0, y0, x1, y1); preserve all other fields in the report.
 /** @typedef {{ node: string, rect: [x0: number, y0: number, x1: number, y1: number] }} Ref */
 /** @param {Page} page @param {{ url: string, reference: Buffer, expected: { width: number, height: number }, refs?: ReadonlyArray<Ref> }} input */
 export async function check(page, { url, reference, expected, refs = [] }) {

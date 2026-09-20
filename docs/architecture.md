@@ -107,8 +107,17 @@ Read-only extraction runs inside plugin/main.js and shares its document-access h
 
 The host can render HTML through a Chrome debugging pipe and compare PNG pixels with a supplied reference. Use the comparison module API for this stage.
 
+## Shadow mapping
+
+CSS shadow shape and spread remain approximations. Compare exported pixels, especially on stroked or unclipped containers, instead of relying on matching property values.
+
+## Child paint order
+
+Generation follows extracted child order. Compare reversed Auto Layout stacking with the reference image.
+
 ## HTML modules
 
 - match compares decoded PNG pixels with antialiasing-aware YIQ differences.
 - fonts reads local font names and metrics for the rendering pipeline.
 - css maps extracted paint, geometry and text properties to CSS without I/O.
+- generate builds nested DOM and asset placeholders from extracted facts and supplied font metrics.
