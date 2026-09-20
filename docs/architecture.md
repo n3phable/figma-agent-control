@@ -111,3 +111,4 @@ The host can render HTML through a Chrome debugging pipe and compare PNG pixels 
 
 - match compares decoded PNG pixels with antialiasing-aware YIQ differences.
 - fonts reads local font names and metrics for the rendering pipeline.
+- css maps extracted paint, geometry and text properties to CSS without I/O.

@@ -13,6 +13,7 @@ Behavioral tests for the implementation in this revision.
 - `extract.test.mjs`: Tests for extract behavior in this revision.
 - `helpers/`: Isolated synthetic document, bridge and media fixtures.
 - `html-fonts.test.mjs`: Tests for html fonts behavior in this revision.
+- `html-generate.test.mjs`: Tests for html generate behavior in this revision.
 - `html-match.test.mjs`: Tests for html match behavior in this revision.
 - `html-render.test.mjs`: Tests for html render behavior in this revision.
 - `plugin.test.mjs`: Tests for plugin behavior in this revision.
