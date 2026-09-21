@@ -172,6 +172,18 @@ describe('Rendering and checking (requires Chrome)', () => {
     assert.equal(fs.existsSync(hung.profile), false);
   });
 
+  test('SIGKILL during Chrome operation rejects pending and later commands with CHROME_EXITED, while close removes the profile', needs, async () => {
+    const b = await launch({ executable: chrome });
+    try {
+      const hanging = (await b.page()).evaluate('new Promise(() => {})');
+      process.kill(b.pid, 'SIGKILL');
+      await assert.rejects(hanging, { code: 'CHROME_EXITED' });
+      await assert.rejects(b.page(), { code: 'CHROME_EXITED' });
+    } finally { await b.close(); }
+    assert.ok(exited(b.pid), `pid ${b.pid} exited`);
+    assert.equal(fs.existsSync(b.profile), false);
+  });
+
   test('SIGTERM also terminates owned Chrome and removes its profile while preserving the parent SIGTERM exit', needs, async () => {
     const lib = new URL('../src/html/chrome.mjs', import.meta.url).href;
     const child = spawn(process.execPath, ['--input-type=module', '-e', `const { launch } = await import(${JSON.stringify(lib)});
@@ -190,6 +202,23 @@ const b = await launch({ executable: ${JSON.stringify(chrome)} }); console.log(J
       if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await ended; }
       if (info) { try { process.kill(info.pid, 'SIGKILL'); } catch {} fs.rmSync(info.profile, { recursive: true, force: true }); }
     }
+  });
+
+  // A signal before handler registration exits immediately and can leave a new profile behind. Signal as soon as the profile appears to hit the window before process startup.
+  test('SIGTERM during startup immediately after profile creation leaves no profile', needs, async () => {
+    const lib = new URL('../src/html/chrome.mjs', import.meta.url).href, tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fac-sig-'));
+    try {
+      for (let i = 0; i < 8; i++) {
+        const child = spawn(process.execPath, ['--input-type=module', '-e', `const { launch } = await import(${JSON.stringify(lib)});
+await launch({ executable: ${JSON.stringify(chrome)} }); setInterval(() => {}, 1000);`], { stdio: 'ignore', env: { ...process.env, TMPDIR: tmp } });
+        const ended = new Promise(resolve => child.once('exit', (code, signal) => resolve(signal)));
+        for (let t = 0; t < 2500 && !fs.readdirSync(tmp).length; t++) await new Promise(resolve => setTimeout(resolve, 2));
+        child.kill('SIGTERM');
+        assert.equal(await ended, 'SIGTERM');
+        await new Promise(resolve => setTimeout(resolve, 200));
+        assert.deepEqual(fs.readdirSync(tmp), [], `Attempt ${i + 1}`);
+      }
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
 
   test('A 1440x6000 frame shifted 1 px checks within 1.6 s for decoding, comparison, structural blocks, and attribution, with attribution within 1 s', needs, async () => {

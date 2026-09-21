@@ -49,19 +49,21 @@ export async function chromeVersion(file) {
 // if another handler exists, let it decide whether to continue. SIGKILL cannot be caught: Chrome exits when the pipe closes, leaving profile cleanup to the system temporary-directory policy.
 /** @typedef {{ proc: import('node:child_process').ChildProcess, profile: string }} Live */
 const live = /** @type {Set<Live>} */ (new Set()), SIGNALS = /** @type {const} */ (['SIGINT', 'SIGTERM', 'SIGHUP']);
+let listening = false;
 function reap() {
   for (const b of live) { b.proc.kill('SIGKILL'); fs.rmSync(b.profile, { recursive: true, force: true, maxRetries: 3 }); }
   live.clear(); listen(false);
 }
 /** @param {NodeJS.Signals} signal */
 function onSignal(signal) { reap(); if (!process.listenerCount(signal)) process.kill(process.pid, signal); }
+// Idempotent: if profile creation or spawn throws synchronously, handlers are registered but live is empty; the next launch must not register duplicates.
 /** @param {boolean} on */
 function listen(on) {
+  if (listening === on) return;
+  listening = on;
   for (const signal of SIGNALS) process[on ? 'on' : 'off'](signal, onSignal);
   process[on ? 'on' : 'off']('exit', reap);
 }
-/** @param {Live} b */
-const watch = b => { if (!live.size) listen(true); live.add(b); };
 /** @param {Live} b */
 const unwatch = b => { if (live.delete(b) && !live.size) listen(false); };
 
@@ -72,19 +74,22 @@ const unwatch = b => { if (live.delete(b) && !live.size) listen(false); };
 /** @typedef {{ resolve(value: any): void, reject(error: Error): void, method: string, sessionId?: string, timer?: NodeJS.Timeout }} Entry */
 /** @param {{ executable?: string, timeout?: number }} [options] */
 export async function launch({ executable = findChrome(), timeout = 30000 } = {}) {
+  // Register signal handlers before profile creation and spawn. A signal before registration would immediately terminate the process and leave the new profile or starting Chrome unowned;
+  // signals arriving afterward run only once this synchronous block ends, when live already contains the browser.
+  listen(true);
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'fac-chrome-'));
   const proc = spawn(executable, [...FLAGS, `--user-data-dir=${profile}`, '--remote-debugging-pipe'], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
   // fd3 writes to Chrome and fd4 reads from it; spawn types do not distinguish the directions of stdio entries 4 and 5.
   const toChrome = /** @type {import('node:stream').Writable} */ (proc.stdio[3]), fromChrome = /** @type {import('node:stream').Readable} */ (proc.stdio[4]);
   const self = { proc, profile };
-  watch(self);
+  live.add(self);
   const exited = new Promise(resolve => { proc.once('exit', code => resolve(code)); proc.once('error', (/** @type {NodeJS.ErrnoException} */ error) => resolve(error.code)); });
   let seq = 0, gone = /** @type {Error | null} */ (null), broken = /** @type {Error | null} */ (null);
   const pending = /** @type {Map<number, Entry>} */ (new Map()), waiters = /** @type {Set<Entry>} */ (new Set());
   /** @param {Entry} entry @param {'resolve' | 'reject'} method @param {any} value */
   const settle = (entry, method, value) => { clearTimeout(entry.timer); entry[method](value); };
   exited.then(code => {
-    gone = broken ?? Error(`Chrome exited (${code})`);
+    gone = broken ?? fail(`Chrome exited (${code})`, 'CHROME_EXITED');
     for (const entry of [...pending.values(), ...waiters]) settle(entry, 'reject', gone);
     pending.clear(); waiters.clear();
   });
