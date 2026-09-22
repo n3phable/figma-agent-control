@@ -86,6 +86,15 @@ Late results can still land for recovered jobs. Results belonging to another pro
 
 ### Extraction and HTML
 
+```text
+extract in plugin -> visible tree + reference PNG + images + SVG islands
+                  -> bridge lands one coherent result and files
+                  -> host page assembly obtains font metrics/assets
+                  -> pure generator emits nested DOM + asset placeholders
+                  -> embed assets and write page with source fingerprints
+                  -> Chrome renders -> matcher/diagnostics -> evidence/manifest
+```
+
 Background-dependent effects need special handling: an SVG export does not include the underlying scene. Automatic island selection avoids them, and the host independently vetoes unsafe inlining unless an override explicitly requests it. Reference baking is different: it crops the complete reference rectangle, freezes the visible content there, and must remain a reported limitation.
 
 ## Type checking and tests
@@ -121,3 +130,4 @@ Generation follows extracted child order. Compare reversed Auto Layout stacking 
 - fonts reads local font names and metrics for the rendering pipeline.
 - css maps extracted paint, geometry and text properties to CSS without I/O.
 - generate builds nested DOM and asset placeholders from extracted facts and supplied font metrics.
+- page resolves assets and font inputs, invokes the generator and assembles self-contained pages; overrides validates frame-keyed correction data.

@@ -13,6 +13,8 @@ Host HTML and image-comparison modules available in this revision.
 - `fonts.mjs`: Read local font tables and metrics.
 - `generate.mjs`: Generate deterministic nested HTML from extracted design data.
 - `match.mjs`: Perceptual pixel comparison and structural-block analysis.
+- `overrides.mjs`: Validate recorded per-node HTML corrections.
+- `page.mjs`: Assemble self-contained pages and provenance metadata.
 
 ## Contract maintenance
 
