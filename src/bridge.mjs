@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { json, root, save, hash, isJobId, isNodeId, readBinding } from './project.mjs';
 import { createConnection } from './connection.mjs';
-import { unfinishedOperations, acquireLock, NOT_DELIVERED } from './session.mjs';
+import { unfinishedOperations, acquireLock, NOT_DELIVERED, ABANDONED } from './session.mjs';
 import { pngSize, imageStats, diffPng } from './png.mjs';
 import { changeSet } from './record.mjs';
 
@@ -72,7 +72,6 @@ function buildJob(data, binding) {
 const POLL_HOLD_MS = 10000;
 // A plugin task belongs to another project, since the global plugin serves all projects: retain the result in the plugin until its original bridge returns.
 const FOREIGN_JOB = { code: 'FOREIGN_JOB', error: 'The plugin holds a job from another project; run connect in that project to deliver its result before this project\'s jobs can be claimed' };
-const ABANDONED = 'The plugin disconnected during a read-only job and a new instance took over; the document was not modified, so the job can be resubmitted';
 
 /** @param {string} cwd @param {number} [port] @param {{ pluginToken?: string, pollHoldMs?: number } & Parameters<typeof createConnection>[0]} [options] */
 export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs = POLL_HOLD_MS, ...connectionOptions } = {}) {

@@ -1,16 +1,18 @@
 # Figma Agent Control
 
-Run trusted Plugin API scripts through a local bridge and Figma Desktop development plugin, inspect nodes, and retain execution evidence.
-
 [Simplified Chinese](README_ZH.md)
 
 
+
+Give your coding agent a local CLI for Figma Desktop. Inspect a design, run trusted JavaScript against the Plugin API, and get durable evidence of what changed. Export frames as self-contained HTML and compare their rendering with Figma reference images.
 
 Figma Agent Control (FAC) connects your local CLI to a Figma Desktop development plugin through a localhost bridge.
 
 ## What it does
 
 - **Read and edit designs:** inspect node trees, inspect variables, export PNG previews, and execute Plugin API scripts with reusable libraries and JSON input.
+
+- **Export static HTML:** generate nested DOM with embedded assets, compare it in Chrome, and apply recorded overrides.
 
 ## Requirements
 
@@ -96,6 +98,7 @@ A submitting command waits by default and returns one JSON object. Its stderr re
 | `inspect`, `preview`, `variables`, `extract` | Read nodes and variables, export PNGs, or extract HTML inputs |
 | `run` | Execute a trusted script with `--lib`, `--data`, and optional `--expect changed\|unchanged` |
 | `clean` | Recheck and delete eligible nodes left by a failed run, as a separate Undo step |
+| `html`, `html-check` | Generate and compare static HTML, or recheck an existing export |
 | `image-diff`, `report` | Compare PNGs or summarize job timings, failures, and repeated executions |
 
 Use `figma-agent-control help` for the exact syntax of the installed version. The [agent guide](docs/agent-guide.md) includes complete script examples and recovery procedures.

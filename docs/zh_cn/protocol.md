@@ -235,6 +235,16 @@ iframe 与执行代码使用 postMessage。每个任务都有随机 `channelNonc
 
 有待回传结果时，iframe 发送 `/complete` 而非心跳。轮询超时为 15 秒；结果回传为三秒加上每 10 MB 载荷一秒；其他请求为三秒。
 
+## HTML 导出
+
+`html [--node <id>]... [--from <extract-id>]... --out <dir>` 接受合计 1–50 个不重复画框。`--from` 使用本项目已成功保存的 scale-1 extract。`--overrides` 提供按画框分组的修正；`--no-check` 跳过 Chrome 比较。
+
+`<out>/html.json` 记录 `frames`、`done`、`pending`、`remaining`、`instruction`、`exitCode` 及生成/检查指纹。生成页面保存 extract 标识；比较产物放在 `.figma-agent-control/check/<extract-id>/`，包括 `check.json` 和成功时的 `render.png`、`diff.png`。
+
+`--timeout` 为 1–300 秒，默认 30；`--budget` 为 10–600 秒，默认 90，只计算提取提交/等待。续跑命令保留完整批次和原选项。退出 `2` 表示还有 pending 或 remaining；退出 `1` 表示检查失败、错误或需要处理的结果；退出 `0` 表示当前配置下完成。
+
+`html-check <page.html>...` 接受 1–50 个带 metadata 的 scale-1 页面，并在生成它们的项目中读取原 extract 进行比较。
+
 ## CLI 输出
 
 Stdout 只包含一个 JSON 对象。错误形状为 `{error,code}`，错误文字最多 2,000 字符。不要把 stderr 合并进 JSON 输出。

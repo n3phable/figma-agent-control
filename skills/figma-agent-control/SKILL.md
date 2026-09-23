@@ -70,4 +70,6 @@ Save recurring script sequences and stop at the first nonzero status. An unfinis
 
 ## Export and deliver
 
+Use `html --node <frame-id> --out <directory>` for static HTML. Read the manifest and comparison evidence, keep corrections in an overrides file, and follow the full-batch continuation instruction on exit `2`.
+
 Keep `.figma-agent-control/` out of version control; it contains design evidence and credentials. Retain unreviewed jobs and deliver only needed artifacts. Stop bridges started for the task when they are no longer needed. `report --since <ISO-time>` can summarize the session.

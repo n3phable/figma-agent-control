@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Imports node:fs/promises, node:path, node:crypto, ./project.mjs.
- * [OUTPUT]: Exports pairingToken, NOT_DELIVERED, unfinishedOperations, emptyLock, validPid, acquireLock.
+ * [OUTPUT]: Exports pairingToken, NOT_DELIVERED, ABANDONED, unfinishedOperations, emptyLock, validPid, acquireLock.
  * [POS]: Owns pairing, exclusive bridge locks and recovery of unfinished disk records.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -37,7 +37,9 @@ export async function pairingToken(dir) {
   }
 }
 
+// Two result.json non-execution reasons: undelivered before shutdown, or a new instance taking over a disconnected read-only task. html extraction matches them exactly as interruptions, not failures.
 export const NOT_DELIVERED = 'The bridge stopped before the job was delivered to the plugin; the script did not run; it can be resubmitted';
+export const ABANDONED = 'The plugin disconnected while running a read-only job and a new plugin instance took over; the document was not modified; it can be resubmitted';
 
 /** @param {string} file */
 async function optional(file) {

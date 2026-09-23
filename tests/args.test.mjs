@@ -20,9 +20,9 @@ const URL_ = 'https://www.figma.com/design/k/n?node-id=1-2';
 const POSITIONALS = {
   help: [], init: [URL_], connect: [], stop: [], status: [], doctor: [],
   run: ['a.js'], inspect: [], preview: [], variables: [], extract: [], result: [ID], wait: [ID],
-  resolve: [ID], 'image-diff': ['a.png', 'b.png'], report: [],
+  resolve: [ID], 'image-diff': ['a.png', 'b.png'], report: [], html: [], 'html-check': ['a.html'],
 };
-const FLAGS = { resolve: ['--inspect', ID2, '--previous-plugin-stopped'] };
+const FLAGS = { resolve: ['--inspect', ID2, '--previous-plugin-stopped'], html: ['--node', '1:2', '--out', 'd'] };
 const usageOf = cmd => ({ message }) => message.startsWith('Usage: ' + cmd);
 const opts = (...argv) => parse(argv).options;
 
@@ -33,6 +33,7 @@ test('Each command enforces positional argument bounds and reports its own usage
     const flags = FLAGS[cmd] ?? [];
     const ok = parse([cmd, ...pos, ...flags]);
     assert.deepEqual([ok.command, ok.positionals], [cmd, pos], cmd);
+    if (cmd === 'html-check') continue;   // Accepts 1-50 pages; dedicated cases cover both bounds.
     assert.throws(() => parse([cmd, ...pos, 'extra', ...flags]), usageOf(cmd), cmd + ' extra argument');
     if (pos.length) assert.throws(() => parse([cmd, ...pos.slice(1), ...flags]), usageOf(cmd), cmd + ' missing argument');
   }
@@ -90,6 +91,29 @@ test('extract accepts --scale and repeated --island: normalize IDs, reject dupli
   assert.equal(opts('extract', ...many(500)).islands.length, 500);
   assert.throws(() => parse(['extract', ...many(501)]), /^Error: --island takes at most 500 nodes$/);
   for (const flag of [['--lib', 'a.js'], ['--depth', '1'], ['--expect', 'changed'], ['--node', '1:2', '--node', '1:3']]) assert.throws(() => parse(['extract', ...flag]), /extract \[--node/, flag[0]);
+});
+
+test('html accepts repeated --node and --from totaling 1-50 frames, maps --from to fromIds, and normalizes output, overrides, check, timeout, and budget options', () => {
+  assert.deepEqual(opts('html', '--from', ID, '--node', '1-2', '--from', ID2, '--node', '1:3', '--out', 'd', '--overrides', 'o.json', '--no-check', '--timeout', '5', '--budget', '600'),
+    { targetNodeId: '1:2', nodes: ['1:2', '1:3'], timeoutSeconds: 5, outDir: 'd', fromIds: [ID, ID2], overridesFile: 'o.json', noCheck: true, budgetSeconds: 600 });
+  assert.deepEqual(opts('html', '--node', '1:2', '--out', ' d ', '--budget', '10'), { targetNodeId: '1:2', outDir: ' d ', budgetSeconds: 10 });
+  const many = (flag, n, at = i => `1:${i + 1}`) => Array.from({ length: n }, (_, i) => [flag, at(i)]).flat();
+  const uuid = i => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+  assert.equal(opts('html', ...many('--node', 25), ...many('--from', 25, uuid), '--out', 'd').fromIds.length, 25);
+  for (const [argv, message] of [
+    [['--node', '1:2'], /^html requires --out/], [['--node', '1:2', '--out', '  '], /^html requires --out/], [['--out', 'd'], /^html needs 1-50 frames.*got 0$/],
+    [[...many('--node', 26), ...many('--from', 25, uuid), '--out', 'd'], /got 51$/], [[...many('--node', 51), '--out', 'd'], /^--node takes at most 50 nodes, without duplicates$/],
+    [['--from', ID.toUpperCase(), '--out', 'd'], /^--from must be an extract job ID \(lowercase UUID\)/], [['--from', 'x', '--out', 'd'], /lowercase UUID/], [['--from', ID, '--from', ID, '--out', 'd'], /^--from has a duplicate job: /],
+    ...['9', '601', '1.5'].map(v => [['--node', '1:2', '--out', 'd', '--budget', v], /^--budget must be an integer 10-600 seconds$/]),
+    [['--node', '1:2', '--out', 'd', '--out', 'e'], /--out may be given only once/], [['--node', '1:2', '--out', 'd', '--budget', '10', '--budget', '20'], /--budget may be given only once/],
+  ]) assert.throws(() => parse(['html', ...argv]), error => message.test(error.message), argv.join(' '));
+});
+
+test('html-check accepts 1-50 pages, rejects zero or 51 with usage, and accepts no options', () => {
+  const pages = n => Array.from({ length: n }, (_, i) => `p${i}.html`);
+  assert.deepEqual(parse(['html-check', ...pages(50)]).positionals.length, 50);
+  for (const n of [0, 51]) assert.throws(() => parse(['html-check', ...pages(n)]), usageOf('html-check'), String(n));
+  assert.throws(() => parse(['html-check', 'a.html', '--no-check']), /^Error: Invalid arguments/);
 });
 
 test('Commands other than preview reject repeated --node instead of silently writing to the last target', () => {

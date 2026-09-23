@@ -208,6 +208,20 @@ Read `.output[].png.file` from the raw `result.json`, relative to the evidence d
 
 Do not base64-encode exports into strings. Byte values nested anywhere in the result use a separate binary channel: at most 200 items and 48 MB of total base64 payload, including visual-check images. Oversized string results can lose the whole return value. Lower scale or split a large batch. `useAbsoluteBounds: true` exports the node's box; ordinary previews can include shadows outside it.
 
+## Exporting HTML
+
+`html` generates fixed-size, self-contained HTML from frames or saved extracts. Chrome compares it with the reference from the same extract by default; `--no-check` only generates.
+
+```sh
+figma-agent-control html --node 12:34 --out out
+figma-agent-control html --from <extract-job-id> --out out
+figma-agent-control html-check <page.html>
+```
+
+The complete manifest is `<out>/html.json`; comparison evidence is under `.figma-agent-control/check/<extract-job-id>/`. Record corrections with `--overrides <file.json>` and regenerate.
+
+Read `instruction` first. On exit `2`, wait for the listed pending extracts, then run the full-batch continuation command. A batch accepts up to 50 frames, with a default 30-second extract wait and 90-second submission/wait budget.
+
 ## Troubleshooting
 
 | Signal | Action |

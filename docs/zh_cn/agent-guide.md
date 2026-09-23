@@ -208,6 +208,20 @@ figma-agent-control run export.js --depth 1 > out.json 2> receipt.log
 
 不要把导出内容转成 base64 字符串。任意嵌套的字节值走独立二进制通道：每任务最多 200 项，含画面判定图片在内的 base64 总量最多 48 MB。过大的字符串结果可能丢失整个返回值。大批量降低倍率或拆批。`useAbsoluteBounds:true` 按节点盒子导出，普通预览可能包含盒外投影。
 
+## 导出 HTML
+
+`html` 把画框或已保存的 extract 生成为固定尺寸的自包含 HTML。默认用 Chrome 与同一次 extract 的参考图比较；`--no-check` 只生成。
+
+```sh
+figma-agent-control html --node 12:34 --out out
+figma-agent-control html --from <extract-job-id> --out out
+figma-agent-control html-check <page.html>
+```
+
+完整清单在 `<out>/html.json`，比较证据在 `.figma-agent-control/check/<extract-job-id>/`。通过 `--overrides <file.json>` 记录修正，随后重新生成。
+
+先读 `instruction`。退出 `2` 时等待列出的 pending 提取，再执行覆盖完整批次的续跑命令。每批最多 50 帧，默认每次提取等待 30 秒，提交/等待预算为 90 秒。
+
 ## 出错时
 
 | 信号 | 处理 |

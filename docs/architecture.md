@@ -95,6 +95,8 @@ extract in plugin -> visible tree + reference PNG + images + SVG islands
                   -> Chrome renders -> matcher/diagnostics -> evidence/manifest
 ```
 
+The plugin extracts API facts; frequently changing CSS generation rules remain on the host. A saved extract can therefore be regenerated offline with `html --from` without restarting the plugin. Automatic island selection in the plugin is versioned separately. The host decides which SVGs it can safely use and may request one additional extract for unsupported CSS nodes.
+
 Background-dependent effects need special handling: an SVG export does not include the underlying scene. Automatic island selection avoids them, and the host independently vetoes unsafe inlining unless an override explicitly requests it. Reference baking is different: it crops the complete reference rectangle, freezes the visible content there, and must remain a reported limitation.
 
 ## Type checking and tests
@@ -111,10 +113,6 @@ The [extract contract](../src/html/extract-contract.d.ts) distinguishes plugin b
 ## Extraction ownership
 
 Read-only extraction runs inside plugin/main.js and shares its document-access helpers.
-
-## Browser comparison layer
-
-The host can render HTML through a Chrome debugging pipe and compare PNG pixels with a supplied reference. Use the comparison module API for this stage.
 
 ## Shadow mapping
 

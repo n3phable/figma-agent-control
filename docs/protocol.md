@@ -231,6 +231,16 @@ The iframe and execution code use postMessage. Each job has a random `channelNon
 
 While a result is awaiting delivery, the iframe sends `/complete` rather than heartbeats. Request deadlines are 15 seconds for polling, three seconds plus one second per 10 MB of completion payload, and three seconds for other requests.
 
+## HTML export
+
+`html [--node <id>]... [--from <extract-id>]... --out <dir>` accepts 1–50 unique frames in total. `--from` uses successful local scale-1 extracts. `--overrides` supplies frame-keyed corrections; `--no-check` skips Chrome comparison.
+
+`<out>/html.json` records `frames`, `done`, `pending`, `remaining`, `instruction`, `exitCode` and generator/checker fingerprints. Generated pages retain extract identity. Comparison artifacts go under `.figma-agent-control/check/<extract-id>/`: `check.json` and, after successful rendering, `render.png` and `diff.png`.
+
+`--timeout` is 1–300 seconds, default 30. `--budget` is 10–600 seconds, default 90, for extract submission/waiting. Continuation commands preserve the complete batch and supplied options. Exit `2` means pending or remaining work; `1` means failed checks, errors or findings requiring action; `0` means completion under the configured checks.
+
+`html-check <page.html>...` accepts 1–50 metadata-bearing scale-1 pages and compares them using their original extracts in the project that generated them.
+
 ## CLI output
 
 Stdout contains exactly one JSON object. Errors are `{error,code}`, with error text capped at 2,000 characters. Do not merge stderr into JSON output.

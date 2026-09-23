@@ -34,6 +34,10 @@ export const COMMANDS = {
   'image-diff': { usage: 'image-diff <before.png|preview-job-id> <after.png|preview-job-id> [--threshold <0-255>] [--expect changed|unchanged]', positionals: [2, 2],
     options: { threshold: { type: 'string' }, expect: { type: 'string' } } },
   report: { usage: 'report [--since <ISO-time>]: summary of job durations, gaps and repeated runs (default: last 24 hours; a date alone means UTC midnight)', positionals: [0, 0], options: { since: { type: 'string' } } },
+  html: { usage: 'html [--node <ID>]... [--from <extract-job-id>]... --out <dir> [--overrides <file.json>] [--no-check] [--timeout <seconds>] [--budget <seconds>]: export pixel-replica HTML and compare each frame with the extract reference image; handles --from first, then submits one extract per --node frame; 1-50 frames in total; --budget caps the time spent submitting and waiting for extracts (10-600, default 90), and when it runs out exits with code 2 and returns the resume command',
+    positionals: [0, 0], options: { node: { type: 'string', multiple: true }, from: { type: 'string', multiple: true }, out: { type: 'string' }, overrides: { type: 'string' },
+      'no-check': { type: 'boolean' }, timeout: { type: 'string' }, budget: { type: 'string' } } },
+  'html-check': { usage: 'html-check <page.html>...: find extract references from page metadata and rerender for comparison; no Figma connection, run in the project that generated the pages', positionals: [1, 50], options: {} },
 };
 
 /** @param {string} value @param {number} min @param {number} max @param {string} message */
@@ -61,11 +65,12 @@ const expect = value => {
 // parseArgs sees only ParseArgsOptionsConfig and a union of all option value types; COMMANDS above defines each option's exact type.
 /** @typedef {{ node?: string | string[], lib?: string[], island?: string[], data?: string, depth?: string, expect?: string, tolerance?: string, scale?: string,
  *   'request-id'?: string, 'high-risk'?: string, timeout?: string, 'no-wait'?: boolean, full?: boolean, force?: boolean, inspect?: string,
- *   'previous-plugin-stopped'?: boolean, threshold?: string, since?: string }} Values */
+ *   'previous-plugin-stopped'?: boolean, threshold?: string, since?: string, from?: string[], out?: string, overrides?: string, 'no-check'?: boolean, budget?: string }} Values */
 // Normalized options, read by bin according to the command.
 /** @typedef {{ targetNodeId?: string, nodes?: string[], snapshotDepth?: number, timeoutSeconds?: number, threshold?: number, expect?: string, tolerance?: number,
  *   scale?: number, requestId?: string, risk?: { level: 'high', reason: string }, islands?: string[], libFiles?: string[], dataFile?: string, since?: string,
- *   inspectId?: string, previousPluginStopped?: true, force?: true, full?: true, noWait?: true }} Options */
+ *   inspectId?: string, previousPluginStopped?: true, force?: true, full?: true, noWait?: true,
+ *   fromIds?: string[], outDir?: string, overridesFile?: string, noCheck?: true, budgetSeconds?: number }} Options */
 /** @param {string[]} argv @returns {{ command: string, positionals: string[], options: Options }} */
 export function parse(argv) {
   const [first = 'help', ...rest] = argv;
@@ -85,7 +90,7 @@ export function parse(argv) {
   const o = {};
   if (v.node !== undefined) {
     const ids = /** @type {string[]} */ ([]).concat(v.node).map(id => nodeId(id));
-    if (new Set(ids).size !== ids.length || ids.length > 50) throw Error('preview accepts at most 50 nodes without duplicates');
+    if (new Set(ids).size !== ids.length || ids.length > 50) throw Error('--node takes at most 50 nodes, without duplicates');
     o.targetNodeId = ids[0];
     if (ids.length > 1) o.nodes = ids;
   }
@@ -120,6 +125,20 @@ export function parse(argv) {
     if (!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2}))?$/.test(v.since) || Number.isNaN(Date.parse(v.since))
       || new Date(Date.UTC(y, m - 1, d)).getUTCDate() !== d) throw Error('--since needs an ISO time (the date must exist), e.g. 2026-10-06 or 2026-10-06T08:00:00Z');
     o.since = new Date(v.since).toISOString();
+  }
+  // html: --node and --from specify 1-50 frames combined; --out is required (an empty string resolves to cwd, which would write pages and remove old pages at the project root).
+  if (first === 'html') {
+    if (!v.out?.trim()) throw Error('html requires --out <dir>, and it must not be empty');
+    o.outDir = v.out;
+    const from = v.from ?? [], bad = from.find(id => !isJobId(id)), twice = from.find((id, i) => from.indexOf(id) !== i);
+    if (bad !== undefined) throw Error(`--from must be an extract job ID (lowercase UUID): ${bad}`);
+    if (twice) throw Error(`--from has a duplicate job: ${twice}`);
+    const frames = from.length + (o.nodes?.length ?? (o.targetNodeId ? 1 : 0));
+    if (frames < 1 || frames > 50) throw Error(`html needs 1-50 frames (--node and --from combined), got ${frames}`);
+    if (from.length) o.fromIds = from;
+    if (v.overrides !== undefined) o.overridesFile = v.overrides;
+    if (v['no-check']) o.noCheck = true;
+    if (v.budget !== undefined) o.budgetSeconds = integer(v.budget, 10, 600, '--budget must be an integer 10-600 seconds');
   }
   if (first === 'resolve') {
     if (!isJobId(positionals[0]) || !isJobId(v.inspect) || !v['previous-plugin-stopped']) throw Error('Usage: ' + spec.usage + '; first confirm the previous plugin has stopped and check the current document');

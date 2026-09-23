@@ -8,13 +8,16 @@ Host HTML and image-comparison modules available in this revision.
 
 - `check.mjs`: Render a page and compare pixels with a supplied reference.
 - `chrome.mjs`: Discover Chrome and drive owned rendering sessions through CDP.
+- `command.mjs`: Orchestrate HTML export and rechecking.
 - `css.mjs`: Map design paint, geometry and text values to CSS/SVG.
 - `extract-contract.d.ts`: Shared type-only extraction contract.
+- `extracts.mjs`: Submit, wait for and read extraction evidence.
 - `fonts.mjs`: Read local font tables and metrics.
 - `generate.mjs`: Generate deterministic nested HTML from extracted design data.
 - `match.mjs`: Perceptual pixel comparison and structural-block analysis.
 - `overrides.mjs`: Validate recorded per-node HTML corrections.
 - `page.mjs`: Assemble self-contained pages and provenance metadata.
+- `summary.mjs`: Summarize frame outcomes and continuation instructions.
 
 ## Contract maintenance
 
