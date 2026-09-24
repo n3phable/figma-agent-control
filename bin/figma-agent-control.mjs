@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * [INPUT]: Imports node:fs/promises, node:path, ../src/project.mjs, ../src/bridge.mjs, ../src/session.mjs, ../src/args.mjs, ../src/client.mjs, ../src/doctor.mjs, ../src/record.mjs, ../src/image-diff.mjs, ../src/report.mjs.
+ * [INPUT]: Imports node:fs/promises, node:path, ../src/project.mjs, ../src/bridge.mjs, ../src/session.mjs, ../src/args.mjs, ../src/client.mjs, ../src/doctor.mjs, ../src/record.mjs, ../src/image-diff.mjs, ../src/report.mjs, ../src/html/command.mjs.
  * [OUTPUT]: Plugin task handling and serialized results.
  * [POS]: CLI shell: validate arguments, dispatch a command, and emit its JSON result and exit status.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -16,8 +16,10 @@ import { doctor } from '../src/doctor.mjs';
 import { localResult, summarizeRecord, exitCode, waitForResult } from '../src/record.mjs';
 import { imageDiff } from '../src/image-diff.mjs';
 import { report } from '../src/report.mjs';
+import { html, htmlCheck } from '../src/html/command.mjs';
 
 const cwd = process.cwd();
+/** @param {unknown} value */
 const out = value => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
 const HELP = {
   commands: Object.values(COMMANDS).map(c => c.usage),
@@ -25,11 +27,14 @@ const HELP = {
   lib: '--lib is repeatable: each library executes in a separate enclosing scope, and the body can call its functions directly; same-name declarations shadow outer scopes without conflicts',
   expect: '--expect changed|unchanged: export the target once before and once after the script and compare them to check whether the write changed the rendering; --tolerance sets the number of changed pixels allowed',
   output: 'Submission commands wait by default and print a compact summary; --no-wait only submits, and --full prints the complete record',
-  exitCodes: { 0: 'success', 1: 'failure, failed visual verification, or a reviewed result that remains unknown', 2: 'not complete (wait expired or review pending; for stop, the bridge is still finishing shutdown, so check status later)' }
+  exitCodes: { 0: 'success', 1: 'failure, failed visual verification, skipped explicit extract islands, or a reviewed result that remains unknown; html also fails for frames below target, unchecked or errored frames, stale overrides, or missing Figma-exported islands',
+    2: 'not finished yet (wait expired or verification pending; for stop: the bridge is still shutting down, confirm later with status; for html: needs a resumed run, see instruction)' }
 };
 
+/** @param {string} command @param {string[]} positionals @param {import('../src/args.mjs').Options} o */
 async function submit(command, [file], o) {
-  const body = { operation: command, targetNodeId: o.targetNodeId, nodes: o.nodes, snapshotDepth: o.snapshotDepth, scale: o.scale, risk: o.risk, requestId: o.requestId, expect: o.expect, tolerance: o.tolerance };
+  /** @type {Record<string, unknown>} */
+  const body = { operation: command, targetNodeId: o.targetNodeId, nodes: o.nodes, snapshotDepth: o.snapshotDepth, scale: o.scale, risk: o.risk, requestId: o.requestId, expect: o.expect, tolerance: o.tolerance, islands: o.islands };
   if (command === 'run') {
     body.code = await fs.readFile(path.resolve(file), 'utf8');
     body.label = path.basename(file);
@@ -73,4 +78,8 @@ try {
   }
   else if (command === 'image-diff') { const diff = await imageDiff(cwd, positionals, o); out(diff); if (diff.expectation === 'failed') process.exitCode = 1; }
   else if (command === 'report') out(await report(cwd, o.since ? { since: o.since } : {}));
-} catch (error) { out({ error: error.message, code: error.code || 'COMMAND_FAILED' }); process.exitCode = 1; }
+  else if (command === 'html' || command === 'html-check') {
+    const { summary, exitCode: code } = command === 'html' ? await html(cwd, o) : await htmlCheck(cwd, positionals);
+    out(summary); process.exitCode = code;
+  }
+} catch (error) { const message = String(error.message); out({ error: message.length > 2000 ? message.slice(0, 1997) + '...' : message, code: error.code || 'COMMAND_FAILED' }); process.exitCode = 1; }

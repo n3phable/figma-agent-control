@@ -35,7 +35,9 @@ iframe 在接受确认或结果前，逐条核对任务 ID 和随机 nonce。
 
 ## 模块结构
 
-主机侧依赖无环。完整成员清单见 [src/AGENTS.md](../../src/AGENTS.md)、src/html/AGENTS.md、[plugin/AGENTS.md](../../plugin/AGENTS.md) 和 lib/AGENTS.md。
+主机侧依赖无环。完整成员清单见 [src/AGENTS.md](../../src/AGENTS.md)、[src/html/AGENTS.md](../../src/html/AGENTS.md)、[plugin/AGENTS.md](../../plugin/AGENTS.md) 和 lib/AGENTS.md。
+
+`project` 不依赖内部模块；`connection` 是时钟可注入的纯内存状态；`png` 只用 zlib。桥接与 HTML 不互相 import：bridge/record 仅在 JSDoc 中引用共享 extract 类型。HTML 经 client 提交、经 record 读回。两侧共用的中断原因放在 session，避免循环依赖。
 
 ### 主机侧职责
 
@@ -81,3 +83,49 @@ CLI 观察证据文件等待结果，等待前先向 stderr 写任务 ID。终�
 `result.json` 是提交点。从未交付的 queued 任务可证明未执行；已交付而无结果的 run 是未知状态，会阻止新 run。内置读操作保持可用，以便先检查目标。resolve 要求当前会话直接 inspect 原目标，并确认旧插件停止；它结束等待，不虚构成功，也不撤销。
 
 恢复任务仍可接受迟到结果。其他项目的结果收到 `FOREIGN_JOB`，留在 iframe 等原桥接回来。诊断优先处理它，避免通用的“重启插件”建议丢掉真实结果。
+
+### 提取与 HTML
+
+```text
+插件 extract -> 可见树 + 参考 PNG + 位图 + SVG 岛
+             -> 桥接落同次结果与文件
+             -> 主机装配字体度量/资源
+             -> 纯生成器输出嵌套 DOM + 占位
+             -> 内联资源，写带源码指纹的页面
+             -> Chrome 渲染 -> 比图/诊断 -> 证据/清单
+```
+
+插件提取 API 事实，变化较频繁的 CSS 生成规则留在主机。保存的 extract 可以用 `html --from` 离线重生成，不必重启插件。自动孤岛规则在插件中单独版本化；主机决定哪些 SVG 可安全使用，并可为 CSS 无法表达的节点追加一次提取。
+
+依赖背景的效果需单独处理，因为 SVG 不含底层场景。自动孤岛会避开它们；主机也独立否决不安全的内联，除非 override 显式要求。参考图烘焙不同：它冻结完整矩形内的可见内容，必须持续作为限制报告。
+
+## 类型检查与测试
+
+运行时直接执行 `.mjs`/`.js` 源码，JSDoc 由锁定版本的 TypeScript 和 typings 检查。VM 测试与 Figma 安装使用同一份源码字节。
+
+| 环境 | 范围 |
+|---|---|
+| [主机 tsconfig](https://github.com/n3phable/figma-agent-control/blob/main/tsconfig.json) | Node 模块与共享提取契约，不注入 Figma 全局 |
+| [插件 tsconfig](../../plugin/tsconfig.json) | 带 Figma 全局的经典脚本 main/extract，不允许 Node API |
+
+[提取契约](../../src/html/extract-contract.d.ts)区分插件字节、传输占位和落盘文件。外部 JSON 和动态 API 字段仍需断言，类型不能单独验证真实 Figma 行为。可选 `node tests/contract-samples.mjs <runs-directory>` 检查明确提供的提取证据，不需要或附带私有语料。
+
+## 提取实现位置
+
+只读提取在 plugin/main.js 内实现，并共享文档读取辅助函数。
+
+## 阴影映射
+
+CSS 阴影外形和 spread 仍是近似。带描边或未裁切容器应比较导出像素，不能只看属性值相同。
+
+## 子节点绘制顺序
+
+生成跟随提取的子节点顺序，Auto Layout 反向层叠应对照参考图检查。
+
+## HTML 模块
+
+- match 比较解码后的 PNG 像素，使用 YIQ 差异和抗锯齿处理。
+- fonts 读取本地字体名称和度量，供渲染流程使用。
+- css 把提取的绘制、几何和文字属性映射为 CSS，不执行 I/O。
+- generate 根据提取事实和传入的字体度量生成嵌套 DOM 与资源占位符。
+- page 读取资源和字体输入，调用生成器并组装自包含页面；overrides 校验按画框分组的修正数据。

@@ -7,6 +7,7 @@ Figma development-plugin execution and iframe relay templates.
 ## Members
 
 - `main.js`: Verify task scope and execute document operations with evidence boundaries.
+- `tsconfig.json`: Supporting source or configuration used by this module.
 - `ui.html`: Relay network requests and plugin messages through an iframe.
 
 ## Contract maintenance

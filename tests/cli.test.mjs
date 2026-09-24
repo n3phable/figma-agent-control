@@ -75,7 +75,9 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     const run = await h.run('run', await writeScript(h.cwd, 'retitle.js', 'target.characters = "\u65b0\u6807\u9898"; return { now: target.characters };'), '--node', '1:3');
     assert.equal(run.code, 0, JSON.stringify(run.json));
     const s = run.json;
-    assert.deepEqual([s.operation, s.label, s.waitStatus, s.state, s.journalComplete, s.ok, s.target], ['run', 'retitle.js', 'completed', 'done', true, true, '1:3']);
+    assert.deepEqual([s.operation, s.label, s.waitStatus, s.journalComplete, s.ok, s.target], ['run', 'retitle.js', 'completed', true, true, '1:3']);
+    // result.json is the sole commit point; job.json state is updated later. Either running or done is valid during summary reads; see the record wait tests.
+    assert.ok(['running', 'done'].includes(s.state), s.state);
     assert.deepEqual(s.output, { now: '\u65b0\u6807\u9898' });
     assert.deepEqual(s.changes.nodes, [{ id: '1:3', name: '\u6807\u9898', change: 'updated', keys: ['characters'] }]);
     assert.deepEqual(Object.keys(s.timing), ['queueMs', 'pluginMs', 'totalMs']);
@@ -123,7 +125,8 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     const ready = await h.cli('doctor');
     assert.equal(ready.code, 0);
     assert.equal(ready.json.ready, true);
-    assert.deepEqual(ready.json.checks.map(c => [c.code, c.status]),
+    // CHROME depends on the local environment; it is a warning that does not affect ready and has dedicated coverage.
+    assert.deepEqual(ready.json.checks.filter(c => c.code !== 'CHROME').map(c => [c.code, c.status]),
       [['NODE_VERSION', 'ok'], ['BINDING', 'ok'], ['SESSION', 'ok'], ['LOCK', 'ok'], ['PLUGIN_FILES', 'ok'], ['BRIDGE', 'ok'], ['PLUGIN_CONNECTION', 'ok']]);
     assert.equal(JSON.stringify(ready.json).includes(session.token), false);
 
@@ -501,7 +504,7 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
 
     const bare = await cli(cwd, 'doctor');
     assert.deepEqual([bare.code, bare.json.ready], [1, false]);
-    assert.deepEqual(bare.json.checks.map(c => c.code), ['NODE_VERSION', 'BINDING']);
+    assert.deepEqual(bare.json.checks.map(c => c.code), ['NODE_VERSION', 'CHROME', 'BINDING']);
     assert.match(check(bare, 'BINDING').action, /init/);
 
     // Legacy bindings lack format:2.
@@ -544,6 +547,28 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     const down = await cli(cwd, 'status');
     assert.deepEqual([down.code, down.json.code], [1, 'BRIDGE_DOWN']);
     assert.equal(check(await cli(cwd, 'doctor'), 'BRIDGE_DOWN')?.status, 'error');
+  });
+
+  test('doctor lists CHROME warning before BINDING, rejects invalid environment overrides without fallback, suggests correction, and reports executable versions', async t => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'figma-agent-control-cli-'));
+    t.after(() => fs.rm(cwd, { recursive: true, force: true }));
+    const fake = path.join(cwd, 'fake-chrome');
+    await fs.writeFile(fake, '#!/bin/sh\necho "Google Chrome 1.2.3"\n', { mode: 0o755 });
+    // In an uninitialized directory doctor exits 1 but still returns complete diagnostics.
+    const chrome = async value => {
+      const env = { ...process.env, FIGMA_AGENT_CONTROL_HOME: path.join(cwd, 'plugin-home'), FIGMA_AGENT_CONTROL_CHROME: value };
+      const { stdout } = await exec(process.execPath, [cliFile, 'doctor'], { cwd, env }).catch(error => error);
+      const checks = JSON.parse(stdout).checks;
+      assert.deepEqual(checks.map(c => c.code), ['NODE_VERSION', 'CHROME', 'BINDING']);
+      return checks[1];
+    };
+    const missing = await chrome('/nonexistent');
+    assert.deepEqual([missing.status, missing.message.includes('/nonexistent')], ['warning', true]);
+    assert.match(missing.action, /FIGMA_AGENT_CONTROL_CHROME/);
+    assert.match(missing.action, /html/);
+    const found = await chrome(fake);
+    assert.equal(found.status, 'ok');
+    assert.ok(found.message.includes('Google Chrome 1.2.3') && found.message.includes(fake), found.message);
   });
 
   // -- Offline tools --------------------------------------------------------

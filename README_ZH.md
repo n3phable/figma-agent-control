@@ -1,16 +1,18 @@
 # Figma Agent Control
 
-通过本机桥接与 Figma Desktop 开发插件运行可信 Plugin API 脚本，读取节点并保存执行证据。
-
 [English](README.md) | 简体中文
 
 
+
+为你的编程 Agent 提供操作 Figma Desktop 的本地 CLI。查看设计，通过 Plugin API 执行可信的 JavaScript，并保存可追溯的变更证据。还可以将画框导出为自包含 HTML，再将浏览器渲染结果与 Figma 参考图比较。
 
 Figma Agent Control（FAC）通过 localhost 桥接，把本地 CLI 连接到 Figma Desktop 开发插件。
 
 ## 功能
 
 - **读取与编辑设计：** 查看节点树和变量，导出 PNG 预览，使用可复用的库和 JSON 输入执行 Plugin API 脚本。
+
+- **导出静态 HTML：** 生成嵌入资源的嵌套 DOM，在 Chrome 中比图，并应用有记录的 overrides。
 
 ## 环境要求
 
@@ -23,6 +25,14 @@ Figma Agent Control（FAC）通过 localhost 桥接，把本地 CLI 连接到 Fi
 字体查找搜索 macOS 字体目录。
 
 ## 从源码安装
+
+```sh
+git clone https://github.com/n3phable/figma-agent-control.git
+cd figma-agent-control
+npm ci
+npm link
+figma-agent-control help
+```
 
 `npm link` 让 shell 可以调用 CLI。
 
@@ -85,8 +95,10 @@ figma-agent-control stop
 | 命令 | 用途 |
 |---|---|
 | `init`, `connect`, `stop`, `status`, `doctor` | 绑定范围、管理桥接、诊断连接 |
+| `inspect`, `preview`, `variables`, `extract` | 读取节点与变量、导出 PNG，或提取生成 HTML 所需的数据 |
 | `run` | 执行可信脚本，支持 `--lib`、`--data`，以及可选的 `--expect changed\|unchanged` |
 | `clean` | 重新检查并删除失败 run 留下的符合条件的节点，形成独立的 Undo 步骤 |
+| `html`, `html-check` | 生成并比较静态 HTML，或重新检查已有导出 |
 | `image-diff`, `report` | 比较 PNG，或汇总任务耗时、失败与重复执行 |
 
 使用 `figma-agent-control help` 查看已安装版本的准确语法。[Agent 使用指南](docs/zh_cn/agent-guide.md) 提供完整脚本示例和恢复步骤。
@@ -120,10 +132,3 @@ figma-agent-control stop
 ## 当前命令用法
 
 运行 `figma-agent-control help` 查看此版本可用命令。核心命令为 init、connect、stop、status、doctor、run、inspect、preview、variables、result、wait、resolve、image-diff 和 report。等待超时不代表可以重放写入。
-
-## 从源码使用
-
-```sh
-npm link
-figma-agent-control help
-```

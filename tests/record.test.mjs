@@ -298,6 +298,20 @@ test('Exit codes: 0 success; 1 failure, failed verification with ok true, or rev
   for (const [record, code] of cases) assert.equal(exitCode(record), code, JSON.stringify(record));
 });
 
+test('Extract-only missing explicit islands or binary persistence errors exit 1 without affecting same-named run output fields; summaries expose shape and cap skipped islands at 50', () => {
+  const base = { evidence: '/tmp/e', recordedState: 'done', journalComplete: true, instruction: 'Result read from saved evidence' };
+  const extract = result => ({ ...base, job: { id: ID, operation: 'extract' }, result: { id: ID, ok: true, ...result } });
+  const run = { ...base, job: { id: ID, operation: 'run' }, result: { id: ID, ok: true, output: { islandsSkipped: ['1:3'] }, binaryErrors: ['Binary value 1 is invalid'] } };
+  assert.deepEqual([exitCode(run), summarizeRecord(run).instruction, summarizeRecord(run).extract], [0, 'Result read from saved evidence', undefined]);
+  const clean = extract({ output: { stats: { nodes: 1 }, islandsSkipped: [], warnings: [] } });
+  assert.deepEqual([exitCode(clean), summarizeRecord(clean).output.omitted, summarizeRecord(clean).output.keys], [0, true, ['stats', 'islandsSkipped', 'warnings']]);
+  const many = summarizeRecord(extract({ output: { stats: {}, islandsSkipped: Array.from({ length: 60 }, (_, i) => `1:${i}`), warnings: [] } }));
+  assert.deepEqual([many.extract.islandsSkipped.length, many.extract.islandsSkippedOmitted], [50, 10]);
+  assert.match(many.instruction, /60 explicit island\(s\) have no result.*resubmit/);
+  const lost = extract({ output: { islandsSkipped: [] }, binaryErrors: ['Invalid binary placeholder: 0'] });
+  assert.deepEqual([exitCode(lost), summarizeRecord(lost).instruction], [1, 'Binary files were not fully saved (see binaryErrors); the document was not modified; resubmit extract']);
+});
+
 // -- Reports --------------------------------------------------------------
 
 test('report reads completion time and totalMs from result.json when job.json lacks finishedAt', async t => {

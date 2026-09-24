@@ -12,6 +12,7 @@ import { localResult } from './record.mjs';
 import { root, hash, isJobId } from './project.mjs';
 
 // Resolve file paths relative to invocation cwd; look up task IDs in project evidence. Pass images/ files directly for batch exports.
+/** @param {string} cwd @param {string} value @param {string} invocationDir */
 async function source(cwd, value, invocationDir) {
   if (!isJobId(value)) return path.resolve(invocationDir, value);
   const record = await localResult(cwd, value);
@@ -20,6 +21,7 @@ async function source(cwd, value, invocationDir) {
   return path.join(record.evidence, images[0].file);
 }
 
+/** @param {string} cwd @param {string[]} sources @param {{ threshold?: number, expect?: string }} [options] */
 export async function imageDiff(cwd, sources, { threshold = 0, expect } = {}, invocationDir = process.cwd()) {
   const [before, after] = await Promise.all(sources.map(value => source(cwd, value, invocationDir)));
   const [a, b] = await Promise.all([fs.readFile(before), fs.readFile(after)]);

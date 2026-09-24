@@ -29,6 +29,7 @@ All paths in this table are relative to `.figma-agent-control/`:
 | `runs/<job-id>/` | Bridge/session | Job evidence; directory mode `0700` |
 | `recoveries/<id>/` | Session | Archived stale lock and takeover report |
 | `diffs/` | `image-diff` | PNG comparison artifacts |
+| `check/<extract-job-id>/` | HTML commands | Rendered comparison evidence |
 
 A lock is stale only when checking its PID returns `ESRCH`. Takeover first exclusively creates `bridge.lock.takeover`, rereads the lock, and archives it only if unchanged. An empty lock may be between creation and PID write: `connect`, `stop` without a session, and `doctor` treat it as occupied and never delete it. A live PID is occupied even if the operating system reused it; the diagnostic gives a manual inspection path.
 
@@ -53,11 +54,15 @@ The caller must use the CLI role.
 
 | Field | Operations | Constraint |
 |---|---|---|
+| `operation` | All | `run`, `inspect`, `preview`, `variables`, or `extract` |
 | `code` | Run | Nonempty JavaScript function body |
 | `libs` | Run | At most 20 `{name, code}` entries, at most 2 MiB UTF-8 combined |
+| `targetNodeId` | All | Defaults to the bound node; plugin validates scope membership; extract cannot target a page |
 | `snapshotDepth` | Run/inspect | Integer `1`–`31`; explicitly limits snapshot depth |
 | `nodes` | Preview | 2–50 unique nodes; first equals the effective target |
 | `names` | Preview | 1–50 unique, nonempty names of at most 200 characters; excludes `targetNodeId` and `nodes` |
+| `scale` | Preview/extract; run with expect | `0.1`–`4`; extract scale changes the reference image only |
+| `islands` | Extract | 1–500 unique additional SVG-export node IDs |
 | `data` | Run | JSON, at most 1 MiB UTF-8, passed as `data` |
 | `expect` | Run | `changed` or `unchanged` |
 | `tolerance` | Run with expect | Nonnegative changed-pixel allowance; default `0` |
@@ -83,6 +88,8 @@ The plugin follows this order:
 
 3. Resolve the target and verify that it belongs to the bound scope. Missing and out-of-scope targets are distinct errors.
 
+4. Capture the before snapshot, with a 2,000-node budget. Default depth is 32; an undeclared truncation rejects a run. Explicit `snapshotDepth` permits deliberately shallow evidence. Preview, variables, and extract snapshot only the root.
+
 5. For high-risk runs, await panel approval for at most 300 seconds. Rejection or timeout does not execute the script.
 
 6. Send the write-ahead checkpoint to the bridge. It atomically saves `before.json` and fixes its hash. A ten-second acknowledgement timeout prevents execution.
@@ -93,9 +100,13 @@ The plugin follows this order:
 
 10. Capture the after snapshot and, if requested, after image. Compare page-root children for successful non-page-target runs. A too-large after snapshot makes the change set unavailable; a failed after export makes visual verification unavailable. Neither changes the script's own outcome.
 
+11. Serialize the result and extract nested binary data. Large plugin messages use the serialized envelope described below.
+
 Trusted scripts receive the full Plugin API for the current file. The binding defines valid targets; the selected target defines snapshot, change-set and visual-check coverage.
 
 ### Binary return values
+
+Run output and extract output share a binary channel.
 
 - Byte views such as `Uint8Array`, plus complete PNG/JPEG integer arrays, are recognized anywhere inside nested output. They become `{"__figmaAgentControlBinary": index}` placeholders; returning that reserved key yourself fails the job.
 
@@ -103,9 +114,41 @@ Trusted scripts receive the full Plugin API for the current file. The binding de
 
 - The bridge writes `files/output-<n>.<type>`, starting at 1, then replaces placeholders with `{file, bytes, sha256, type, width?, height?, pixels?}`. Paths are relative to the job directory.
 
+- Content detection recognizes PNG, JPEG, GIF, WebP, PDF, SVG, MP4 (`ftyp` at bytes 4–8), and WebM (`1A 45 DF A3` prefix); unknown data uses `bin`. PNGs include dimensions. Run PNGs also have transparency/dominant-color summaries unless a single image exceeds 16 million pixels or the job exceeds 32 million analyzed pixels (`pixels.skipped: "too-large"`). Extract does not compute pixel summaries.
+
 - Invalid placeholders become `{binaryUnavailable:true}` and add `binaryErrors`; other evidence is preserved.
 
 - Binary data is excluded from the iframe's structured-result limit. Base64 strings returned by a script are not excluded and can cause the whole return value to be discarded.
+
+### Extract
+
+Extract is a built-in read, not a script. It has no approval, write-ahead checkpoint, or Undo boundary. It loads the target page without changing the page the user is viewing. Every failure has `executionStarted:false`; interrupted extracts can be resubmitted.
+
+It serializes visible nodes only, dropping invisible subtrees. The target cannot be a page or invisible. Automatic SVG islands select maximal graphical subtrees with a vector-like node, no text/path text or visible bitmap, no background-dependent effect, and a painted non-mask root distinct from the target. Background dependencies include GLASS, background blur, and non-normal/non-pass-through blending. Automatic SVG strings are deduplicated.
+
+Explicit `islands` add to automatic exports. Already-exported automatic nodes are reused; other explicit islands use binary SVG without deduplication. Nodes outside the visible target tree, without painting, or failing export are skipped: `islandsSkipped` and `warnings` explain them, `ok` remains true, and the CLI exits `1`.
+
+Target-page changes during extraction add `documentChangedDuringExtract`: the tree, reference, and islands may represent different instants.
+
+| Limit | Value | Remedy |
+|---|---|---|
+| Visible nodes | 10,000 | Narrow the target |
+| Reference, bitmaps, explicit SVG binaries | 200 items, 48 MB base64 combined | Narrow the target or lower scale |
+| Structured output | 12 MB estimated UTF-8 upper bound | Narrow the target |
+
+Exceeding a limit fails without partial output. The structured estimate counts non-ASCII code units as three bytes. The output contract is [extract-contract.d.ts](../src/html/extract-contract.d.ts):
+
+| Field | Meaning |
+|---|---|
+| `schema`, `islandRule` | Schema `1`; automatic-island rule version `2` |
+| `root` | Tree with `id`, `name`, `type`, target-space transform `[[a,c,tx],[b,d,ty]]`, dimensions, and clipped target-space `renderBounds` or null. Root transform is identity. Other properties omit defaults; text styles are in `segments` |
+| `colorProfile`, `scale` | Document color profile and extraction scale |
+| `reference` | PNG of the node's own box via `useAbsoluteBounds`, scaled, preferably sRGB; fallback to document color adds a warning |
+| `images` | Image-hash-deduplicated `{bytes, width, height}` entries; missing bytes produce warnings |
+| `islands`, `svgs` | Node-to-SVG-key mapping; `s<n>` is an automatic string and `b<n>` an explicit binary |
+| `islandsSkipped` | Skipped explicit IDs |
+| `stats` | `nodes`, `islands`, `svgs`, `images`, `svgMs`, `componentMs`, `svgSrgb`, `lineHeightMissing`, `postScriptMissing` |
+| `warnings` | Nonfatal export, image, color-profile, or consistency problems |
 
 ### Result files
 
@@ -188,9 +231,23 @@ The iframe and execution code use postMessage. Each job has a random `channelNon
 
 While a result is awaiting delivery, the iframe sends `/complete` rather than heartbeats. Request deadlines are 15 seconds for polling, three seconds plus one second per 10 MB of completion payload, and three seconds for other requests.
 
+## HTML export
+
+`html [--node <id>]... [--from <extract-id>]... --out <dir>` accepts 1–50 unique frames in total. `--from` uses successful local scale-1 extracts. `--overrides` supplies frame-keyed corrections; `--no-check` skips Chrome comparison.
+
+`<out>/html.json` records `frames`, `done`, `pending`, `remaining`, `instruction`, `exitCode` and generator/checker fingerprints. Generated pages retain extract identity. Comparison artifacts go under `.figma-agent-control/check/<extract-id>/`: `check.json` and, after successful rendering, `render.png` and `diff.png`.
+
+`--timeout` is 1–300 seconds, default 30. `--budget` is 10–600 seconds, default 90, for extract submission/waiting. Continuation commands preserve the complete batch and supplied options. Exit `2` means pending or remaining work; `1` means failed checks, errors or findings requiring action; `0` means completion under the configured checks.
+
+`html-check <page.html>...` accepts 1–50 metadata-bearing scale-1 pages and compares them using their original extracts in the project that generated them.
+
 ## CLI output
 
 Stdout contains exactly one JSON object. Errors are `{error,code}`, with error text capped at 2,000 characters. Do not merge stderr into JSON output.
+
+Submitting commands wait by default and print a summary; `--full` prints the complete record; `--no-wait` returns the bridge response directly. When waiting begins, stderr receives one JSON line with `{submitted,next,reused?}`. An externally killed CLI can therefore be resumed by ID. HTML writes one receipt per submitted extract. A repeated request waits for its original job and returns that job's outcome.
+
+Summary `output` above 16 KiB UTF-8 is replaced with a reading command. Extract output is always summarized by shape/reading command, with separate `extract:{stats,islandsSkipped,warnings}`; at most fifty skipped IDs and twenty warnings of at most 600 characters are expanded, with omitted counts.
 
 | `waitStatus` | Meaning |
 |---|---|
@@ -201,9 +258,14 @@ Stdout contains exactly one JSON object. Errors are `{error,code}`, with error t
 | Exit | General commands |
 |---|---|
 | `0` | Success |
+| `1` | Failure, failed/unavailable visual verification, skipped/rejected cleanup, skipped explicit islands or incomplete extraction binaries, or reviewed-but-unknown outcome |
 | `2` | Not complete: timeout or review pending. For stop, accepted shutdown has not released the lock after roughly five seconds; check status later |
 
 `report --since` accepts ISO dates/times; a time requires `Z` or an offset, and a date alone is UTC midnight. `jobs.failed` counts `ok:false`; `jobs.verifyFailed` counts successful executions with failed/unavailable visual checks. They are mutually exclusive.
+
+## Extraction ownership
+
+Read-only extraction runs inside plugin/main.js and shares its document-access helpers.
 
 ## Connection scope
 

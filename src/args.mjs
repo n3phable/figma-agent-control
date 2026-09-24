@@ -7,22 +7,26 @@
 import { parseArgs } from 'node:util';
 import { isJobId, isNodeId } from './project.mjs';
 
-const wait = { timeout: { type: 'string' }, 'no-wait': { type: 'boolean' }, full: { type: 'boolean' } };
-const node = { node: { type: 'string' } };
+const wait = /** @type {const} */ ({ timeout: { type: 'string' }, 'no-wait': { type: 'boolean' }, full: { type: 'boolean' } });
+const node = /** @type {const} */ ({ node: { type: 'string' } });
 // positionals: [minimum, maximum]; submit: wait for the result by default after submitting a task.
+/** @typedef {{ usage: string, positionals: [number, number], submit?: true, options: import('node:util').ParseArgsOptionsConfig }} Command */
+/** @type {Record<string, Command>} */
 export const COMMANDS = {
   help: { usage: 'help', positionals: [0, 0], options: {} },
   init: { usage: 'init <figma-url>: bind the current directory to a scope node in one file', positionals: [1, 1], options: {} },
   connect: { usage: 'connect: start the local bridge in the foreground (stop with Ctrl-C or stop)', positionals: [0, 0], options: {} },
   stop: { usage: 'stop [--force]: stop only the local bridge process; does not modify the Figma document or affect cloud sync; requires --force while a job is unfinished (queued or running); exit code 2 if still shutting down after about 5 s, confirm later with status', positionals: [0, 0], options: { force: { type: 'boolean' } } },
   status: { usage: 'status: live status of the bridge and plugin', positionals: [0, 0], options: {} },
-  doctor: { usage: 'doctor: diagnose binding, session, lock, plugin files, and connection in order', positionals: [0, 0], options: {} },
+  doctor: { usage: 'doctor: diagnose binding, session, lock, plugin files and connection; also report Chrome, required only by html commands', positionals: [0, 0], options: {} },
   run: { usage: 'run <script.js> [--node <ID>] [--lib <file.js>]... [--data <file.json>] [--depth <1-31>] [--expect changed|unchanged] [--tolerance <pixels>] [--scale <0.1-4>] [--request-id <uuid>] [--high-risk <reason>] [--timeout <seconds>] [--no-wait] [--full]',
     positionals: [1, 1], submit: true, options: { ...node, lib: { type: 'string', multiple: true }, data: { type: 'string' }, depth: { type: 'string' }, expect: { type: 'string' }, tolerance: { type: 'string' },
       scale: { type: 'string' }, 'request-id': { type: 'string' }, 'high-risk': { type: 'string' }, ...wait } },
   inspect: { usage: 'inspect [--node <ID>] [--depth <1-31>]: read the node tree (including masks and the ancestor visibility chain)', positionals: [0, 0], submit: true, options: { ...node, depth: { type: 'string' }, ...wait } },
   preview: { usage: 'preview [--node <ID>]... [--scale <0.1-4>]: export PNG; repeat --node for batch export', positionals: [0, 0], submit: true, options: { node: { type: 'string', multiple: true }, scale: { type: 'string' }, ...wait } },
   variables: { usage: 'variables [--node <ID>]: local variable catalog and binding counts within the target', positionals: [0, 0], submit: true, options: { ...node, ...wait } },
+  extract: { usage: 'extract [--node <ID>] [--scale <0.1-4>] [--island <ID>]... [--timeout <seconds>] [--no-wait] [--full]: read-only extraction of pixel-replica data (node tree, reference PNG, bitmaps, SVG islands); --island adds islands, exit code 1 if any is skipped',
+    positionals: [0, 0], submit: true, options: { ...node, scale: { type: 'string' }, island: { type: 'string', multiple: true }, ...wait } },
   result: { usage: 'result <job-id> [--full]: read local evidence', positionals: [1, 1], options: { full: { type: 'boolean' } } },
   wait: { usage: 'wait <job-id> [--timeout <seconds>] [--full]: wait for the original result without resubmitting', positionals: [1, 1], options: { timeout: { type: 'string' }, full: { type: 'boolean' } } },
   resolve: { usage: 'resolve <original-job-id> --inspect <inspect-job-id> --previous-plugin-stopped: after verification, end the unresolved wait without replaying the script', positionals: [1, 1],
@@ -30,26 +34,44 @@ export const COMMANDS = {
   'image-diff': { usage: 'image-diff <before.png|preview-job-id> <after.png|preview-job-id> [--threshold <0-255>] [--expect changed|unchanged]', positionals: [2, 2],
     options: { threshold: { type: 'string' }, expect: { type: 'string' } } },
   report: { usage: 'report [--since <ISO-time>]: summary of job durations, gaps and repeated runs (default: last 24 hours; a date alone means UTC midnight)', positionals: [0, 0], options: { since: { type: 'string' } } },
+  html: { usage: 'html [--node <ID>]... [--from <extract-job-id>]... --out <dir> [--overrides <file.json>] [--no-check] [--timeout <seconds>] [--budget <seconds>]: export pixel-replica HTML and compare each frame with the extract reference image; handles --from first, then submits one extract per --node frame; 1-50 frames in total; --budget caps the time spent submitting and waiting for extracts (10-600, default 90), and when it runs out exits with code 2 and returns the resume command',
+    positionals: [0, 0], options: { node: { type: 'string', multiple: true }, from: { type: 'string', multiple: true }, out: { type: 'string' }, overrides: { type: 'string' },
+      'no-check': { type: 'boolean' }, timeout: { type: 'string' }, budget: { type: 'string' } } },
+  'html-check': { usage: 'html-check <page.html>...: find extract references from page metadata and rerender for comparison; no Figma connection, run in the project that generated the pages', positionals: [1, 50], options: {} },
 };
 
+/** @param {string} value @param {number} min @param {number} max @param {string} message */
 const integer = (value, min, max, message) => {
   if (!/^\d+$/.test(value) || Number(value) < min || Number(value) > max) throw Error(message);
   return Number(value);
 };
-const nodeId = value => {
+/** @param {string} value */
+const nodeId = (value, flag = '--node') => {
   const id = value.replace(/-/g, ':');
-  if (!isNodeId(id)) throw Error('--node needs a valid node ID, such as 1:2 or I1:2;3:4');
+  if (!isNodeId(id)) throw Error(`${flag} needs a valid node ID, e.g. 1:2 or I1:2;3:4`);
   return id;
 };
+/** @param {string} value */
 const scale = value => {
   if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) || Number(value) < 0.1 || Number(value) > 4) throw Error('--scale must be 0.1-4');
   return Number(value);
 };
+/** @param {string} value */
 const expect = value => {
   if (!['changed', 'unchanged'].includes(value)) throw Error('--expect accepts only changed or unchanged');
   return value;
 };
 
+// parseArgs sees only ParseArgsOptionsConfig and a union of all option value types; COMMANDS above defines each option's exact type.
+/** @typedef {{ node?: string | string[], lib?: string[], island?: string[], data?: string, depth?: string, expect?: string, tolerance?: string, scale?: string,
+ *   'request-id'?: string, 'high-risk'?: string, timeout?: string, 'no-wait'?: boolean, full?: boolean, force?: boolean, inspect?: string,
+ *   'previous-plugin-stopped'?: boolean, threshold?: string, since?: string, from?: string[], out?: string, overrides?: string, 'no-check'?: boolean, budget?: string }} Values */
+// Normalized options, read by bin according to the command.
+/** @typedef {{ targetNodeId?: string, nodes?: string[], snapshotDepth?: number, timeoutSeconds?: number, threshold?: number, expect?: string, tolerance?: number,
+ *   scale?: number, requestId?: string, risk?: { level: 'high', reason: string }, islands?: string[], libFiles?: string[], dataFile?: string, since?: string,
+ *   inspectId?: string, previousPluginStopped?: true, force?: true, full?: true, noWait?: true,
+ *   fromIds?: string[], outDir?: string, overridesFile?: string, noCheck?: true, budgetSeconds?: number }} Options */
+/** @param {string[]} argv @returns {{ command: string, positionals: string[], options: Options }} */
 export function parse(argv) {
   const [first = 'help', ...rest] = argv;
   if (first === '--help' || first === '-h' || rest.includes('--help') || rest.includes('-h')) return { command: 'help', positionals: [], options: {} };
@@ -59,15 +81,16 @@ export function parse(argv) {
   try { parsed = parseArgs({ args: rest, options: spec.options, allowPositionals: true, strict: true, tokens: true }); }
   catch (error) { throw Error(`Invalid arguments (${error.message}); usage: ${spec.usage}`); }
   // parseArgs silently takes the last repeated scalar option; reject duplicates so write targets cannot be ambiguous.
-  const given = parsed.tokens.filter(token => token.kind === 'option' && !spec.options[token.name].multiple).map(token => token.name);
+  const given = parsed.tokens.filter(token => token.kind === 'option' && !spec.options[token.name].multiple).map(token => /** @type {{ name: string }} */ (token).name);
   const repeated = given.find((name, i) => given.indexOf(name) !== i);
   if (repeated) throw Error(`Invalid arguments (--${repeated} may be given only once); usage: ${spec.usage}`);
-  const { values: v, positionals } = parsed;
+  const { values, positionals } = parsed, v = /** @type {Values} */ (values);
   if (positionals.length < spec.positionals[0] || positionals.length > spec.positionals[1]) throw Error('Usage: ' + spec.usage);
+  /** @type {Options} */
   const o = {};
   if (v.node !== undefined) {
-    const ids = [].concat(v.node).map(nodeId);
-    if (new Set(ids).size !== ids.length || ids.length > 50) throw Error('preview accepts at most 50 nodes without duplicates');
+    const ids = /** @type {string[]} */ ([]).concat(v.node).map(id => nodeId(id));
+    if (new Set(ids).size !== ids.length || ids.length > 50) throw Error('--node takes at most 50 nodes, without duplicates');
     o.targetNodeId = ids[0];
     if (ids.length > 1) o.nodes = ids;
   }
@@ -88,6 +111,12 @@ export function parse(argv) {
   }
   if (v['request-id'] !== undefined) { if (!isJobId(v['request-id'])) throw Error('--request-id must be a lowercase UUID'); o.requestId = v['request-id']; }
   if (v['high-risk'] !== undefined) { if (!v['high-risk'].trim()) throw Error('--high-risk requires a risk description'); o.risk = { level: 'high', reason: v['high-risk'] }; }
+  if (v.island !== undefined) {
+    o.islands = v.island.map(id => nodeId(id, '--island'));
+    const repeated = o.islands.find((id, i, all) => all.indexOf(id) !== i);
+    if (repeated) throw Error(`--island has a duplicate node: ${repeated}`);
+    if (o.islands.length > 500) throw Error('--island takes at most 500 nodes');
+  }
   if (v.lib !== undefined) o.libFiles = v.lib;
   if (v.data !== undefined) o.dataFile = v.data;
   // Accept ISO format only: timestamps require Z or a time-zone offset; date-only values mean midnight UTC, never a guessed local time zone.
@@ -97,11 +126,25 @@ export function parse(argv) {
       || new Date(Date.UTC(y, m - 1, d)).getUTCDate() !== d) throw Error('--since needs an ISO time (the date must exist), e.g. 2026-10-06 or 2026-10-06T08:00:00Z');
     o.since = new Date(v.since).toISOString();
   }
+  // html: --node and --from specify 1-50 frames combined; --out is required (an empty string resolves to cwd, which would write pages and remove old pages at the project root).
+  if (first === 'html') {
+    if (!v.out?.trim()) throw Error('html requires --out <dir>, and it must not be empty');
+    o.outDir = v.out;
+    const from = v.from ?? [], bad = from.find(id => !isJobId(id)), twice = from.find((id, i) => from.indexOf(id) !== i);
+    if (bad !== undefined) throw Error(`--from must be an extract job ID (lowercase UUID): ${bad}`);
+    if (twice) throw Error(`--from has a duplicate job: ${twice}`);
+    const frames = from.length + (o.nodes?.length ?? (o.targetNodeId ? 1 : 0));
+    if (frames < 1 || frames > 50) throw Error(`html needs 1-50 frames (--node and --from combined), got ${frames}`);
+    if (from.length) o.fromIds = from;
+    if (v.overrides !== undefined) o.overridesFile = v.overrides;
+    if (v['no-check']) o.noCheck = true;
+    if (v.budget !== undefined) o.budgetSeconds = integer(v.budget, 10, 600, '--budget must be an integer 10-600 seconds');
+  }
   if (first === 'resolve') {
     if (!isJobId(positionals[0]) || !isJobId(v.inspect) || !v['previous-plugin-stopped']) throw Error('Usage: ' + spec.usage + '; first confirm the previous plugin has stopped and check the current document');
     o.inspectId = v.inspect; o.previousPluginStopped = true;
   }
-  for (const key of ['force', 'full']) if (v[key]) o[key] = true;
+  for (const key of /** @type {const} */ (['force', 'full'])) if (v[key]) o[key] = true;
   if (v['no-wait']) o.noWait = true;
   return { command: first, positionals, options: o };
 }

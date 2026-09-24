@@ -35,7 +35,9 @@ The iframe matches each task message against its ID and random nonce before acce
 
 ## Module structure
 
-The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.md](../src/AGENTS.md), src/html/AGENTS.md, [plugin/AGENTS.md](../plugin/AGENTS.md), and lib/AGENTS.md.
+The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.md](../src/AGENTS.md), [src/html/AGENTS.md](../src/html/AGENTS.md), [plugin/AGENTS.md](../plugin/AGENTS.md), and lib/AGENTS.md.
+
+`project` has no internal dependencies. `connection` is pure in-memory state with an injectable clock. `png` uses only zlib. Bridge and HTML do not import each other: the bridge/record reference the shared extract type contract only through JSDoc. HTML submits through client and reads records. Shared interruption reasons live in session because both sides need them without a circular dependency.
 
 ### Host responsibilities
 
@@ -81,3 +83,49 @@ The CLI waits by observing evidence files and writes the job ID to stderr first.
 `result.json` is the commit point. A queued job that was never delivered can be recorded as nonexecuted. A delivered run without a result is unknown and blocks future runs. Built-in reads remain available so the user/agent can inspect the target. Resolve requires a current-session direct inspection and an assertion that the previous plugin stopped; it ends the wait without inventing success or undoing anything.
 
 Late results can still land for recovered jobs. Results belonging to another project receive `FOREIGN_JOB` and stay in the iframe until their bridge returns. Diagnostics prioritize that cause so a generic “restart the plugin” instruction does not discard a real result.
+
+### Extraction and HTML
+
+```text
+extract in plugin -> visible tree + reference PNG + images + SVG islands
+                  -> bridge lands one coherent result and files
+                  -> host page assembly obtains font metrics/assets
+                  -> pure generator emits nested DOM + asset placeholders
+                  -> embed assets and write page with source fingerprints
+                  -> Chrome renders -> matcher/diagnostics -> evidence/manifest
+```
+
+The plugin extracts API facts; frequently changing CSS generation rules remain on the host. A saved extract can therefore be regenerated offline with `html --from` without restarting the plugin. Automatic island selection in the plugin is versioned separately. The host decides which SVGs it can safely use and may request one additional extract for unsupported CSS nodes.
+
+Background-dependent effects need special handling: an SVG export does not include the underlying scene. Automatic island selection avoids them, and the host independently vetoes unsafe inlining unless an override explicitly requests it. Reference baking is different: it crops the complete reference rectangle, freezes the visible content there, and must remain a reported limitation.
+
+## Type checking and tests
+
+Runtime executes `.mjs`/`.js` source directly; JSDoc is checked with lockfile-pinned TypeScript and typings. The source bytes tested in VM are the bytes installed in Figma.
+
+| Environment | Scope |
+|---|---|
+| [Host tsconfig](https://github.com/n3phable/figma-agent-control/blob/main/tsconfig.json) | Node modules and shared extract contract, without Figma globals |
+| [Plugin tsconfig](../plugin/tsconfig.json) | Classic-script main/extract with Figma globals, without Node APIs |
+
+The [extract contract](../src/html/extract-contract.d.ts) distinguishes plugin byte arrays, transport placeholders, and landed files. External JSON and dynamic API field access still require assertions; types alone cannot validate real Figma behavior. The optional `node tests/contract-samples.mjs <runs-directory>` checks explicitly supplied extract evidence against the type contract. It does not require or ship a private corpus.
+
+## Extraction ownership
+
+Read-only extraction runs inside plugin/main.js and shares its document-access helpers.
+
+## Shadow mapping
+
+CSS shadow shape and spread remain approximations. Compare exported pixels, especially on stroked or unclipped containers, instead of relying on matching property values.
+
+## Child paint order
+
+Generation follows extracted child order. Compare reversed Auto Layout stacking with the reference image.
+
+## HTML modules
+
+- match compares decoded PNG pixels with antialiasing-aware YIQ differences.
+- fonts reads local font names and metrics for the rendering pipeline.
+- css maps extracted paint, geometry and text properties to CSS without I/O.
+- generate builds nested DOM and asset placeholders from extracted facts and supplied font metrics.
+- page resolves assets and font inputs, invokes the generator and assembles self-contained pages; overrides validates frame-keyed correction data.

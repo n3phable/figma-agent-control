@@ -29,7 +29,7 @@ function plugin({ visibility = 'visible', fileKey = 'example' } = {}) {
   let tick, interval;
   async function fetch(url, options = {}) {
     const { origin, pathname, searchParams } = new URL(url);
-    calls.push({ origin, path: pathname, query: Object.fromEntries(searchParams), headers: new Headers(options.headers),
+    calls.push({ origin, path: pathname, query: Object.fromEntries(searchParams), headers: new Headers(options.headers), timeoutMs: options.signal?.timeoutMs,
       body: options.body === undefined ? undefined : JSON.parse(options.body) });
     const reply = await (queues.get(pathname)?.shift() ?? {});
     if (reply instanceof Error) throw reply;
@@ -38,7 +38,7 @@ function plugin({ visibility = 'visible', fileKey = 'example' } = {}) {
   }
   vm.runInNewContext(script, { window, document, crypto, TextEncoder, fetch,
     parent: { postMessage: message => toMain.push(structuredClone(message.pluginMessage)) },
-    AbortSignal: { timeout: () => undefined },
+    AbortSignal: { timeout: ms => ({ timeoutMs: ms }) },
     setInterval: (fn, ms) => { tick = fn; interval = ms; } });
   // UI asks main for the current file on startup; afterward toMain records only task-related messages.
   if (fileKey !== null) { assert.deepEqual(toMain, [{ type: 'hello' }]); toMain.length = 0; window.onmessage({ data: { pluginMessage: { type: 'file', fileKey } } }); }
@@ -329,6 +329,17 @@ test('Renders do not count toward the 16 MB structured limit; only oversized str
   assert.deepEqual([compact.before, compact.after], [before, after]);
 });
 
+test('Request timeouts are 15 s for poll, 3 s for heartbeat, and 3 s plus 1 s per 10 MB of complete-body characters, allowing near-limit extracts to return', async () => {
+  const f = plugin();
+  let channelNonce = await claim(f, { id: 'job-1', operation: 'extract' });
+  await f.tick();
+  await f.fromMain({ id: 'job-1', ok: true, output: { schema: 1 }, channelNonce });
+  assert.deepEqual(['/poll', '/heartbeat', '/complete'].map(path => f.calls.find(c => c.path === path).timeoutMs), [15000, 3000, 3000]);
+  channelNonce = await claim(f, { id: 'job-2', operation: 'extract' });
+  await f.fromMain({ id: 'job-2', ok: true, output: { reference: { __figmaAgentControlBinary: 0 } }, binaries: ['A'.repeat(48e6)], channelNonce });
+  assert.deepEqual([f.last('/complete').body.id, f.last('/complete').timeoutMs], ['job-2', 7800]);
+});
+
 test('409 FOREIGN_JOB retains and retries original results without rejection counting or reduction, identifies the owner project, and resumes polling after that project persists the result', async () => {
   const f = plugin();
   f.reply('/poll', { session: 'S1', binding: { ...BINDING, project: 'project-a' }, body: { id: 'job-1', operation: 'run' } });
@@ -369,6 +380,16 @@ test('409 PLUGIN_OUTDATED asks to reopen the plugin without delivering tasks to 
   assert.deepEqual(f.toMain, []);
   assert.equal(f.state(), 'Reopen the plugin');
   assert.match(f.detail(), /run it again/);
+});
+
+test('The panel shows injected pluginVersion in small text at bottom-right before file discovery and keeps it visible during PLUGIN_OUTDATED', async () => {
+  assert.match(template, /<small id="plugin-version"[^>]*><\/small>/);
+  const f = plugin({ fileKey: null });
+  assert.equal(f.el('plugin-version').textContent, config.version);
+  await f.fromMain({ type: 'file', fileKey: 'example' });
+  f.reply('/poll', { status: 409, body: { code: 'PLUGIN_OUTDATED' } });
+  await f.tick();
+  assert.deepEqual([f.state(), f.el('plugin-version').textContent], ['Reopen the plugin', config.version]);
 });
 
 test('Network failures distinguish automatic recovery from manual checks, retaining and retrying active results without reexecution', async () => {

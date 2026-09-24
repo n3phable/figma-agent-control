@@ -13,11 +13,13 @@ button{font:inherit;cursor:pointer;border:1px solid var(--figma-color-border,#dd
 #state{font-size:14px;font-weight:600;margin:0}#state-detail{margin:4px 0 0;overflow-wrap:anywhere}
 #approval{border-top:1px solid var(--figma-color-border,#ddd);margin-top:16px;padding-top:12px}#approval-reason{margin:0 0 12px;overflow-wrap:anywhere}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto;font:11px/1.5 ui-monospace,monospace}summary{cursor:pointer;margin-bottom:8px}#approve{background:#1769e0;color:#fff;border-color:#1769e0}
+#plugin-version{position:fixed;right:8px;bottom:4px;padding:0 2px;font:10px/1.2 ui-monospace,monospace;color:var(--figma-color-text-secondary,#737373);background:var(--figma-color-bg,#fff);pointer-events:none}/* Fix the version label at bottom-right with a background and no pointer capture. It covers only a small part of long text; body bottom padding leaves room when scrolled to the end. */
 </style>
 <header><h1>Figma Agent Control</h1><button id="hide-panel">Hide</button></header>
 <div id="target-label" class="label">Bound target</div><div id="target-name" class="name">Checking...</div>
 <p id="state" role="status" aria-live="polite">Connecting</p><p id="state-detail">Connecting to the local bridge.</p>
 <section id="approval" hidden><p id="approval-reason"></p><details><summary>View scope and script</summary><pre id="approval-details"></pre></details><button id="approve">Allow changes</button> <button id="reject">Reject changes</button></section>
+<small id="plugin-version"></small>
 <script>
 const config = SESSION_CONFIG;
 const client = Math.random().toString(36).slice(2) + Date.now();
@@ -28,6 +30,8 @@ let serverSessionId = null, lastFailure = null, targetIssue = null, completeReje
 let fileKey = null, project = '', activeProject = '';
 let review = null, deciding = false;
 document.getElementById('hide-panel').onclick = () => parent.postMessage({ pluginMessage: { type: 'hide-ui' } }, '*');
+// Inject the template hash as version without changing it. Always display it so PLUGIN_OUTDATED differences from status.pluginVersion are immediately visible.
+document.getElementById('plugin-version').textContent = config.version;
 
 // -- Panel state --------------------------------------------------------
 function showState(label, detail) {
@@ -58,7 +62,7 @@ const route = path => path + '?client=' + client + '&visibility=' + (document.vi
   + '&file=' + encodeURIComponent(fileKey) + (busy && activeId ? '&job=' + encodeURIComponent(activeId) : '');
 const hello = () => parent.postMessage({ pluginMessage: { type: 'hello' } }, '*');
 const randomNonce = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
-// The bridge holds long polls for up to 10 s, so /poll allows 15 s; other requests allow 3 s.
+// The bridge holds long polls for up to 10 s, so /poll permits 15 s. /complete scales with body size (see tick); other requests allow 3 s.
 async function request(path, options = {}, timeoutMs = 3000) {
   const response = await fetch('http://localhost:' + config.port + path, { ...options, headers, signal: AbortSignal.timeout(timeoutMs) });
   // Recheck that the bound target belongs to the open file after a bridge restart.
@@ -176,7 +180,9 @@ async function tick() {
       if (!heartbeat.ok) throw await failed(heartbeat, "Heartbeat failed; retaining the current task and forbidding replay");
     }
     if (pending) {
-      const response = await request('/complete', { method: 'POST', body: JSON.stringify(pending) });
+      // Upload timeout is 3 s plus 1 s per 10 MB measured in characters. A near-limit 48 MB extract gets about 7.8 s.
+      const body = JSON.stringify(pending);
+      const response = await request('/complete', { method: 'POST', body }, 3000 + Math.round(body.length / 1e4));
       if (response.status === 413) { pending = compactFailure(pending, true); throw connectionError("Result size rejected; saving reduced failure evidence on the next attempt", response); }
       // After three content rejections of the same result, save reduced failure evidence so the task cannot remain running forever. Network failures do not count or reset the total.
       if (response.status === 400 && ++completeRejects >= 3) {

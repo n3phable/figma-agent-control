@@ -229,6 +229,16 @@ test('Forged checkpoint replies with wrong channelNonce or ID are ignored withou
   assert.equal(f.doc.text.characters, '\u5199\u5165');
 });
 
+test('Replies missing id/channelNonce are ignored safely when no waiter exists, and subsequent tasks still execute', async () => {
+  const f = plugin();
+  // The old waiter?.id === job.id condition matched two undefined values, then threw while reading channelNonce from null.
+  await assert.doesNotReject(f.figma.ui.onmessage({ type: 'approval-ack', approved: true }));
+  await assert.doesNotReject(f.figma.ui.onmessage({ type: 'checkpoint-ack', ok: true }));
+  const r = await f.send({ targetNodeId: '1:3', code: 'target.characters = "\u5199\u5165";' });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(f.events, ['checkpoint', 'undo', 'undo']);
+});
+
 test('Revalidation rejects edited or moved-out-of-scope targets while preserving user changes', async () => {
   const edits = {
     \u6539\u6587\u5b57: doc => { doc.text.characters = '\u7528\u6237\u8f93\u5165'; },
