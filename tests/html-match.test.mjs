@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { match, blockscan, crop } from '../src/html/match.mjs';
+import { match, blockscan, crop, differing, upscale, stack } from '../src/html/match.mjs';
 import { decodePng } from '../src/png.mjs';
 
 const DIR = new URL('./helpers/match/', import.meta.url);
@@ -85,4 +85,28 @@ test('crop copies a half-open rectangle into independent packed RGBA rows and re
   assert.equal(img[4], 1);
   assert.deepEqual([...crop(img, 3, [0, 1, 3, 2])].filter((_, i) => i % 4 === 0), [3, 4, 5]);
   for (const rect of [[0, 0, 0, 1], [2, 0, 4, 1], [0, 1, 1, 3], [-1, 0, 1, 1], [0.5, 0, 2, 1]]) assert.throws(() => crop(img, 3, rect), /Crop rectangle is outside the image/, String(rect));
+});
+
+test('differing at zero equals match mismatched + aa, aligned shifts yield zero, overflow is transparent, and counting stops at limit', () => {
+  for (const f of fixtures) {
+    const a = decodePng(fs.readFileSync(new URL(`${f.name}.a.png`, DIR))), b = decodePng(fs.readFileSync(new URL(`${f.name}.b.png`, DIR)));
+    const m = match(a.data, b.data, a.width, a.height);
+    assert.equal(differing(a.data, b.data, a.width, a.height, [0, 0, a.width, a.height], 0, 0), m.mismatched + m.aa, f.name);
+  }
+  // 6x4: pixels in a contain their column number; b shifts a right by two columns with gray padding.
+  const a = new Uint8Array(96), b = new Uint8Array(96);
+  for (let i = 0; i < 24; i++) { const x = i % 6; a.set([x * 40, 0, 0, 255], i * 4); b.set(x < 2 ? [128, 128, 128, 255] : [(x - 2) * 40, 0, 0, 255], i * 4); }
+  assert.equal(differing(a, b, 6, 4, [0, 0, 4, 4], 2, 0), 0, 'a(x, y) equals b(x + 2, y)');
+  assert.equal(differing(a, b, 6, 4, [0, 0, 6, 4], 2, 0), 8, 'The last two columns fall outside b and compare transparent against opaque a');
+  assert.equal(differing(new Uint8Array(96), b, 6, 4, [0, 0, 6, 4], 0, 9), 0, 'Transparent pixels equal out-of-bounds transparency');
+  assert.equal(differing(a, b, 6, 4, [0, 0, 6, 4], 0, 0), 24, 'Every column differs without a shift');
+  assert.equal(differing(a, b, 6, 4, [0, 0, 6, 4], 0, 0, 0.1, 5), 5);
+});
+
+test('upscale uses nearest-neighbor pixels; stack joins equal-width RGBA images vertically with four transparent rows between them', () => {
+  const red = [255, 0, 0, 255], blue = [0, 0, 255, 255], clear = [0, 0, 0, 0];
+  const px = img => Array.from({ length: img.length / 4 }, (_, i) => [...img.subarray(i * 4, i * 4 + 4)]);
+  assert.deepEqual(px(upscale(Uint8Array.from([...red, ...blue]), 2, 1, 2)), [red, red, blue, blue, red, red, blue, blue]);
+  assert.deepEqual(px(stack([Uint8Array.from(red), Uint8Array.from(blue)], 1)), [red, clear, clear, clear, clear, blue]);
+  assert.deepEqual(px(stack([Uint8Array.from(red)], 1)), [red]);
 });

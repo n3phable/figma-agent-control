@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Inputs and types declared below; no runtime package dependencies.
- * [OUTPUT]: Exports match, blockscan, crop.
+ * [OUTPUT]: Exports match, blockscan, differing, crop, upscale, stack.
  * [POS]: Pixel comparison, structural difference grouping and RGBA evidence helpers.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  *
@@ -123,6 +123,27 @@ export function blockscan(mask, width, height, { cell = 16, minDensity = 0.22, m
   return regions.sort((p, q) => q.diffPx - p.diffPx);
 }
 
+// -- Shifted comparison -------------------------------------------------
+// Count pixels in [x0, x1) by [y0, y1) whose a(x, y) and b(x + sx, y + sy) squared YIQ distance exceeds threshold. Out-of-bounds b is transparent, using colorDelta's translucent-blending formula.
+// Skip antialias detection and allocations; return at limit, allowing shift search to prune most candidates with the current best score. At (0, 0), count equals match mismatched + aa.
+const CLEAR = new Uint8Array(4);
+/** @param {Uint8Array} a @param {Uint8Array} b @param {number} width @param {number} height @param {[x0: number, y0: number, x1: number, y1: number]} rect
+ *  @param {number} sx @param {number} sy @param {number} [threshold] @param {number} [limit] */
+export function differing(a, b, width, height, [x0, y0, x1, y1], sx, sy, threshold = 0.1, limit = Infinity) {
+  a = aligned(a); b = aligned(b);
+  const a32 = new Uint32Array(a.buffer, a.byteOffset, width * height), b32 = new Uint32Array(b.buffer, b.byteOffset, width * height), maxDelta = 35215 * threshold * threshold;
+  let n = 0;
+  for (let y = y0; y < y1; y++) {
+    const by = y + sy, row = by >= 0 && by < height;
+    for (let x = x0; x < x1; x++) {
+      const i = y * width + x, bx = x + sx, j = by * width + bx;
+      if (row && bx >= 0 && bx < width ? a32[i] !== b32[j] && colorDelta(a, b, i * 4, j * 4, false) > maxDelta : colorDelta(a, CLEAR, i * 4, 0, false) > maxDelta)
+        if (++n >= limit) return n;
+    }
+  }
+  return n;
+}
+
 // -- RGBA cropping ------------------------------------------------------
 // Copy a half-open integer rectangle from width-wide RGBA into compact rows. Require a nonempty in-bounds rectangle and throw otherwise,
 // preventing subarray from silently truncating data.
@@ -131,5 +152,21 @@ export function crop(rgba, width, [x0, y0, x1, y1]) {
   if (![x0, y0, x1, y1].every(Number.isInteger) || x0 < 0 || y0 < 0 || x1 <= x0 || y1 <= y0 || x1 > width || y1 * width * 4 > rgba.length) throw Error(`Crop rectangle is outside the image: ${[x0, y0, x1, y1]}`);
   const w = x1 - x0, out = new Uint8Array(w * (y1 - y0) * 4);
   for (let y = y0; y < y1; y++) out.set(rgba.subarray((y * width + x0) * 4, (y * width + x1) * 4), (y - y0) * w * 4);
+  return out;
+}
+
+// -- Scaling and stacking -----------------------------------------------
+// Enlarge structural-block evidence by integer f using nearest-neighbor sampling to preserve crisp pixel boundaries; stack vertically with gap transparent rows.
+/** @param {Uint8Array} rgba @param {number} width @param {number} height @param {number} f Positive integer. */
+export function upscale(rgba, width, height, f) {
+  const a = aligned(rgba), src = new Uint32Array(a.buffer, a.byteOffset, width * height), W = width * f, out = new Uint32Array(W * height * f);
+  for (let y = 0; y < height * f; y++) for (let x = 0; x < W; x++) out[y * W + x] = src[((y / f) | 0) * width + ((x / f) | 0)];
+  return new Uint8Array(out.buffer);
+}
+/** @param {ReadonlyArray<Uint8Array>} parts Equal-width RGBA images. @param {number} width @param {number} [gap] */
+export function stack(parts, width, gap = 4) {
+  const row = width * 4, out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0) + Math.max(0, parts.length - 1) * gap * row);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length + gap * row; }
   return out;
 }

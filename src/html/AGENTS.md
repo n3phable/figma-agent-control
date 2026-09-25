@@ -6,6 +6,7 @@ Host HTML and image-comparison modules available in this revision.
 
 ## Members
 
+- `attrib.mjs`: Attribute pixel mismatches to design and HTML nodes.
 - `check.mjs`: Render a page and compare pixels with a supplied reference.
 - `chrome.mjs`: Discover Chrome and drive owned rendering sessions through CDP.
 - `command.mjs`: Orchestrate HTML export and rechecking.
@@ -17,6 +18,7 @@ Host HTML and image-comparison modules available in this revision.
 - `match.mjs`: Perceptual pixel comparison and structural-block analysis.
 - `overrides.mjs`: Validate recorded per-node HTML corrections.
 - `page.mjs`: Assemble self-contained pages and provenance metadata.
+- `shift.mjs`: Search small translations and produce local-coordinate corrections.
 - `summary.mjs`: Summarize frame outcomes and continuation instructions.
 
 ## Contract maintenance
