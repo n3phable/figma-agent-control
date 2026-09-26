@@ -162,6 +162,16 @@ describe('Rendering and checking (requires Chrome)', () => {
     assert.ok(performance.now() - t < 5000, `Reopening took ${Math.round(performance.now() - t)} ms`);
   });
 
+  test('open scales screenshot pixels by dsf, accepts only (0,4], and exposes raw CDP commands on the page session', needs, async () => {
+    await tab.open(url('dsf.html', blocks(30)), 200, 120, 2);
+    const img = decodePng(await tab.shot());
+    assert.deepEqual([img.width, img.height, [...img.data.subarray((50 * 400 + 50) * 4, (50 * 400 + 50) * 4 + 4)]], [400, 240, [229, 57, 53, 255]], 'Red block starts at (20,20); pixel (50,50) is CSS (25,25)');
+    for (const dsf of [0, 5, NaN]) await assert.rejects(tab.open(url('dsf.html', blocks(30)), 200, 120, dsf), /dsf must be a number in \(0, 4\]/, String(dsf));
+    assert.equal(typeof (await tab.cdp('DOM.getDocument', { depth: 0 })).root.nodeId, 'number');
+    await tab.open(url('dsf1.html', blocks(30)), 200, 120);
+    assert.deepEqual((await tab.shot()).equals(reference), true, 'Reopening with default dsf returns to 1x');
+  });
+
   test('Render timeout yields unchecked/RENDER_TIMEOUT, and closing removes the owned process and profile', needs, async () => {
     const hung = await launch({ executable: chrome, timeout: 1500 });
     try {

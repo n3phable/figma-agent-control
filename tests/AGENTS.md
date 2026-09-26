@@ -16,6 +16,7 @@ Behavioral tests for the implementation in this revision.
 - `html-cli.test.mjs`: Tests for html cli behavior in this revision.
 - `html-fonts.test.mjs`: Tests for html fonts behavior in this revision.
 - `html-generate.test.mjs`: Tests for html generate behavior in this revision.
+- `html-layout.test.mjs`: Tests for html layout behavior in this revision.
 - `html-match.test.mjs`: Tests for html match behavior in this revision.
 - `html-render.test.mjs`: Tests for html render behavior in this revision.
 - `plugin.test.mjs`: Tests for plugin behavior in this revision.

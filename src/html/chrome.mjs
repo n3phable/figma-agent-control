@@ -176,14 +176,16 @@ export async function launch({ executable = findChrome(), timeout = 30000 } = {}
     /** @type {{ width: number, height: number } | undefined} */
     let size;
     return {
-      browser: { version, args: FLAGS }, evaluate,
-      // Viewport size equals screenshot size with dsf fixed at 1. CDP requires integer dimensions; callers choose how to round fractional sizes (check uses the reference size);
-      // Do not round on the caller's behalf, which would silently make screenshot dimensions differ from the request.
-      /** @param {string} url @param {number} width @param {number} height */
-      async open(url, width, height) {
+      // cdp sends raw commands on this page's session with the same timeout, enabling checks such as actual font lookup unavailable to page scripts.
+      browser: { version, args: FLAGS }, evaluate, cdp: s,
+      // Viewport dimensions are CSS screenshot size; output pixels multiply by dsf (default 1, zoom up to 4). CDP accepts only integer dimensions, so callers choose rounding
+      // (check uses reference-image dimensions). Do not round silently here, which would mismatch requested and actual screenshots.
+      /** @param {string} url @param {number} width @param {number} height @param {number} [dsf] */
+      async open(url, width, height, dsf = 1) {
         if (![width, height].every(v => Number.isInteger(v) && v > 0)) throw Error(`Viewport size must be positive integers: ${width}x${height}`);
+        if (!(Number.isFinite(dsf) && dsf > 0 && dsf <= 4)) throw Error(`dsf must be a number in (0, 4]: ${dsf}`);
         size = { width, height };
-        await s('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false, screenWidth: width, screenHeight: height });
+        await s('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: dsf, mobile: false, screenWidth: width, screenHeight: height });
         const loaded = once('Page.loadEventFired', sessionId);
         loaded.catch(() => {});
         try {

@@ -130,3 +130,4 @@ Generation follows extracted child order. Compare reversed Auto Layout stacking 
 - generate builds nested DOM and asset placeholders from extracted facts and supplied font metrics.
 - page resolves assets and font inputs, invokes the generator and assembles self-contained pages; overrides validates frame-keyed correction data.
 - attrib assigns differences to node contributions; shift searches nearby translations using those masks.
+- layout and structure compare collected browser geometry, text and node presence against extraction facts.
