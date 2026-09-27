@@ -21,6 +21,7 @@ Host HTML and image-comparison modules available in this revision.
 - `page.mjs`: Assemble self-contained pages and provenance metadata.
 - `shift.mjs`: Search small translations and produce local-coordinate corrections.
 - `structure.mjs`: Check node/text correspondence.
+- `suggest.mjs`: Propose background-dependent reference crops and inspect seams.
 - `summary.mjs`: Summarize frame outcomes and continuation instructions.
 
 ## Contract maintenance
