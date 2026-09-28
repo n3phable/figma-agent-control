@@ -23,6 +23,7 @@ Host HTML and image-comparison modules available in this revision.
 - `structure.mjs`: Check node/text correspondence.
 - `suggest.mjs`: Propose background-dependent reference crops and inspect seams.
 - `summary.mjs`: Summarize frame outcomes and continuation instructions.
+- `zoom.mjs`: Compare magnified single-node renders.
 
 ## Contract maintenance
 

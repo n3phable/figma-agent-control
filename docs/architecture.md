@@ -132,3 +132,4 @@ Generation follows extracted child order. Compare reversed Auto Layout stacking 
 - attrib assigns differences to node contributions; shift searches nearby translations using those masks.
 - layout and structure compare collected browser geometry, text and node presence against extraction facts.
 - suggest proposes reference-image crops for background-dependent components and checks crop-edge seams.
+- zoom compares an isolated node using a magnified reference and supplied browser renderer.
