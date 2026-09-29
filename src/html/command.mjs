@@ -1,6 +1,6 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:path, node:url, node:perf_hooks, node:timers/promises, ./extracts.mjs, ./page.mjs, ./overrides.mjs, ./summary.mjs, ./check.mjs, ./chrome.mjs, ./fonts.mjs, ./generate.mjs, ../project.mjs.
- * [OUTPUT]: Exports html, htmlCheck.
+ * [INPUT]: Imports node:fs/promises, node:path, node:url, node:perf_hooks, node:timers/promises, ./extracts.mjs, ./page.mjs, ./overrides.mjs, ./summary.mjs, ./check.mjs, ./chrome.mjs, ./fonts.mjs, ./generate.mjs, ./zoom.mjs, ../png.mjs, ../project.mjs.
+ * [OUTPUT]: Exports glassDefaults, html, htmlCheck.
  * [POS]: Coordinates HTML export/recheck commands, browser ownership and resumable batch state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -17,7 +17,9 @@ import { check, writeEvidence, CHECKER } from './check.mjs';
 import { launch as launchChrome } from './chrome.mjs';
 import { findFont } from './fonts.mjs';
 import { GENERATOR } from './generate.mjs';
-import { root, save, isJobId } from '../project.mjs';
+import { zoomTarget } from './zoom.mjs';
+import { decodePng } from '../png.mjs';
+import { root, save, json, isJobId } from '../project.mjs';
 /** @import { Clock, Stop, Landed } from './extracts.mjs' */
 /** @import { FrameRecord, Manifest, PageRecord, Flags } from './summary.mjs' */
 /** @import { Approximation, OverrideEntry } from './generate.mjs' */
@@ -43,11 +45,26 @@ function missingFonts(node, found = new Set()) {
   for (const child of node.children ?? []) missingFonts(child, found);
   return found;
 }
-// Shared fields from a check report for frame/page records; remove ref placeholder keys, and take px from the check.
+// Visible GLASS effects with library-variable bindings but all-default parameters (radius, refraction, lightAngle, lightIntensity, dispersion, splay = 0; depth = 1; missing keys use defaults)
+// may have been extracted before library data finished loading. Traverse only the extract tree and return node IDs in preorder.
+const GLASS_ZERO = /** @type {const} */ (['radius', 'refraction', 'lightAngle', 'lightIntensity', 'dispersion', 'splay']);
+/** @param {ExtractNode} node @param {string[]} [found] @returns {string[]} */
+export function glassDefaults(node, found = []) {
+  if ((node.effects ?? []).some(e => e.type === 'GLASS' && e.visible !== false && Object.keys(e.boundVariables ?? {}).length > 0
+    && GLASS_ZERO.every(k => (e[k] ?? 0) === 0) && (e.depth ?? 1) === 1)) found.push(node.id);
+  for (const child of node.children ?? []) glassDefaults(child, found);
+  return found;
+}
+// Shared check-report fields for frame/page records: refs omit placeholder keys, while px/seam come from checks. layout counts top-node geometry findings, including advisory ink-offset;
+// structure counts its three categories, omitted when all zero, with full lists in check.json. Preserve top/focus/suggest/clusters/hints/zoom; summary compresses stdout.
 /** @param {Record<string, any>} r */
 const fromReport = r => ({ verdict: r.verdict, ...(r.reason ? { reason: r.reason } : {}), ...(r.message ?? r.error ? { message: r.message ?? r.error } : {}),
   ...(r.sizeNote ? { sizeNote: r.sizeNote } : {}), ...(r.diffRatio !== undefined ? { diffRatio: r.diffRatio, mismatched: r.mismatched, blocks: r.blocks.length } : {}),
-  ...(r.refs ? { refs: r.refs.map((/** @type {{ key?: string }} */ { key, ...ref }) => ref) } : {}), ...(r.bakedShare !== undefined ? { bakedShare: r.bakedShare } : {}) });
+  ...(r.refs ? { refs: r.refs.map((/** @type {{ key?: string }} */ { key, ...ref }) => ref) } : {}), ...(r.bakedShare !== undefined ? { bakedShare: r.bakedShare } : {}),
+  ...(r.top ? { layout: countBy(r.top.flatMap((/** @type {{ layout?: { kind: string }[] }} */ e) => (e.layout ?? []).map(f => f.kind))) } : {}),
+  ...(r.cause ? { cause: r.cause } : {}),
+  ...(r.untracked?.length || r.missing?.length || r.textMismatch?.length ? { structure: { untracked: r.untracked.length, missing: r.missing.length, textMismatch: r.textMismatch.length } } : {}),
+  ...(r.top ? { top: r.top } : {}), ...(r.focus ? { focus: r.focus } : {}), ...(r.suggest ? { suggest: r.suggest, clusters: r.clusters, hints: r.hints } : {}), ...(r.zoom ? { zoom: r.zoom } : {}) });
 
 // -- Browser lifecycle --------------------------------------------------
 // Launch lazily; remember startup failure so later frames become unchecked directly. Create one page per frame and close in finally; close failure only retires the browser.
@@ -70,8 +87,9 @@ function checker(launch) {
     info.version = browser.version;
     return browser;
   }
-  /** @param {Parameters<typeof check>[1]} input @param {string} dir Evidence directory. @returns {Promise<{ report: Record<string, any>, evidence?: string }>} */
-  async function run(input, dir) {
+  /** @param {Parameters<typeof check>[1]} input @param {string} dir Evidence directory. @param {Record<string, unknown>} [extra] Additional report fields, such as html-check context.
+   *  @returns {Promise<{ report: Record<string, any>, evidence?: string }>} */
+  async function run(input, dir, extra = {}) {
     if (blocked) return { report: { verdict: 'unchecked', ...blocked } };
     let b;
     try { b = await ready(); } catch (error) {
@@ -84,8 +102,10 @@ function checker(launch) {
     let healthy = true;
     try {
       page = await b.page();
-      const result = await check(page, input), report = /** @type {Record<string, any>} */ (result.report);
-      if (report.reason === 'RENDER_TIMEOUT') { healthy = false; blocked = AFTER_TIMEOUT; await retire(); }
+      const result = await check(page, input), report = /** @type {Record<string, any>} */ ({ ...result.report, ...extra });
+      // Zoom timeouts remain in zoom and preserve the 1x report. Retire Chrome, but continue later pages: at most one zoom comparison per invocation avoids repeated per-page timeouts.
+      const late = report.reason === 'RENDER_TIMEOUT';
+      if (late || report.zoom?.reason === 'RENDER_TIMEOUT') { healthy = false; if (late) blocked = AFTER_TIMEOUT; await retire(); }
       await writeEvidence(dir, report, 'images' in result ? result.images : undefined);
       return { report, evidence: path.join(dir, 'check.json') };
     } catch (error) {
@@ -217,11 +237,20 @@ export async function html(cwd, options, deps = {}) {
       t = performance.now();
       await writePage(out, file, top.id, gen.html, index);
       ms.write = elapsed(t);
-      const missing = missingFonts(top), refs = gen.result.refs.map(({ key, ...r }) => r);
+      const missing = missingFonts(top), refs = gen.result.refs.map(({ key, ...r }) => r), glass = glassDefaults(top);
+      if (glass.length) warnings.push(`GLASS parameters are all defaults while bound to library variables (${glass.length} node(s), e.g. ${glass.slice(0, 3).join(', ')}): library data may not have finished loading; the reference image and extract tree still come from the same job; `
+        + 'browse that page in Figma, then re-extract with --node');
+      // Merge font diagnostics by index after checking; report.fonts is derived entry-for-entry from the same gen.result.fonts.
+      /** @param {{ status?: string, chromeUsed?: string, substituted: boolean }[]} [audited] */
+      const fonts = audited => gen.result.fonts.map(({ face, ...f }, i) => {
+        const a = audited?.[i];
+        return { ...f, figmaMissing: missing.has(`${f.family}\0${f.style}`), ...(a ? { ...(a.status !== undefined ? { status: a.status } : {}),
+          ...(a.chromeUsed !== undefined ? { chromeUsed: a.chromeUsed } : {}), substituted: a.substituted } : {}) };
+      });
       const head = { node, name: top.name, source: rec.source, extract: used.id, ...(extracts.length > 1 ? { extracts } : {}), html: page };
-      const tail = { approximations: countBy(approximations.map(a => a.kind)), ...(gen.result.needsIsland.length ? { needsIsland: gen.result.needsIsland } : {}),
-        ...(needsExtract ? { needsExtract: /** @type {true} */ (true) } : {}), ...(overridesFile ? { overrides: gen.result.overrides } : {}),
-        fonts: gen.result.fonts.map(({ face, ...f }) => ({ ...f, figmaMissing: missing.has(`${f.family}\0${f.style}`) })),
+      const tail = { approximations: countBy(approximations.map(a => a.kind)), approximationNodes: approximations, ...(glass.length ? { glassDefaults: glass } : {}),
+        ...(gen.result.needsIsland.length ? { needsIsland: gen.result.needsIsland } : {}),
+        ...(needsExtract ? { needsExtract: /** @type {true} */ (true) } : {}), ...(overridesFile ? { overrides: gen.result.overrides } : {}), fonts: fonts(),
         ...(warnings.length ? { warnings } : {}), ...(gen.violations.length ? { violations: gen.violations } : {}), ms };
       rec = { ...head, size: gen.expected, ...(refs.length ? { refs } : {}), ...tail };
       if (!parked) done.push(used.id);
@@ -230,9 +259,10 @@ export async function html(cwd, options, deps = {}) {
       if (!options.noCheck) {
         const reference = await fs.readFile(path.resolve(used.dir, /** @type {BinaryFile} */ (used.output.reference).file)), launched = ck.info.launchMs;
         t = performance.now();
-        const { report, evidence } = await ck.run({ url: pathToFileURL(page).href, reference, expected: gen.expected, refs: gen.result.refs }, path.join(root(cwd), 'check', used.id));
+        const frame = { output: used.output, result: gen.result, overrides: group };
+        const { report, evidence } = await ck.run({ url: pathToFileURL(page).href, reference, expected: gen.expected, refs: gen.result.refs, frame }, path.join(root(cwd), 'check', used.id));
         ms.check = Math.max(0, elapsed(t) - (ck.info.launchMs - launched));
-        rec = { ...head, ...(evidence ? { check: evidence } : {}), size: gen.expected, ...(refs.length ? { refs } : {}), ...fromReport(report), ...tail };
+        rec = { ...head, ...(evidence ? { check: evidence } : {}), size: gen.expected, ...(refs.length ? { refs } : {}), ...fromReport(report), ...tail, fonts: fonts(report.fonts) };
       }
       records.push(rec);
     } catch (error) {
@@ -262,10 +292,22 @@ export async function html(cwd, options, deps = {}) {
 }
 
 // ── html-check ───────────────────────────────────────────────────────────
-// Preflight every page (reject on any invalid page), start Chrome (propagate startup failures), then render/compare each page. No Figma connection, generation, or page writes;
+// Preflight every page (any failure throws), then --node/--zoom, launch Chrome (failure throws), and render/compare/diagnose each page. No Figma connection or page rewriting;
 // locate references through each page's extract metadata in the current project. Store evidence beside html-command evidence, replacing the previous check.
-/** @param {string} cwd @param {string[]} files @param {Deps} [deps] @returns {Promise<{ summary: object, exitCode: 0 | 1 }>} */
-export async function htmlCheck(cwd, files, deps = {}) {
+// Recover approximation/font/overrides.applied context by regenerating from metadata. For overridden pages, read a matching-fingerprint group from the overrides file recorded in adjacent html.json;
+// if unavailable, diagnose without overrides and mark context.overrides unavailable. Regeneration differing from the page, through manual edits or generator drift, sets exact false.
+// context is the sole structured representation; warnings add one sentence for each condition. Non-Chrome page errors use the same error shape as html frame records, then continue to the next page.
+/** @param {Awaited<ReturnType<typeof readLanded>>} got A non-landed outcome. */
+const unusable = got => 'failed' in got ? got.failed.message : 'pending' in got ? 'no result yet' : 'interrupted';
+/** @param {string} file @param {{ node: string, overrides: string }} meta @returns {Promise<Record<string, OverrideEntry> | null>} */
+async function recover(file, meta) {
+  try {
+    const { groups, sha } = loadOverrides((await json(path.join(path.dirname(file), 'html.json'))).overrides.file);
+    return sha === meta.overrides ? groups[meta.node] ?? {} : null;
+  } catch { return null; }
+}
+/** @param {string} cwd @param {string[]} files @param {import('../args.mjs').Options} [options] @param {Deps} [deps] @returns {Promise<{ summary: object, exitCode: 0 | 1 }>} */
+export async function htmlCheck(cwd, files, options = {}, deps = {}) {
   const pages = [];
   for (const given of files) {
     const file = path.resolve(cwd, given), text = await fs.readFile(file, 'utf8').catch(error => { throw Error(`Cannot read ${file}: ${error.message}`); }), meta = readMeta(text);
@@ -273,19 +315,54 @@ export async function htmlCheck(cwd, files, deps = {}) {
     if (!isJobId(meta.extract)) throw Error(`${file} is not a page generated from an extract`);
     if (meta.scale !== 1) throw Error(`${file} has scale ${meta.scale}; html-check only checks 1x pages`);
     const got = await readLanded(cwd, meta.extract).catch(error => ({ failed: { id: meta.extract, message: String(error.message) } }));
-    if (!('landed' in got)) throw Error(`${file}: extract job ${meta.extract} is not available in the current project (${'failed' in got ? got.failed.message : 'pending' in got ? 'no result yet' : 'interrupted'}); run in the project directory that generated the page`);
-    pages.push({ file, node: meta.node, landed: got.landed, refs: readRefs(text) });
+    if (!('landed' in got)) throw Error(`${file}: extract job ${meta.extract} is not available in the current project (${unusable(got)}); run in the project directory that generated the page`);
+    const { output, dir } = got.landed, ids = new Set(), warnings = [];
+    /** @param {ExtractNode} n */
+    const walk = n => { ids.add(n.id); for (const c of n.children ?? []) walk(c); };
+    walk(output.root);
+    const group = meta.overrides === 'none' ? {} : await recover(file, meta);
+    if (!group) warnings.push(`Page has overrides (${meta.overrides}) but no file with the same fingerprint was found; diagnostics use the output generated without overrides`);
+    const gen = assemble(output, { dir, extract: meta.extract, overrides: group ?? {}, overridesHash: meta.overrides }), exact = gen.html === text;
+    if (!exact) warnings.push(`Page differs from the regenerated output (${meta.generator === GENERATOR ? 'page was edited' : `generator ${meta.generator} -> ${GENERATOR}`}); diagnostics use the regenerated output`);
+    const context = { overrides: /** @type {'none' | 'recovered' | 'unavailable'} */ (meta.overrides === 'none' ? 'none' : group ? 'recovered' : 'unavailable'), exact };
+    pages.push({ file, node: meta.node, landed: got.landed, refs: readRefs(text), ids, group: group ?? {}, result: gen.result, context, warnings });
+  }
+  const nodes = options.nodes ?? (options.targetNodeId ? [options.targetNodeId] : []);
+  for (const id of nodes) if (!pages.some(p => p.ids.has(id))) throw Error(`--node ${id} is not inside any page's frame`);
+  // --zoom compares the zoom extract root on the first page containing it.
+  let zoom = null;
+  if (options.zoomId) {
+    const id = options.zoomId, job = await json(path.join(root(cwd), 'runs', id, 'job.json')).catch(() => null);
+    if (job?.id !== id) throw Error(`--zoom job does not exist or its evidence is incomplete: ${id}`);
+    if (job.operation !== 'extract') throw Error(`--zoom only accepts extract jobs: ${id} is ${job.operation}`);
+    const got = await readLanded(cwd, id).catch(error => ({ failed: { id, message: String(error.message) } }));
+    if (!('landed' in got)) throw Error(`--zoom extract job ${id} is not available in the current project (${unusable(got)})`);
+    const z = got.landed.output, host = pages.find(p => p.ids.has(z.root.id)) ?? pages[0], target = zoomTarget(host.landed.output, z);
+    const reference = await fs.readFile(path.resolve(got.landed.dir, /** @type {BinaryFile} */ (z.reference).file));
+    // Decode reference errors during preflight: failures inside zoom would mark the whole page error and lose its completed 1x report.
+    try { decodePng(reference); } catch (error) { throw Error(`Cannot decode the --zoom reference image (${error.message}): ${id}`); }
+    zoom = { host, target, extract: id, reference };
   }
   const ck = checker(deps.launch ?? launchChrome);
   /** @type {PageRecord[]} */
   const records = [];
   try {
     await ck.ready();
-    for (const { file, node, landed: { id, output, dir }, refs } of pages) {
-      const reference = await fs.readFile(path.resolve(dir, /** @type {BinaryFile} */ (output.reference).file));
-      const { report, evidence } = await ck.run({ url: pathToFileURL(file).href, reference, expected: expectedSize(output), refs }, path.join(root(cwd), 'check', id));
-      records.push({ html: file, node, extract: id, ...fromReport(report), ...(evidence ? { check: evidence } : {}) });
+    for (const p of pages) {
+      const { file, node, landed: { id, output, dir }, refs, group, result, context, warnings } = p, focus = nodes.filter(n => p.ids.has(n));
+      const rec = { html: file, node, extract: id, context, ...(warnings.length ? { warnings } : {}) };
+      try {
+        const reference = await fs.readFile(path.resolve(dir, /** @type {BinaryFile} */ (output.reference).file));
+        const frame = { output, result, overrides: group, ...(focus.length ? { focus } : {}), ...(zoom?.host === p ? { zoom: { target: zoom.target, extract: zoom.extract, reference: zoom.reference } } : {}) };
+        const { report, evidence } = await ck.run({ url: pathToFileURL(file).href, reference, expected: expectedSize(output), refs, frame }, path.join(root(cwd), 'check', id), { context });
+        // Keep only instruction-relevant fields for substituted fonts; figmaMissing matches html font-row semantics.
+        const missing = missingFonts(output.root), fonts = (report.fonts ?? []).filter((/** @type {{ substituted: boolean }} */ r) => r.substituted)
+          .map((/** @type {{ family: string, style: string, postScriptName: string, chromeUsed?: string }} */ { family, style, postScriptName, chromeUsed }) =>
+            ({ family, style, postScriptName, ...(chromeUsed !== undefined ? { chromeUsed } : {}), figmaMissing: missing.has(`${family}\0${style}`) }));
+        records.push({ ...rec, ...fromReport(report), ...(fonts.length ? { fonts } : {}), ...(evidence ? { check: evidence } : {}) });
+      } catch (error) { records.push({ ...rec, error: { code: error.code ?? 'COMMAND_FAILED', message: error.message } }); }
     }
   } finally { await ck.close(); }
-  return { summary: checkStdout({ ...(ck.info.version ? { browser: ck.info.version } : {}), pages: records }), exitCode: records.some(r => r.verdict === 'fail' || r.verdict === 'unchecked') ? 1 : 0 };
+  return { summary: checkStdout({ ...(ck.info.version ? { browser: ck.info.version } : {}), pages: records }),
+    exitCode: records.some(r => r.error || r.verdict === 'fail' || r.verdict === 'unchecked') ? 1 : 0 };
 }

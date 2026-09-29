@@ -210,17 +210,60 @@ figma-agent-control run export.js --depth 1 > out.json 2> receipt.log
 
 ## 导出 HTML
 
-`html` 把画框或已保存的 extract 生成为固定尺寸的自包含 HTML。默认用 Chrome 与同一次 extract 的参考图比较；`--no-check` 只生成。
+`html` 生成固定尺寸、资源内联的 HTML，并与同一次 extract 的参考 PNG 比较。比对需要 Chrome；`--no-check` 只生成。[HTML 协议](protocol.md#html-导出)定义清单与诊断。
 
 ```sh
-figma-agent-control html --node 12:34 --out out
-figma-agent-control html --from <extract-job-id> --out out
-figma-agent-control html-check <page.html>
+figma-agent-control inspect --depth 1
+figma-agent-control html --node 12:34 --node 12:56 --out out
 ```
 
-完整清单在 `<out>/html.json`，比较证据在 `.figma-agent-control/check/<extract-job-id>/`。通过 `--overrides <file.json>` 记录修正，随后重新生成。
+无论退出码是什么，先读 `instruction`。它给出的命令覆盖完整批次：可复用的提取用 `--from`，需要重取的帧用 `--node`。续跑保持原 `--out` 和选项；`html.json` 会作为本次调用的完整清单整体重写。
 
-先读 `instruction`。退出 `2` 时等待列出的 pending 提取，再执行覆盖完整批次的续跑命令。每批最多 50 帧，默认每次提取等待 30 秒，提交/等待预算为 90 秒。
+### 读 HTML 诊断
+
+完整结果在 `<out>/html.json`；逐帧证据在 `.figma-agent-control/check/<extract-job-id>/`。`block-<n>.png` 纵向拼接参考、渲染、差分裁图。stdout 只摘要需要关注的帧。
+
+| 字段 | 含义 |
+|---|---|
+| `verdict` | `fail` 为差异超过 2%；`pass-with-findings` 为像素达标但仍有发现；`clean` 两者都没有；`unchecked` 未能比较 |
+| `top` | 差异最大的节点，取 HTML/Figma 两侧归因的较大值排名 |
+| `top[].hint`、`fix` | 位移搜索结果，以及适合时可直接使用的 transform 与原值 basis |
+| `suggest` | `bake:"ref"` 候选；先看冻结面积与 `textNodes` |
+| `hints` | 未给建议的原因、已有 override 冲突或裁图边缘接缝 |
+| `totals` | 全批次近似项、几何发现和字体统计 |
+
+`glass`、`background-blur`、`blend-shadow`、`blend-mode`、`island-vetoed` 依赖背景。`needs-island` 需要 Figma 导出的 SVG；`--node` 可再提取一次，`--from` 则可能标记 `needsExtract`。不支持的 paint、圆角平滑等其他近似保留在 `approximationNodes`。
+
+### 修正
+
+修正写入 overrides JSON，先按画框 ID 分组，再按节点 ID 分组。ID 用冒号形式，每项以 `note` 解释原因：
+
+```json
+{
+  "12:34": {
+    "12:80": {"style":{"transform":"translate(12px,601px)"},"basis":{"transform":"translate(12px,603px)"},"note":"按测量结果把标题上移 2 px"},
+    "12:95": {"bake":"ref","note":"玻璃按钮依赖背景"}
+  }
+}
+```
+
+先修位置和文字，再考虑烘焙。把 `top[].fix` 复制到正确分组，保留 `basis`；基值变化时条目会标记陈旧，而不是静默套用旧修正。即使生成页面用 `left`/`top` 表达混合容器，override 仍写 `transform`。整份文件都会校验，包括本次未导出的分组。
+
+字体替代要安装正确字体，不能靠 override 掩盖。`figmaMissing` 表示 Figma 自己也用了替代字体。多个帧出现同类阻断几何问题、文字丢失或不符、任何 `violations` 都应报告生成器缺陷，不要用参考裁图隐藏。
+
+- `bake:"svg"` 把不依赖背景的形状交给 Figma，可能需要新提取；SVG 不含背后内容。
+
+- `bake:"ref"` 裁参考图并放在画布最上方，矩形内全部可见内容连同文字都变成位图，目标子树停止生成。后代 override 以 `inside-ref` 标记陈旧，先处理建议的 `replaces`。用了参考裁图的帧不能是 `clean`。
+
+- 不要手改生成 HTML：下次运行会覆盖，`html-check` 也会报告与重生成不一致。不要加粗描边凑分数，或冻结本来能修好的文字/位置差异。
+
+指定节点用 `html-check <page.html> --node <id>`。放大比较先 `extract --node <id> --scale 4`，再 `html-check <page.html> --zoom <extract-job-id>`。倍率须大于 1 且不超过 4，节点不能旋转，证据需存在。focus/zoom 不改变整体结论。`html-check` 在原项目目录运行，不连接 Figma。
+
+### 分批与停止
+
+每批建议约十帧，硬上限五十帧；不同批次使用不同输出目录。退出 `2` 时按 instruction 先等待 pending extract，再运行完整批次的续跑命令。默认每次提取等 30 秒，提交/等待预算为 90 秒。
+
+帧变成 `clean`、剩余发现经目视确认是可接受渲染差异，或五轮修正仍不收敛时停止。最后一种情况恢复最佳 overrides 重新生成，并说明剩余块。退出 `0` 表示配置的检查通过；交付说明中列出已接受的视觉发现和交互检查。
 
 ## 出错时
 

@@ -37,7 +37,9 @@ export const COMMANDS = {
   html: { usage: 'html [--node <ID>]... [--from <extract-job-id>]... --out <dir> [--overrides <file.json>] [--no-check] [--timeout <seconds>] [--budget <seconds>]: export pixel-replica HTML and compare each frame with the extract reference image; handles --from first, then submits one extract per --node frame; 1-50 frames in total; --budget caps the time spent submitting and waiting for extracts (10-600, default 90), and when it runs out exits with code 2 and returns the resume command',
     positionals: [0, 0], options: { node: { type: 'string', multiple: true }, from: { type: 'string', multiple: true }, out: { type: 'string' }, overrides: { type: 'string' },
       'no-check': { type: 'boolean' }, timeout: { type: 'string' }, budget: { type: 'string' } } },
-  'html-check': { usage: 'html-check <page.html>...: find extract references from page metadata and rerender for comparison; no Figma connection, run in the project that generated the pages', positionals: [1, 50], options: {} },
+  'html-check': { usage: 'html-check <page.html>... [--node <ID>]... [--zoom <extract-job-id>]: find the extract reference image from the page meta, re-render and compare (does not connect to Figma; run in the project directory that generated the page); '
+    + '--node runs shift search and checks on the given nodes (not limited to the top 5); --zoom does a magnified comparison against the result of extract --node <ID> --scale <k>', positionals: [1, 50],
+    options: { node: { type: 'string', multiple: true }, zoom: { type: 'string' } } },
 };
 
 /** @param {string} value @param {number} min @param {number} max @param {string} message */
@@ -65,12 +67,13 @@ const expect = value => {
 // parseArgs sees only ParseArgsOptionsConfig and a union of all option value types; COMMANDS above defines each option's exact type.
 /** @typedef {{ node?: string | string[], lib?: string[], island?: string[], data?: string, depth?: string, expect?: string, tolerance?: string, scale?: string,
  *   'request-id'?: string, 'high-risk'?: string, timeout?: string, 'no-wait'?: boolean, full?: boolean, force?: boolean, inspect?: string,
- *   'previous-plugin-stopped'?: boolean, threshold?: string, since?: string, from?: string[], out?: string, overrides?: string, 'no-check'?: boolean, budget?: string }} Values */
+ *   'previous-plugin-stopped'?: boolean, threshold?: string, since?: string, from?: string[], out?: string, overrides?: string, 'no-check'?: boolean, budget?: string,
+ *   zoom?: string }} Values */
 // Normalized options, read by bin according to the command.
 /** @typedef {{ targetNodeId?: string, nodes?: string[], snapshotDepth?: number, timeoutSeconds?: number, threshold?: number, expect?: string, tolerance?: number,
  *   scale?: number, requestId?: string, risk?: { level: 'high', reason: string }, islands?: string[], libFiles?: string[], dataFile?: string, since?: string,
  *   inspectId?: string, previousPluginStopped?: true, force?: true, full?: true, noWait?: true,
- *   fromIds?: string[], outDir?: string, overridesFile?: string, noCheck?: true, budgetSeconds?: number }} Options */
+ *   fromIds?: string[], outDir?: string, overridesFile?: string, noCheck?: true, budgetSeconds?: number, zoomId?: string }} Options */
 /** @param {string[]} argv @returns {{ command: string, positionals: string[], options: Options }} */
 export function parse(argv) {
   const [first = 'help', ...rest] = argv;
@@ -140,6 +143,7 @@ export function parse(argv) {
     if (v['no-check']) o.noCheck = true;
     if (v.budget !== undefined) o.budgetSeconds = integer(v.budget, 10, 600, '--budget must be an integer 10-600 seconds');
   }
+  if (v.zoom !== undefined) { if (!isJobId(v.zoom)) throw Error(`--zoom must be an extract job ID (lowercase UUID): ${v.zoom}`); o.zoomId = v.zoom; }
   if (first === 'resolve') {
     if (!isJobId(positionals[0]) || !isJobId(v.inspect) || !v['previous-plugin-stopped']) throw Error('Usage: ' + spec.usage + '; first confirm the previous plugin has stopped and check the current document');
     o.inspectId = v.inspect; o.previousPluginStopped = true;

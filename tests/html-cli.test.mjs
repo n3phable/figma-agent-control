@@ -17,10 +17,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { extracted, run } from './helpers/generate.mjs';
 import { extractDoc } from './helpers/doc.mjs';
 import { harness, cliFile } from './helpers/harness.mjs';
-import { html, htmlCheck } from '../src/html/command.mjs';
+import { html, htmlCheck, glassDefaults } from '../src/html/command.mjs';
 import { assemble, pageFile, readMeta, readRefs, indexPages, writePage } from '../src/html/page.mjs';
 import { loadOverrides } from '../src/html/overrides.mjs';
-import { STDOUT_LIMIT, bytes, quote, totals, exitCode, batch, instruction, stdoutOf, checkStdout } from '../src/html/summary.mjs';
+import { quote } from '../src/html/summary.mjs';
 import { findChrome } from '../src/html/chrome.mjs';
 import { GENERATOR } from '../src/html/generate.mjs';
 import { crop } from '../src/html/match.mjs';
@@ -131,89 +131,13 @@ test('loadOverrides reports paths for read/parse errors, invalid node keys, entr
   assert.deepEqual([groups, sha], [good, hash(fs.readFileSync(f)).slice(0, 12)]);
 });
 
-// -- Output layer: synthetic manifests and pure functions -------------------
-const id = i => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
-const frame = (i, extra = {}) => ({ node: `1:${i}`, name: `\u5e27${i}`, source: 'from', extract: id(i), html: `/o/\u5e27${i}__1-${i}.html`, size: { width: 10, height: 10 },
-  verdict: 'pass-with-findings', approximations: {}, ...extra });
-const manifest = (frames, extra = {}) => {
-  const m = { schema: 1, generator: 'g', checker: 'c', overrides: 'none', out: '/o', frames, totals: totals(frames), done: frames.filter(f => f.html).map(f => f.extract),
-    pending: [], remaining: [], instruction: '', exitCode: 0, ms: { total: 1, fontIndex: 1 }, ...extra };
-  return { ...m, instruction: instruction(m, extra.flags ?? {}), exitCode: exitCode(m) };
-};
-const fits = value => { assert.ok(bytes(value) <= STDOUT_LIMIT, `${bytes(value)} bytes`); return value; };
-const long = (c, n = 1000) => c.repeat(n);
-
-// -- 16 KiB stdout limit --------------------------------------------------
-test('stdoutOf lists at most 10 attention frames ordered error, fail, unchecked, stale, pass-with-findings, then unjudged; omits clean frames and caps lists at 3', () => {
-  const frames = [...Array.from({ length: 20 }, (_, i) => frame(i)), ...Array.from({ length: 10 }, (_, i) => frame(20 + i, { verdict: 'fail' })),
-    ...Array.from({ length: 5 }, (_, i) => frame(30 + i, { verdict: 'clean' }))];
-  const a = fits(stdoutOf(manifest(frames)));
-  assert.deepEqual([a.frames.length, a.omittedFrames, a.frames.every(f => f.verdict === 'fail')], [10, 20, true]);
-  assert.equal('done' in a, false, 'Omit done when there is no resume work');
-  const order = [frame(1, { verdict: undefined }), frame(2), frame(3, { violations: ['v'] }), frame(4, { verdict: 'unchecked', reason: 'CHROME_NOT_FOUND' }),
-    frame(5, { verdict: 'fail' }), frame(6, { html: undefined, verdict: undefined, error: { code: 'EXTRACT_FAILED', message: long('\u957f', 400) } }), frame(7, { verdict: 'clean' })];
-  const b = fits(stdoutOf(manifest(order)));
-  assert.deepEqual(b.frames.map(f => f.node), ['1:6', '1:5', '1:4', '1:3', '1:2', '1:1']);
-  assert.equal(b.frames[0].error.message.length, 300);
-  const refs = Array.from({ length: 5 }, (_, i) => ({ node: `2:${i}`, rect: [0, 0, 1, 1], share: 0.01, bakedOver: [], px: 0 }));
-  const stale = Array.from({ length: 5 }, (_, i) => ({ node: `3:${i}`, kind: 'missing' }));
-  const c = fits(stdoutOf(manifest([frame(1, { refs, overrides: { applied: [], stale } })]))).frames[0];
-  assert.deepEqual([c.refs.length, c.refsOmitted, c.stale.length, c.staleOmitted, c.refs[0]], [3, 2, 3, 2, { node: '2:0', rect: [0, 0, 1, 1], share: 0.01 }]);
-});
-
-test('Above 16 KiB, stdoutOf and checkStdout remove frame details, then resume lists, and replace guidance with a short html.json pointer', () => {
-  const heavy = Array.from({ length: 10 }, (_, i) => frame(i, { verdict: 'fail', html: `/o/${long('a')}${i}.html`,
-    refs: [0, 1, 2].map(k => ({ node: long(String(k)), rect: [0, 0, 1, 1], share: 0.1, bakedOver: [] })) }));
-  const c = fits(stdoutOf(manifest(heavy)));
-  assert.deepEqual([c.frames, c.omittedFrames, c.instruction.includes('figma-agent-control html')], [undefined, 10, true]);
-  const nodes = Array.from({ length: 50 }, (_, i) => 'I' + Array.from({ length: 190 }, (_, k) => `${i}:${k}`).join(';'));
-  const d = fits(stdoutOf(manifest([], { remaining: nodes, stop: { kind: 'retry', code: 'BUDGET_EXPIRED', message: '\u65f6\u957f\u9884\u7b97\u5df2\u5230' } })));
-  assert.deepEqual([d.remaining, d.done, d.stop.code], [undefined, undefined, 'BUDGET_EXPIRED']);
-  assert.equal(d.instruction, 'Instruction too long; see instruction in /o/html.json for the full text');
-  const pages = Array.from({ length: 50 }, (_, i) => ({ html: `/o/${long('p')}${i}.html`, node: `1:${i}`, extract: id(i), verdict: 'fail', diffRatio: 0.1 }));
-  const e = fits(checkStdout({ browser: 'Chrome/1', pages }));
-  assert.deepEqual([e.pages, e.omittedPages, e.totals], [undefined, 50, { pages: 50, clean: 0, passWithFindings: 0, fail: 50, unchecked: 0 }]);
-  const mixed = checkStdout({ pages: [{ html: '/a', node: '1:1', extract: id(1), verdict: 'clean' }, { html: '/b', node: '1:2', extract: id(2), verdict: 'unchecked', reason: 'CHROME_EXITED' }] });
-  assert.deepEqual([mixed.pages.length, mixed.omittedPages, mixed.instruction], [2, 0, 'Chrome failed midway or rendering timed out; rerun html-check']);
-});
-
-// -- Exit codes, totals, and instructions ----------------------------------
-test('Fatal stops outrank resume work, which outranks unmet criteria; stale, needsIsland, violations, errors, and unchecked exit 1 independently, while --no-check frames do not', () => {
-  const fatal = { kind: 'fatal', code: 'NO_SESSION', message: 'm' };
-  assert.equal(exitCode({ stop: fatal, pending: [], remaining: ['1:2'], frames: [] }), 1);
-  assert.equal(exitCode({ pending: [id(1)], remaining: [], frames: [frame(1, { verdict: 'fail' })] }), 2);
-  for (const extra of [{ verdict: 'fail' }, { verdict: 'unchecked' }, { overrides: { applied: [], stale: [{ node: '1:9', kind: 'missing' }] } }, { needsIsland: ['4:1'] },
-    { violations: ['v'] }, { error: { code: 'EXTRACT_FAILED', message: 'm' } }, { verdict: undefined, approximations: { 'second-extract-failed': 1 }, needsIsland: ['4:1'] }])
-    assert.equal(exitCode({ pending: [], remaining: [], frames: [frame(1, extra)] }), 1, JSON.stringify(extra));
-  assert.equal(exitCode({ pending: [], remaining: [], frames: [frame(1), frame(2, { verdict: undefined }), frame(3, { verdict: 'clean' })] }), 0);
-  const t = totals([frame(1, { approximations: { glass: 2 }, overrides: { applied: [], stale: [{}, {}] } }), frame(2, { verdict: 'clean', approximations: { glass: 1, 'second-extract-failed': 4 }, needsIsland: ['4:1'] }),
-    frame(3, { verdict: 'unchecked' }), { node: '1:4', source: 'node', error: { code: 'EXTRACT_REJECTED', message: 'm' } }]);
-  assert.deepEqual(t, { frames: 4, clean: 1, passWithFindings: 1, fail: 0, unchecked: 1, errors: 1, stale: 2, needsIsland: 1, approximations: { glass: 3, 'second-extract-failed': 4 } });
-});
-
-test('batch and instruction resume the whole batch; missing-island and pageless-error frames use deduplicated --node entries after remaining, preserving only supplied options', () => {
-  const frames = [frame(1), frame(2, { needsIsland: ['4:1'], needsExtract: true }), { node: '1:3', source: 'node', error: { code: 'EXTRACT_FAILED', message: 'm' } },
-    { node: '1:5', source: 'from', extract: id(5), error: { code: 'EXTRACT_INTERRUPTED', message: 'm' } }];
-  const m = { frames, out: "/o/it's", done: [id(1), id(2)], pending: [id(9)], remaining: ['1:5', '1:4'] };
-  assert.equal(batch(m, {}), `figma-agent-control html --from '${id(1)}' --from '${id(9)}' --node '1:5' --node '1:4' --node '1:3' --node '1:2' --out '/o/it'\\''s'`);
-  assert.equal(batch(m, { overridesFile: '/x.json', noCheck: true, timeoutSeconds: 5, budgetSeconds: 60 }, { overridesPlaceholder: true }).split("--node '1:2' ")[1],
-    "--overrides '/x.json' --out '/o/it'\\''s' --no-check --timeout '5' --budget '60'");
-  assert.match(batch(m, {}, { overridesPlaceholder: true }), / --overrides <overrides file> --out /);
-  // A timed-out second extraction resumes its pending task with --from, without also repeating the frame through --node.
-  const waiting = { frames: [frame(1, { extracts: [id(1), id(2)], needsIsland: ['4:1'] })], out: '/o', done: [], pending: [id(2)], remaining: [] };
-  assert.equal(batch(waiting, {}), `figma-agent-control html --from '${id(2)}' --out '/o'`);
-
-  const go = (frames, extra = {}, flags = {}) => manifest(frames, { ...extra, flags }).instruction;
-  assert.equal(go([frame(1)]), 'All frames pass; /o/html.json is the manifest of this batch');
-  assert.equal(go([frame(1, { verdict: undefined })], {}, { noCheck: true }), 'Generated, not checked (--no-check); you can run figma-agent-control html-check; /o/html.json is the manifest of this batch');
-  const failing = go([frame(1, { verdict: 'fail' })]);
-  assert.match(failing, /^For failing frames, read check\.json and diff\.png in the evidence directory.*\. Then run figma-agent-control html --from '.*' --overrides <overrides file> --out '\/o'$/);
-  assert.match(go([frame(1, { verdict: 'unchecked', reason: 'REFERENCE_SIZE' }), frame(2, { verdict: 'unchecked', reason: 'CHROME_NOT_FOUND' })]), /^Install Chrome.*\. Reference image and extract tree sizes differ by more than 1 px/);
-  const wait = { kind: 'retry', code: 'ACTIVE_JOB', message: 'm', active: id(9) };
-  assert.equal(go([], { pending: [id(9)], remaining: ['1:2'], stop: wait }), `First run figma-agent-control wait ${id(9)}, then run figma-agent-control html --from '${id(9)}' --node '1:2' --out '/o'`);
-  assert.match(go([], { remaining: ['1:2'], stop: { ...wait, active: id(8) } }), new RegExp(`^Another job is in progress \\(${id(8)}\\); after it finishes, run figma-agent-control html --node '1:2'`));
-  assert.match(go([], { remaining: ['1:2'], stop: { kind: 'fatal', code: 'BRIDGE_STOPPING', message: '\u6865\u63a5\u6b63\u5728\u505c\u6b62' } }), /^\u6865\u63a5\u6b63\u5728\u505c\u6b62\. Rerun figma-agent-control connect\. Run figma-agent-control html --node '1:2'/);
-  assert.match(go([], { remaining: ['1:2'] }), /^Interrupted extracts are re-extracted with --node; run /);
+// -- GLASS defaults: pure function ----------------------------------------
+test('glassDefaults lists visible library-bound GLASS nodes with all-default parameters in preorder, excluding nondefault, unbound, and hidden nodes', async () => {
+  assert.deepEqual(glassDefaults((await extracted('1:2')).output.root), ['3:1']);
+  assert.equal(glassDefaults((await extracted('1:3')).output.root).includes('4:23'), false, '4:23 has radius 6');
+  const g = extra => ({ id: '1:1', effects: [{ type: 'GLASS', visible: true, radius: 0, refraction: 0, lightAngle: 0, lightIntensity: 0, dispersion: 0, boundVariables: { radius: {} }, ...extra }] });
+  assert.deepEqual(glassDefaults(g()), ['1:1'], 'Missing splay/depth keys use defaults');
+  for (const extra of [{ boundVariables: {} }, { boundVariables: undefined }, { splay: 0.2 }, { depth: 30 }, { visible: false }]) assert.deepEqual(glassDefaults(g(extra)), [], JSON.stringify(extra));
 });
 
 // -- Command fixtures -----------------------------------------------------
@@ -253,7 +177,26 @@ test('--from persists pages/html.json byte-identical to assemble, marks fonts mi
   assert.deepEqual(['browser' in m, typeof m.ms.fontIndex, m.done, m.pending, m.remaining, m.overrides, m.exitCode, r.exitCode], [false, 'number', [id], [], [], 'none', 0, 0]);
   assert.deepEqual(r.summary.frames.map(x => [x.node, x.verdict]), [['1:2', undefined]]);
   assert.deepEqual([r.summary.summary, 'done' in r.summary], [path.join(out, 'html.json'), false]);
-  assert.match(r.summary.instruction, /^Generated, not checked \(--no-check\);/);
+  // Mock 3:1 has a library-bound GLASS with default parameters: warnings/guidance leave exit code unchanged, and per-node approximation counts also exist under --no-check.
+  assert.deepEqual([f.glassDefaults, f.warnings.filter(w => /^GLASS parameters are all defaults while bound to library variables \(1 node\(s\), e\.g\. 3:1\)/.test(w)).length], [['3:1'], 1]);
+  // Batch commands re-extract default-only GLASS frames with --node instead of rereading the same --from task.
+  assert.match(r.summary.instruction, /^Some frames have all-default GLASS parameters \(glassDefaults\): .*the command below re-extracts these frames with --node\. Then run figma-agent-control html --node '1:2' --out [^ ]+ --no-check$/);
+  assert.deepEqual(Object.entries(f.approximations).sort(), Object.entries(f.approximationNodes.reduce((n, a) => ({ ...n, [a.kind]: (n[a.kind] ?? 0) + 1 }), {})).sort());
+});
+
+test('--from frame records include stub-check font status/substitution, structure/layout counts, and ordered structure/font/GLASS guidance with exit 0', async () => {
+  const cwd = await project(), { id } = await landRun(cwd), out = path.join(cwd, 'out'), white = encodePng(160, 160, new Uint8Array(160 * 160 * 4).fill(255));
+  // The first face is unloaded; the page contains only the frame and one untracked node.
+  const evaluate = async () => ({ ids: [], names: [], rects: [], facts: {}, faces: { f0: { status: 'error', names: ['SFProText-Bold'] } }, els: [{ node: '2:9', face: 'f0', chars: 3 }],
+    nodes: ['1:2', '0:0'], texts: {} });
+  const launch = async () => ({ version: 'Fake/1', close: async () => {}, page: async () => ({ browser: { version: 'Fake/1' }, open: async () => {}, shot: async () => white, evaluate, close: async () => {} }) });
+  const r = await html(cwd, args('--from', id, '--out', out), { ...quiet, launch }), m = manifestOf(out), f = m.frames[0];
+  assert.deepEqual([f.verdict, f.layout, f.structure.untracked, f.structure.missing > 0, f.structure.textMismatch, 'cause' in f], ['pass-with-findings', {}, 1, true, 0, false]);
+  assert.deepEqual([f.fonts[0].postScriptName, f.fonts[0].status, f.fonts[0].substituted, f.fonts.slice(1).every(x => x.substituted === false && !('status' in x))], ['SFProText-Bold', 'error', true, true]);
+  assert.deepEqual([m.totals.fonts[0].postScriptName, m.totals.fonts[0].substituted, r.exitCode], ['SFProText-Bold', true, 0]);
+  assert.match(r.summary.instruction, /^Page has data-node elements outside the extract tree \(untracked\).*\. Page is missing nodes or its text differs from Figma.*\. Local fonts do not match the declared fonts: SF Pro Text Bold \(SFProText-Bold -> not loaded\).*\. Some frames have all-default GLASS parameters/);
+  // White reference and screenshot have no pixel differences or top entries; all five backdrop-dependent clusters in mock 1:2 remain idle.
+  assert.deepEqual([f.top, f.suggest, f.clusters.map(c => [c.target, c.outcome]), f.hints], [[], [], ['3:1', '3:4', '3:5', '3:6', '3:8'].map(t => [t, 'idle']), []]);
 });
 
 test('Preflight rejects bad overrides, hyphen keys, 501 SVG bakes, non-extract or non-1x evidence, missing tasks, and duplicate --from/--node before output creation or submission', async () => {
@@ -287,8 +230,8 @@ test('overrides apply current-frame groups, validate other groups, expose stale 
   assert.deepEqual(decodePng(Buffer.from(src, 'base64')).data, crop(ref.data, ref.width, f.refs[0].rect));
   assert.deepEqual([readMeta(page).overrides, m.overrides, r.exitCode, m.totals.stale], [sha, { file, sha }, 1, 2]);
   assert.deepEqual(byNode(r.summary.frames[0].stale.map(x => x.node)), ['1:2', '9:99']);
-  assert.match(r.summary.instruction, /^Stale overrides entries were not applied/);
-  assert.ok(r.summary.instruction.endsWith(`--from ${quote(id)} --overrides ${quote(file)} --out ${quote(out)} --no-check`), r.summary.instruction);
+  assert.match(r.summary.instruction, /^Some frames have all-default GLASS parameters \(glassDefaults\): .*re-extracts these frames with --node\. Stale overrides entries were not applied/);
+  assert.ok(r.summary.instruction.endsWith(`--node '1:2' --overrides ${quote(file)} --out ${quote(out)} --no-check`), r.summary.instruction);
 });
 
 test('--from missing Figma islands still writes a needsExtract page, exits 1, and suggests --node re-extraction', async () => {
@@ -326,7 +269,8 @@ test('Unusable --from tasks classify interruptions as remaining/exit 2, determin
   const queued = await land({ node: '1:3', job: { state: 'queued' }, result: () => null }), ok = await land();
   const both = await go(queued, ok), mb = manifestOf(out);
   assert.deepEqual([mb.pending, mb.done, mb.frames.map(f => f.node), both.exitCode], [[queued], [ok], ['1:2'], 2]);
-  assert.equal(both.summary.instruction, `First run figma-agent-control wait ${queued}, then run figma-agent-control html --from ${quote(ok)} --from ${quote(queued)} --out ${quote(out)} --no-check`);
+  // Default-only GLASS on 1:2 resumes with --node re-extraction rather than rereading the same --from task.
+  assert.equal(both.summary.instruction, `First run figma-agent-control wait ${queued}, then run figma-agent-control html --from ${quote(queued)} --node '1:2' --out ${quote(out)} --no-check`);
   const broken = await land({ node: '1:3', result: () => ({ id: randomUUID(), ok: true, output: {} }) }), mixed = await go(broken, ok), mm = manifestOf(out);
   assert.deepEqual([mm.frames.map(f => [f.node, f.error?.code, !!f.html]), mm.done, mixed.exitCode], [[['1:3', 'COMMAND_FAILED', false], ['1:2', undefined, true]], [ok], 1]);
 });
@@ -346,6 +290,74 @@ test('html-check preflights unreadable/no-meta/non-extract/non-1x/unavailable pa
     [page('queued.html', tag(queued)), /queued\.html: extract job .* is not available in the current project \(no result yet\)/],
   ]) await assert.rejects(htmlCheck(cwd, [file], { launch }), error => message.test(error.message), file);
   assert.equal(launches, 0);
+});
+
+test('html-check preflights --node/--zoom membership, task existence/type/scale, frame containment, and zoom reference decoding before Chrome', async () => {
+  const cwd = await project(), { id } = await landRun(cwd), out = path.join(cwd, 'out');
+  await html(cwd, args('--from', id, '--out', out, '--no-check'), quiet);
+  const file = path.join(out, '\u753b\u677f__1-2.html'), other = (await landRun(cwd, { node: '1:3', result: output => ({ ...output, scale: 2 }) })).id;
+  const preview = (await landRun(cwd, { job: { operation: 'preview' } })).id, bad = await landRun(cwd, { result: output => ({ ...output, scale: 2 }) }), garbled = bad.id;
+  fs.writeFileSync(path.join(bad.dir, bad.output.reference.file), 'garbage');
+  let launches = 0;
+  const launch = async () => { launches++; throw Object.assign(Error('Must not launch'), { code: 'CHROME_LAUNCH_FAILED' }); };
+  for (const [argv, message] of [[['--node', '9:9'], /^--node 9:9 is not inside any page's frame$/], [['--zoom', randomUUID()], /^--zoom job does not exist or its evidence is incomplete/],
+    [['--zoom', preview], /^--zoom only accepts extract jobs: .* is preview$/], [['--zoom', id], /^--zoom needs an extract job with --scale greater than 1 \(at most 4\), got 1$/],
+    [['--zoom', other], /^--zoom node 1:3 is not inside any page's frame$/], [['--zoom', garbled], new RegExp(`^Cannot decode the --zoom reference image \\(File is not a valid PNG\\): ${garbled}$`)]])
+    await assert.rejects(htmlCheck(cwd, [file], parse(['html-check', file, ...argv]).options, { launch }), error => message.test(error.message), argv.join(' '));
+  assert.equal(launches, 0);
+});
+
+// html-check browser stub returns sequential shots, defaulting to white, and merged RECTS/page facts containing only supplied nodes.
+const checkStub = (shots = [], nodes = []) => {
+  const white = encodePng(160, 160, new Uint8Array(160 * 160 * 4).fill(255));
+  let n = 0;
+  return async () => ({ version: 'Fake/1', close: async () => {}, page: async () => {
+    const shot = shots[n++] ?? white;
+    return { browser: { version: 'Fake/1' }, open: async () => {}, shot: async () => shot, close: async () => {},
+      evaluate: async () => ({ ids: [], names: [], rects: [], facts: {}, faces: {}, els: [], nodes, texts: {} }) };
+  } });
+};
+
+test('html-check records a normal per-page error like html frame errors, continues other pages, and exits 1', async () => {
+  const cwd = await project(), a = await landRun(cwd), b = await landRun(cwd, { node: '1:3' }), out = path.join(cwd, 'out');
+  await html(cwd, args('--from', a.id, '--from', b.id, '--out', out, '--no-check'), quiet);
+  const files = manifestOf(out).frames.map(f => f.html), r = await htmlCheck(cwd, files, {}, { launch: checkStub([encodePng(10, 10, new Uint8Array(400))]) });
+  const [p, q] = r.summary.pages;
+  assert.deepEqual([p.error.code, /Screenshot size/.test(p.error.message), 'verdict' in p, q.verdict, q.error, r.summary.totals.errors, r.exitCode], ['COMMAND_FAILED', true, false, 'pass-with-findings', undefined, 1, 1]);
+  assert.match(r.summary.instruction, /^For pages with errors, see error$/);
+});
+
+test('html-check zoom timeouts preserve 1x verdicts and record zoom.reason, replace the browser, and continue later pages', async () => {
+  const cwd = await project(), a = await landRun(cwd), b = await landRun(cwd, { node: '1:3' }), out = path.join(cwd, 'out');
+  await html(cwd, args('--from', a.id, '--from', b.id, '--out', out, '--no-check'), quiet);
+  // Zoom task extracts all of frame 1:2 at scale 2 with a 320x320 reference; the stub times out on dsf != 1 opens.
+  const z = await landRun(cwd, { result: output => ({ ...output, scale: 2 }) });
+  fs.writeFileSync(path.join(z.dir, z.output.reference.file), encodePng(320, 320, new Uint8Array(320 * 320 * 4).fill(255)));
+  const white = encodePng(160, 160, new Uint8Array(160 * 160 * 4).fill(255)), fact = { found: true, box: [0, 0, 160, 160], style: '', chain: [1, 0, 0, 1] };
+  let launches = 0;
+  const launch = async () => { launches++; return { version: 'Fake/1', close: async () => {}, page: async () => ({ browser: { version: 'Fake/1' }, close: async () => {}, shot: async () => white,
+    open: async (url, w, h, dsf = 1) => { if (dsf !== 1) throw Object.assign(Error('Timed out'), { code: 'RENDER_TIMEOUT' }); },
+    evaluate: async () => ({ ids: [], names: [], rects: [], facts: { '1:2': fact }, faces: {}, els: [], nodes: [], texts: {} }) }) }; };
+  const files = manifestOf(out).frames.map(f => f.html), r = await htmlCheck(cwd, files, parse(['html-check', ...files, '--zoom', z.id]).options, { launch });
+  const [p, q] = r.summary.pages;
+  assert.deepEqual([p.zoom.reason, p.verdict, q.verdict, q.reason, launches], ['RENDER_TIMEOUT', 'pass-with-findings', 'pass-with-findings', undefined, 2]);
+});
+
+test('html-check restores override context from adjacent html.json with recovered/exact flags; missing context or manual page edits add separate warnings', async () => {
+  const cwd = await project(), { id } = await landRun(cwd), out = path.join(cwd, 'out'), file = path.join(cwd, 'o.json');
+  fs.writeFileSync(file, JSON.stringify({ '1:2': { '2:8': { bake: 'ref', note: 'n' } } }));
+  await html(cwd, args('--from', id, '--out', out, '--overrides', file, '--no-check'), quiet);
+  const page = manifestOf(out).frames[0].html, evidence = path.join(root(cwd), 'check', id, 'check.json');
+  const go = async () => { const r = await htmlCheck(cwd, [page], {}, { launch: checkStub() }); return { p: r.summary.pages[0], c: readJson(evidence) }; };
+  const ok = await go();
+  assert.deepEqual([ok.p.context, ok.c.context, ok.p.warnings, ok.p.refs.map(x => x.node)], [{ overrides: 'recovered', exact: true }, { overrides: 'recovered', exact: true }, undefined, ['2:8']]);
+  fs.appendFileSync(page, '<!-- \u624b\u6539 -->');
+  const edited = await go();
+  assert.deepEqual([edited.p.context, edited.p.warnings], [{ overrides: 'recovered', exact: false }, ['Page differs from the regenerated output (page was edited); diagnostics use the regenerated output']]);
+  fs.rmSync(path.join(out, 'html.json'));
+  const lost = await go();
+  assert.deepEqual(lost.p.context, { overrides: 'unavailable', exact: false });
+  assert.match(lost.p.warnings[0], /^Page has overrides \([0-9a-f]{12}\) but no file with the same fingerprint was found; diagnostics use the output generated without overrides$/);
 });
 
 test('bin caps user-derived long error text at 2000 characters while stdout remains one JSON under 16 KiB', async () => {
@@ -378,12 +390,13 @@ test('Injected browser failures mark the current frame unchecked and replace the
       if (step.launch) throw coded(step.launch);
       return { version: 'Fake/1', close: async () => { log.closed.push(n); }, page: async () => ({ browser: { version: 'Fake/1' },
         open: async () => { if (step.open) throw coded(step.open); }, shot: async () => step.shot ?? white,
-        evaluate: async () => ({ ids: [], names: [], rects: [] }), close: async () => { log.pageClosed++; } }) };
+        evaluate: async () => ({ ids: [], names: [], rects: [], facts: {}, faces: {}, els: [], nodes: [], texts: {} }), close: async () => { log.pageClosed++; } }) };
     };
     return { launch, log };
   };
   const cases = [
-    ...['CHROME_PROTOCOL', 'CHROME_EXITED'].map(code => ({ plan: [{ open: code }], frames: [['unchecked', code, false, false], ['clean', undefined, true, true]], launches: 2, closed: [0, 1] })),
+    // Stub pages lack data-node elements, so structure reports missing and otherwise healthy frames are pass-with-findings.
+    ...['CHROME_PROTOCOL', 'CHROME_EXITED'].map(code => ({ plan: [{ open: code }], frames: [['unchecked', code, false, false], ['pass-with-findings', undefined, true, true]], launches: 2, closed: [0, 1] })),
     { plan: [{ open: 'RENDER_TIMEOUT' }], frames: [['unchecked', 'RENDER_TIMEOUT', true, true], ['unchecked', 'RENDER_TIMEOUT', false, false]], launches: 1, closed: [0] },
     { plan: [{ launch: 'CHROME_LAUNCH_FAILED' }], frames: [['unchecked', 'CHROME_LAUNCH_FAILED', false, false], ['unchecked', 'CHROME_LAUNCH_FAILED', false, false]], launches: 1, closed: [] },
   ];
@@ -551,15 +564,20 @@ test('A write failure after second-extract timeout records both task IDs and res
 // -- Requires Chrome ------------------------------------------------------
 let chrome = '';
 try { findChrome(); } catch (error) { chrome = `${error.code}: ${error.message}`; }
-test('Check and html-check persist task evidence matching check.json; replacing the reference with the render makes both clean with exit 0', { skip: chrome || false, timeout: 60000 }, async () => {
+test('Check and html-check persist task evidence matching check.json; replacing the reference with the render makes both clean except local-font findings, with exit 0', { skip: chrome || false, timeout: 60000 }, async () => {
   const cwd = await project(), { id, dir, output } = await landRun(cwd), out = path.join(cwd, 'out'), evidence = path.join(root(cwd), 'check', id);
   await html(cwd, args('--from', id, '--out', out), quiet);
   const m = manifestOf(out), f = m.frames[0], c = readJson(path.join(evidence, 'check.json'));
-  assert.deepEqual([fs.readdirSync(evidence).sort(), f.verdict, f.diffRatio, f.check], [['check.json', 'diff.png', 'render.png'], c.verdict, c.diffRatio, path.join(evidence, 'check.json')]);
+  const images = c.blocks.flatMap(b => b.image ? [b.image] : []);
+  assert.ok(images.length === Math.min(c.blocks.length, 10), 'Each of the first 10 structural blocks has a crop image');
+  assert.deepEqual([fs.readdirSync(evidence).sort(), f.verdict, f.diffRatio, f.check], [[...images, 'check.json', 'diff.png', 'render.png'].sort(), c.verdict, c.diffRatio, path.join(evidence, 'check.json')]);
   assert.ok(m.browser.version.length > 0 && m.browser.launchMs >= 0);
   const hc = await htmlCheck(cwd, [f.html]), [p] = hc.summary.pages;
-  assert.deepEqual([p.diffRatio, p.verdict, Object.keys(hc.summary.totals)], [f.diffRatio, f.verdict, ['pages', 'clean', 'passWithFindings', 'fail', 'unchecked']]);
+  assert.deepEqual([p.diffRatio, p.verdict, p.context, Object.keys(hc.summary.totals)], [f.diffRatio, f.verdict, { overrides: 'none', exact: true }, ['pages', 'clean', 'passWithFindings', 'fail', 'unchecked', 'errors']]);
   fs.copyFileSync(path.join(evidence, 'render.png'), path.join(dir, output.reference.file));
-  const again = await html(cwd, args('--from', id, '--out', out), quiet);
-  assert.deepEqual([manifestOf(out).frames[0].verdict, again.exitCode, (await htmlCheck(cwd, [f.html])).exitCode], ['clean', 0, 0]);
+  const again = await html(cwd, args('--from', id, '--out', out), quiet), g = manifestOf(out).frames[0];
+  // Missing local SF Pro Text, PingFang SC, or Kanit causes substitution findings and pass-with-findings, still exit 0.
+  assert.deepEqual([g.verdict, again.exitCode, (await htmlCheck(cwd, [f.html])).exitCode], [g.fonts.some(x => x.substituted) ? 'pass-with-findings' : 'clean', 0, 0]);
+  assert.ok(g.fonts.every(x => typeof x.substituted === 'boolean'), JSON.stringify(g.fonts));
+  assert.deepEqual(fs.readdirSync(evidence).sort(), ['check.json', 'diff.png', 'render.png'], 'A later check without structural blocks removes old block images');
 });

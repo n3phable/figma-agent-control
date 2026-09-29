@@ -237,13 +237,178 @@ iframe 与执行代码使用 postMessage。每个任务都有随机 `channelNonc
 
 ## HTML 导出
 
-`html [--node <id>]... [--from <extract-id>]... --out <dir>` 接受合计 1–50 个不重复画框。`--from` 使用本项目已成功保存的 scale-1 extract。`--overrides` 提供按画框分组的修正；`--no-check` 跳过 Chrome 比较。
+`html` 根据 extract 生成自包含 HTML，并与同一次 extract 的参考图比对。`html-check` 重新检查已有页面。生成与比图都在 CLI 进程运行；只有 `html --node` 提交桥接任务。比图需要 Chrome，可通过 `FIGMA_AGENT_CONTROL_CHROME` 配置；`html --no-check` 不需要 Chrome。
 
-`<out>/html.json` 记录 `frames`、`done`、`pending`、`remaining`、`instruction`、`exitCode` 及生成/检查指纹。生成页面保存 extract 标识；比较产物放在 `.figma-agent-control/check/<extract-id>/`，包括 `check.json` 和成功时的 `render.png`、`diff.png`。
+### 处理顺序
 
-`--timeout` 为 1–300 秒，默认 30；`--budget` 为 10–600 秒，默认 90，只计算提取提交/等待。续跑命令保留完整批次和原选项。退出 `2` 表示还有 pending 或 remaining；退出 `1` 表示检查失败、错误或需要处理的结果；退出 `0` 表示当前配置下完成。
+1. 写文件前预检全部输入：必须提供 `--out`，`--node` 与 `--from` 合计 1–50 个不同画框，`--from` 必须指向本地倍率为 1 的 extract 任务，overrides 文件有效，每帧 SVG 烘焙 ID 不超过 500 个。
 
-`html-check <page.html>...` 接受 1–50 个带 metadata 的 scale-1 页面，并在生成它们的项目中读取原 extract 进行比较。
+2. 先处理 `--from`，再处理 `--node`，各组内保持给定顺序。通常一帧出错只影响该帧。
+
+3. 不等待地读取已有 extract，或提交并等待新 extract。新提取包含要求 SVG 烘焙的孤岛，每个都占用桥接唯一的任务槽位。
+
+5. 如果生成结果缺少需要的 SVG 孤岛，`--node` 帧可带这些 ID 与有效的显式 SVG 烘焙节点再提取一次；`--from` 帧只标记 `needsExtract`。第二次提取失败、超时、超限或仍缺孤岛时，保留第一次提取作为页面依据，记录 `second-extract-failed` 近似项与警告。
+
+6. 写出页面；未禁用检查时执行检查；记录该帧。
+
+7. 整批结束后重写 `<out>/html.json`。如果命令被外部终止，可能已有完成的页面/证据，但没有最终清单。
+
+### 输出文件
+
+输出目录不存在时，以权限 `0700` 创建。页面名为 `<safe-name>__<node-part>.html`。安全名替换 `\/:*?"<>|` 和控制字符，移除开头空白/点以及末尾空白，在不拆分码点的前提下限制为 120 UTF-8 字节；空名称改为 `frame`。节点 ID 的分隔符替换为连字符。文件名超过 200 字节时，节点部分改为该节点 ID 的 SHA-256 前十二个十六进制字符。
+
+写入前，FAC 删除输出目录顶层中同一节点但文件名不同的旧页面。只有前 16 KiB 内带可识别元数据的普通 HTML 文件符合条件；符号链接、子目录和无关文件不动。
+
+检查证据位于 `check/<extract-job-id>/`：包含 `check.json`，成功时的 `render.png` 与 `diff.png`，以及最多十张 `block-<n>.png`，各由参考图/渲染图/差分图裁切组成。Zoom 另写 `zoom-<node-part>/{figma,html,diff}.png`。重新检查会覆盖上次报告并删除旧结构块图片。普通检查不删除已有 zoom 目录。Chrome 启动或协议失败时，可能只有清单中的帧记录，而没有 `check.json`。
+
+### 页面元数据
+
+```html
+<meta name="figma-agent-control" content="extract=<job-id>; node=<frame-id>; scale=<scale>; overrides=<fingerprint>; generator=<fingerprint>">
+```
+
+Overrides 指纹为文件字节 SHA-256 的前十二个十六进制字符，或 `none`。生成器指纹由 [css.mjs](../../src/html/css.mjs) 和 [generate.mjs](../../src/html/generate.mjs) 的源码计算。节点元数据用于识别改名页面，extract 元数据用于定位证据。Overrides 元数据允许从相邻清单恢复配置；generator 元数据用于区分源码变化与页面手工编辑。
+
+### `html.json`
+
+清单只描述本次调用，每次整体重写。
+
+| 字段 | 含义 |
+|---|---|
+| `schema`, `generator`, `checker` | Schema `1` 与源码指纹 |
+| `browser` | Chrome 启动成功时的 `{version,launchMs}` |
+| `overrides` | `{file,sha}`，或 `none` |
+| `out` | 绝对输出目录 |
+| `frames` | 有序帧记录 |
+| `totals` | 帧判定计数、错误/缺孤岛帧数、陈旧条目数、近似项计数、top 节点几何计数和字体汇总 |
+| `done`, `pending`, `remaining`, `stop` | 续跑状态 |
+| `instruction`, `exitCode` | 完整的下一步指引与退出码 |
+| `ms` | 总耗时与字体索引耗时 |
+
+每帧记录：
+
+| 字段 | 含义 |
+|---|---|
+| `node`, `name`, `source` | 节点、名称与 `from`/`node` 来源 |
+| `extract`, `extracts` | 实际用于生成的 extract；尝试过第二次提取时给出有序任务列表 |
+| `html`, `check`, `size` | 绝对页面/报告路径和预期尺寸 |
+| `verdict`, `reason`, `diffRatio`, `top` | 检查结果与诊断；结构块数量和 top 节点几何发现给出汇总 |
+| `approximations`, `approximationNodes` | 计数与 `{node,kind,detail?}` 明细 |
+| `needsIsland`, `needsExtract` | 缺失孤岛，以及已有 extract 需要重新提取的标记 |
+| `glassDefaults` | GLASS 绑定了库变量，却仍为全默认参数；库数据可能尚未加载 |
+| `overrides` | 提供 overrides 文件时，记录已应用节点和陈旧条目 |
+| `fonts` | 声明名称、度量来源、Figma 缺字体状态，以及检查后 Chrome 实际使用/替代情况 |
+| `warnings`, `violations` | 提取/生成问题与生成器输出不变量违例 |
+| `error` | `{code,message}`；页面生成前失败时只保留已知身份/来源/extract 字段和 error |
+| `ms` | 提取、生成、写入与检查耗时 |
+
+错误包括 `EXTRACT_REJECTED`、确定性 `EXTRACT_FAILED` 和 `EXTRACT_INTERRUPTED`；其他失败保留其异常代码。
+
+### Overrides
+
+Overrides 文件先按画框 ID、再按节点 ID 分组。两层都要求冒号格式 ID（`1:2`、`I1:2;3:4`），不能用 URL 中的连字符格式。写入前校验所有分组，包括本次不导出的分组；未启用的分组既不应用，也不标记陈旧。
+
+```json
+{
+  "12:34": {
+    "12:40":{"style":{"transform":"translate(12px,601px)"},"basis":{"transform":"translate(12px,603px)"},"note":"Move title up 2 px"},
+    "12:41":{"bake":"svg","note":"Gradient stroke"},
+    "12:42":{"skip":true,"note":"Annotation layer"},
+    "12:43":{"bake":"ref","note":"Background-dependent glass search box"}
+  }
+}
+```
+
+条目只允许 `style`、`basis`、`skip`、`bake`，以及必填且非空的 `note`。Style/basis 把符合 `-?[a-z][a-z-]*` 的 CSS 属性名映射到字符串。值必须是安全的单条声明值：不含分号/花括号、换行、反斜杠、引号、注释开头或 `url(`，圆括号和方括号必须配平。这可防止吞掉后续声明或引入外部资源。`skip` 为布尔值，`bake` 为 `svg` 或 `ref`；ref 条目只允许另带 `note`。
+
+| 键 | 效果 |
+|---|---|
+| `style` | 覆盖生成的声明；空字符串删除属性。位置始终用 `transform` 表示，包括实际输出为 left/top 的容器 |
+| `basis` | 应用前比较原始生成声明；未设置的属性视为空字符串。任一不符即跳过整条。省略表示无条件应用 |
+| `skip` | 省略节点及其子树 |
+| `bake:"svg"` | 使用 Figma 导出的节点 SVG，必要时追加提取请求 |
+| `bake:"ref"` | 省略节点/子树，按倍率放大并向外取整其 render bounds，从参考图裁切后放在画布上方；判定不能为 clean |
+
+未使用条目进入 `overrides.stale`，形状为 `{node,kind,reason?}`，计入 `totals.stale`；没有续跑工作时，它会使退出码为 `1`：
+
+| 种类 | 含义 |
+|---|---|
+| `missing` | 节点不在提取到的可见树中 |
+| `changed` | basis 不匹配；reason 列出属性 |
+| `invalid` | 条目无法影响输出：`root`、`no-render-bounds`、`reference-size`、`inside-ref` 或 `not-emitted` |
+
+参考图裁切会冻结矩形内全部可见内容，包括目标子树以外的内容。后代 overrides 无法应用，记为 `inside-ref`。诊断必须明确保留这项限制。
+
+### `check.json`
+
+| 字段 | 含义 |
+|---|---|
+| `verdict`, `reason` | 判定结果，以及检查不可用的原因 |
+| `expected`, `reference`, `sizeNote` | 取整后的预期尺寸与实际参考图尺寸。相差一像素时按参考图比较并标 `fractional`；差异更大时不比较 |
+| `mismatched`, `aa`, `diffRatio` | 排除抗锯齿后的差异像素数、抗锯齿像素数，以及差异占整帧面积比例 |
+| `blocks` | 密集差异区域 `{x,y,w,h,diffPx,bboxPx,nodes,image?}`，附前三个贡献节点 |
+| `nodes`, `unattributed` | HTML 侧逐节点差异归因与无归属像素 |
+| `top` | 按 HTML/Figma 两侧贡献最大值排名的前五个节点，排除根/ref 节点；包含 `px`、`htmlPx`、`figmaPx`，以及可选的 gap、shift/fix、flat 定位、几何、字体、近似项和 hint |
+| `focus` | html-check 点名节点，诊断形状与 top 相同 |
+| `fonts`, `cause` | Chrome 实际字体与替代情况。只有受影响节点占整帧至少一半差异像素，才标记 `font-substitution` 原因 |
+| `untracked`, `missing`, `textMismatch` | 页面出现未知 data-node ID、缺少预期元素，或 `{node,figma,html}` 内容不符 |
+| `refs`, `bakedShare` | 参考图裁切矩形、面积占比、覆盖内容、差异像素、边缘接缝，以及矩形并集面积占比 |
+| `suggest`, `clusters`, `hints` | 依赖背景的 ref 建议、分组、不提供建议的原因、替换条目和接缝警告 |
+| `zoom` | 放大比对与证据子目录 |
+| `context` | 仅 html-check：overrides 恢复状态与重新生成是否逐字节相同 |
+| `browser`, `checker`, `ms` | Chrome 配置、检查器指纹和耗时 |
+
+几何类型为 `box`、`wrap`、`content-offset`、`overflow`，以及只报告的 `ink-offset`。判定规则如下：
+
+- `fail`：`diffRatio > 0.02`。
+
+- `pass-with-findings`：差异比例达标，但仍有结构块、参考图裁切、字体替代、top 节点阻断几何问题、结构问题或已触发的近似项簇。
+
+- `clean`：没有上述任何情况。Focus 和 zoom 不参与判定。
+
+- `unchecked`：无法执行比对。检查报告可出现 `REFERENCE_SIZE` 与 `RENDER_TIMEOUT`。Chrome 查找/启动失败后，本次不再检查；协议/退出失败只影响当前帧，下一帧可用新浏览器。渲染超时后，本次剩余帧也标为 unchecked。
+
+HTML 比图使用 pixelmatch 风格的 YIQ 比较和抗锯齿处理，run 验收采用严格像素变化检测。结构与字体检查补充 HTML 差异比例。
+
+### 中断与续跑
+
+| Extract 结果 | 处理方式 |
+|---|---|
+| `409 RECONNECTING` | 分别等待 1、2、4 秒重试，之后停止 |
+| `409 ACTIVE_JOB` | 不抢占，停止并记录 `stop.active` |
+| 其他 `409`，或桥接访问失败 | 停止并要求先修复环境；指引优先说明该动作 |
+| 其他提交拒绝 | 记录该帧 `EXTRACT_REJECTED`，继续 |
+| 新 extract 等待到期 | 停止，任务 ID 进入 `pending`；原因为 `WAIT_TIMEOUT` 或 `BUDGET_EXPIRED` |
+| 已有 `--from` 没有结果 | 加入 pending，继续 |
+| 新 extract 中断 | 停止 |
+| 已有 extract 中断 | 记录帧错误，将节点加入 remaining，继续 |
+| 确定性提取失败 | 记录 `EXTRACT_FAILED`，不自动加入 remaining；重试前先检查限制/错误 |
+
+停止后，后续帧进入 `remaining`；当前帧也进入，除非已提交任务处于 pending。中断通过 session 模块的精确未执行说明，或恢复/核验证据识别，不能只看 `executionStarted:false`，因为确定性的 extract 失败也使用该值。
+
+`done` 列出已有页面、可复用的 extract ID，`pending` 列出未完成提取，`remaining` 列出需要重新提取的节点。第二次提取超时或停止时，保留在 pending/remaining，不能把第一版页面当作已经完成。
+
+`--timeout` 为每次 extract 等待的 1–300 秒，缺省 30。`--budget` 为提取提交/等待的 10–600 秒，缺省 90，从预检结束后开始计时。每次等待取两种上限中的较小值，向上取整且至少一秒。成功提交过一个新 extract 后，剩余不足一秒就不再提交下一个。基于已有 extract 的生成与检查不在该预算内。
+
+续跑指引覆盖整批，并保留 overrides、输出、no-check、timeout 和 budget 选项。可复用与 pending 任务使用 `--from`；remaining、缺页面、缺孤岛或 glass-default 帧使用 `--node`，不重复列出。先等待 pending 任务。只有续跑完成后适合进行修正时，才为缺失的 overrides 文件给占位路径。
+
+| 退出码 | `html` | `html-check` |
+|---|---|---|
+| `0` | 没有下列情况 | 全部页面已检查，且没有 fail/error |
+| `1` | 需要修复环境；或没有剩余工作，但仍有 errors/fail/unchecked/stale/缺孤岛/违例 | 任一页面 error、fail 或 unchecked |
+| `2` | 有 pending/remaining，且未因环境修复而停止 | 不使用 |
+
+预检错误退出 `1`。`--no-check` 有意不生成判定，本身不导致失败。`glassDefaults` 也不影响退出码，但下一条命令会要求重新提取。
+
+### `html-check`
+
+输入为 1–50 个页面，可重复提供 `--node`，并提供一次 `--zoom`。它不连接 Figma，也不编辑页面。应在拥有 extract 证据的项目中执行。
+
+预检要求页面可读、带元数据，并来自当前项目中可用的倍率为 1 的 extract。每个 focus 节点必须属于输入帧之一。Zoom 任务必须是已完成的 extract，倍率大于 1 且不超过 4，参考图可解码，目标位于帧内且没有旋转。任一预检失败都会在检查前停止；Chrome 启动失败也会停止。
+
+诊断上下文从原始 extract 重新生成。只有指纹匹配时，才通过相邻清单恢复 overrides；否则不带 overrides 诊断，并报告 `context.overrides: "unavailable"`。页面或生成器变化会产生 `context.exact:false` 并追加警告。诊断使用重新生成的上下文，实际页面 refs 则从页面本身读取。
+
+Focus 为前五名之外的指定节点提供位移、几何与字体分析。Zoom 在第一张包含目标的页面上，以 `1/scale` CSS 像素精度比较。两者均不影响帧判定。证据覆盖普通检查目录；非浏览器类的逐页异常会记录为该页错误，然后继续下一页。
 
 ## CLI 输出
 
@@ -258,6 +423,8 @@ Stdout 只包含一个 JSON 对象。错误形状为 `{error,code}`，错误文�
 | `completed` | 结果已落盘 |
 | `needs-review` | 恢复证据要求执行给出的核验动作 |
 | `resolved` | 已核验，但原执行结果仍然未知 |
+
+HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内，完整清单/报告保留在磁盘。HTML 最多展开十个需要关注的帧，每帧 top、suggestions、hints、refs、stale 各最多三项；超限时依次去掉详情、帧列表和续跑列表，最终只指向 `html.json`。字体表最多展开十行。html-check 同样逐级去掉详情，再只保留非 clean 页面，最后去掉页面列表；完整 focus、context 和 warnings 留在逐页报告。
 
 | 退出码 | 通用命令 |
 |---|---|

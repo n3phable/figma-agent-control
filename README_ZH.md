@@ -12,7 +12,7 @@ Figma Agent Control（FAC）通过 localhost 桥接，把本地 CLI 连接到 Fi
 
 - **读取与编辑设计：** 查看节点树和变量，导出 PNG 预览，使用可复用的库和 JSON 输入执行 Plugin API 脚本。
 
-- **导出静态 HTML：** 生成嵌入资源的嵌套 DOM，在 Chrome 中比图，并应用有记录的 overrides。
+- **导出静态 HTML：** 生成嵌入资源的嵌套 DOM，在 Chrome 中比图，按节点定位差异，并应用有记录的 overrides。
 
 ## 环境要求
 

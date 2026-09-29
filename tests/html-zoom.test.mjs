@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs, node:os, node:path, node:url, ../src/html/zoom.mjs, ../src/html/chrome.mjs, ../src/png.mjs.
+ * [INPUT]: Imports node:test, node:assert/strict, node:fs, node:os, node:path, node:url, ../src/html/zoom.mjs, ../src/html/check.mjs, ../src/html/chrome.mjs, ../src/png.mjs.
  * [OUTPUT]: Node.js test cases and fixture setup for this revision.
  * [POS]: Regression coverage for html zoom; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { zoomTarget, renderZoom, zoomCompare } from '../src/html/zoom.mjs';
+import { check, writeEvidence } from '../src/html/check.mjs';
 import { findChrome, launch } from '../src/html/chrome.mjs';
 import { decodePng, encodePng } from '../src/png.mjs';
 
@@ -35,7 +36,27 @@ test('zoomTarget requires scale (1,4] and an in-frame unrotated node, allows ref
   assert.deepEqual(zoomTarget(frame(), zoomOf('3:1', 2, 41, 20)).warnings, ['Node size changed between the two extracts: 40x20 in the frame, 41x20 in the zoom job']);
 });
 
+test('Wrong zoom-reference size, ref overlap, or missing elements do not open a page; zoom timeout records only zoom.reason and preserves the 1x report', async () => {
+  let opened = 0;
+  const idle = { open: async () => { opened++; }, shot: async () => Buffer.alloc(0), evaluate: async () => ({}) };
+  const target = zoomTarget(frame(), zoomOf('3:1', 4)), reference = solid(160, 80, [255, 0, 0, 255]), placement = { style: 'transform:translate(30px,10px)', chain: [1, 0, 0, 1] };
+  const base = { node: '3:1', extract: 'e', scale: 4, size: [160, 80], dir: 'zoom-3-1' };
+  const run = extra => zoomCompare(idle, { url: 'about:blank', target, extract: 'e', reference, placement, inRef: false, ...extra });
+  assert.deepEqual(await run({ reference: solid(158, 80, [0, 0, 0, 255]) }), { result: { ...base, size: [158, 80], expected: [160, 80], reason: 'REFERENCE_SIZE' } });
+  assert.deepEqual(await run({ inRef: true }), { result: { ...base, reason: 'IN_REF' } });
+  assert.deepEqual(await run({ placement: undefined }), { result: { ...base, reason: 'NOT_RENDERED' } });
+  assert.equal(opened, 0);
 
+  // Through check: 1x succeeds but opening at dsf != 1 times out; a ref inside 3:1's subtree yields IN_REF.
+  const white = solid(100, 40, [255, 255, 255, 255]), fact = { found: true, box: [30, 10, 40, 20], style: 'transform:translate(30px,10px)', chain: [1, 0, 0, 1] };
+  const stub = { browser: { version: 'fake' }, shot: async () => white, open: async (url, w, h, dsf = 1) => { if (dsf !== 1) throw Object.assign(Error('\u8d85\u65f6'), { code: 'RENDER_TIMEOUT' }); },
+    evaluate: async () => ({ ids: [], names: [], rects: [], facts: { '3:1': fact }, faces: {}, els: [], nodes: ['0:1', '3:1', '3:4'], texts: {} }) };
+  const input = refs => ({ url: 'about:blank', reference: white, expected: { width: 100, height: 40 }, refs,
+    frame: { output: frame(), result: { approximations: [], overrides: { applied: [] }, fonts: [] }, overrides: {}, zoom: { target, extract: 'e', reference } } });
+  const late = (await check(stub, input([]))).report;
+  assert.deepEqual([late.verdict, late.mismatched, late.zoom, Number.isInteger(late.ms.zoom)], ['clean', 0, { ...base, reason: 'RENDER_TIMEOUT' }, true]);
+  assert.equal((await check(stub, input([{ node: '3:4', rect: [30, 10, 31, 11] }]))).report.zoom.reason, 'IN_REF');
+});
 
 test('zoomCompare skips search and hints for identical images even above the search-area limit', async () => {
   const big = solid(500, 500, [9, 9, 9, 255]), page = { open: async () => {}, evaluate: async () => {}, shot: async () => big };
@@ -78,5 +99,22 @@ describe('Zoom comparison (requires Chrome)', () => {
     }
   });
 
-  
+  test('zoomCompare self-comparison has no shift; a 0.5 px downward offset yields dy=-0.5 and a restoring fix; writeEvidence saves three zoom-<node>/ images', needs, async () => {
+    const target = { node: '3:1', k: 4, box: [30, 10, 40, 20], expected: { width: 160, height: 80 }, warnings: [] };
+    const reference = await renderZoom(tab, url('ref.html', page(0)), target, { width: 160, height: 80 });
+    const style = y => `transform:translate(20px,${y}px);width:40px;height:20px`;
+    const same = await zoomCompare(tab, { url: url('same.html', page(0)), target, extract: 'e', reference, placement: { style: style(0), chain: [1, 0, 0, 1] }, inRef: false });
+    assert.deepEqual([same.result.mismatched, same.result.shift, same.result.fix], [0, undefined, undefined]);
+    const moved = await zoomCompare(tab, { url: url('moved.html', page(0.5)), target, extract: 'e', reference, placement: { style: style(0.5), chain: [1, 0, 0, 1] }, inRef: false });
+    const r = moved.result;
+    assert.ok(r.mismatched > 1000, `${r.mismatched}`);
+    assert.deepEqual([r.shift.dx, r.shift.dy, r.fix, r.flat, r.dir], [0, -0.5, { style: { transform: 'translate(20px,0px)' }, basis: { transform: 'translate(20px,0.5px)' } }, undefined, 'zoom-3-1']);
+    assert.ok(r.shift.after < r.shift.before * 0.1, JSON.stringify(r.shift));
+    const out = path.join(dir, 'evidence'), one = encodePng(1, 1, new Uint8Array(4));
+    fs.mkdirSync(out);
+    await writeEvidence(out, { blocks: [] }, { width: 1, height: 1, render: one, diff: new Uint8Array(4), ref: new Uint8Array(4), act: new Uint8Array(4), zoom: moved.images });
+    assert.deepEqual(fs.readdirSync(path.join(out, 'zoom-3-1')).sort(), ['diff.png', 'figma.png', 'html.png']);
+    assert.deepEqual(fs.readFileSync(path.join(out, 'zoom-3-1', 'figma.png')), reference);
+    assert.deepEqual(['html', 'diff'].map(n => { const p = decodePng(fs.readFileSync(path.join(out, 'zoom-3-1', `${n}.png`))); return [p.width, p.height]; }), [[160, 80], [160, 80]]);
+  });
 });

@@ -70,6 +70,6 @@ Save recurring script sequences and stop at the first nonzero status. An unfinis
 
 ## Export and deliver
 
-Use `html --node <frame-id> --out <directory>` for static HTML. Read the manifest and comparison evidence, keep corrections in an overrides file, and follow the full-batch continuation instruction on exit `2`.
+Use `html --node <frame-id> --out <directory>` for static HTML, roughly ten frames per batch. Follow the returned full-batch resume instruction. Put corrections only in an overrides file; do not hand-edit generated HTML or hide systematic defects with reference crops. Review geometry, fonts, text correspondence, and remaining visual blocks as described in the [HTML guide](../../docs/agent-guide.md#exporting-html).
 
 Keep `.figma-agent-control/` out of version control; it contains design evidence and credentials. Retain unreviewed jobs and deliver only needed artifacts. Stop bridges started for the task when they are no longer needed. `report --since <ISO-time>` can summarize the session.

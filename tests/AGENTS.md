@@ -20,6 +20,7 @@ Behavioral tests for the implementation in this revision.
 - `html-match.test.mjs`: Tests for html match behavior in this revision.
 - `html-render.test.mjs`: Tests for html render behavior in this revision.
 - `html-suggest.test.mjs`: Tests for html suggest behavior in this revision.
+- `html-summary.test.mjs`: Tests for html summary behavior in this revision.
 - `html-zoom.test.mjs`: Tests for html zoom behavior in this revision.
 - `plugin.test.mjs`: Tests for plugin behavior in this revision.
 - `png.test.mjs`: Tests for png behavior in this revision.

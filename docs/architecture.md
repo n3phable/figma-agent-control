@@ -99,6 +99,34 @@ The plugin extracts API facts; frequently changing CSS generation rules remain o
 
 Background-dependent effects need special handling: an SVG export does not include the underlying scene. Automatic island selection avoids them, and the host independently vetoes unsafe inlining unless an override explicitly requests it. Reference baking is different: it crops the complete reference rectangle, freezes the visible content there, and must remain a reported limitation.
 
+## HTML generation and diagnostics
+
+Generation is deterministic: [page.mjs](../src/html/page.mjs) reads environment-dependent inputs and passes data to [generate.mjs](../src/html/generate.mjs); [css.mjs](../src/html/css.mjs) maps values without I/O or mutable state. Image placeholders are embedded afterward. The generator fingerprint records source changes.
+
+The DOM follows the Figma hierarchy instead of flattening the canvas. This preserves clipping, masks, group opacity, and compositing relationships. Transform-created stacking contexts can isolate blending, so suitable translation-only containers use left/top while the override contract remains transform-based. SVG islands and reference bakes replace their subtrees.
+
+Font discovery parses sfnt tables, TTC collections, and named variable-font instances without runtime packages. It currently searches macOS user/system font directories. Other platforms can run host tests, but missing metrics/fonts can affect browser fidelity. Substitution is measured and reported rather than hidden.
+
+[check.mjs](../src/html/check.mjs) owns sequencing and verdicts, delegating diagnostics:
+
+| Module | Question answered |
+|---|---|
+| [match](../src/html/match.mjs) | Which pixels differ, excluding expected antialiasing differences, and where do they form dense blocks? |
+| [attrib](../src/html/attrib.mjs) | Which node owns each mismatch on the HTML and Figma sides? |
+| [shift](../src/html/shift.mjs) | Would a local translation help, and what transform/basis expresses it? |
+| [layout](../src/html/layout.mjs) | Did browser geometry, wrapping, overflow, and actual font usage match? |
+| [structure](../src/html/structure.mjs) | Are expected nodes and exact text present, with intended baked/omitted subtrees exempted? |
+| [suggest](../src/html/suggest.mjs) | Is a background-dependent reference crop justified, and will it introduce seams? |
+| [zoom](../src/html/zoom.mjs) | What differs in a magnified isolated node? |
+
+Attribution uses both sides because the HTML side alone cannot assign pixels where content is missing. Both sides share rasterization and paint-order rules. Structural text checks catch mistakes a low-contrast pixel score might miss. Suggested crops are recomputed through the generator so proposal geometry agrees with applied output.
+
+Run verification and HTML comparison deliberately use different definitions. Run's `diffPng` asks whether pixels changed, with zero default channel threshold. HTML comparison asks how two renderers agree, using the pixelmatch-derived YIQ threshold and separate antialiasing classification. Combining them would either miss small edits or overcount normal renderer differences.
+
+The Chrome client uses a debugging pipe rather than an exposed debugging port, fixes software rasterization/sRGB, bounds commands and waits, and cleans only its owned process/profile. Each page has a separate browser context. Unexpected exit/protocol errors reject pending commands. Normal signals trigger cleanup; SIGKILL can still leave a temporary profile.
+
+Overrides are the only supported manual correction channel. Entire files are validated up front, and basis values make stale corrections visible. `html-check` reconstructs context from saved extraction and fingerprints; modified pages or unavailable matching overrides produce explicit warnings. Focus/zoom diagnostics do not alter the overall verdict.
+
 ## Type checking and tests
 
 Runtime executes `.mjs`/`.js` source directly; JSDoc is checked with lockfile-pinned TypeScript and typings. The source bytes tested in VM are the bytes installed in Figma.
@@ -121,15 +149,3 @@ CSS shadow shape and spread remain approximations. Compare exported pixels, espe
 ## Child paint order
 
 Generation follows extracted child order. Compare reversed Auto Layout stacking with the reference image.
-
-## HTML modules
-
-- match compares decoded PNG pixels with antialiasing-aware YIQ differences.
-- fonts reads local font names and metrics for the rendering pipeline.
-- css maps extracted paint, geometry and text properties to CSS without I/O.
-- generate builds nested DOM and asset placeholders from extracted facts and supplied font metrics.
-- page resolves assets and font inputs, invokes the generator and assembles self-contained pages; overrides validates frame-keyed correction data.
-- attrib assigns differences to node contributions; shift searches nearby translations using those masks.
-- layout and structure compare collected browser geometry, text and node presence against extraction facts.
-- suggest proposes reference-image crops for background-dependent components and checks crop-edge seams.
-- zoom compares an isolated node using a magnified reference and supplied browser renderer.

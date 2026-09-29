@@ -79,7 +79,7 @@ try {
   else if (command === 'image-diff') { const diff = await imageDiff(cwd, positionals, o); out(diff); if (diff.expectation === 'failed') process.exitCode = 1; }
   else if (command === 'report') out(await report(cwd, o.since ? { since: o.since } : {}));
   else if (command === 'html' || command === 'html-check') {
-    const { summary, exitCode: code } = command === 'html' ? await html(cwd, o) : await htmlCheck(cwd, positionals);
+    const { summary, exitCode: code } = command === 'html' ? await html(cwd, o) : await htmlCheck(cwd, positionals, o);
     out(summary); process.exitCode = code;
   }
 } catch (error) { const message = String(error.message); out({ error: message.length > 2000 ? message.slice(0, 1997) + '...' : message, code: error.code || 'COMMAND_FAILED' }); process.exitCode = 1; }
