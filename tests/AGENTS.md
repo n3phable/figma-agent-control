@@ -12,11 +12,16 @@ Behavioral tests for the implementation in this revision.
 - `contract-samples.mjs`: Check explicitly provided extraction evidence against its types.
 - `extract.test.mjs`: Tests for extract behavior in this revision.
 - `helpers/`: Isolated synthetic document, bridge and media fixtures.
+- `html-attrib.test.mjs`: Tests for html attrib behavior in this revision.
 - `html-cli.test.mjs`: Tests for html cli behavior in this revision.
 - `html-fonts.test.mjs`: Tests for html fonts behavior in this revision.
 - `html-generate.test.mjs`: Tests for html generate behavior in this revision.
+- `html-layout.test.mjs`: Tests for html layout behavior in this revision.
 - `html-match.test.mjs`: Tests for html match behavior in this revision.
 - `html-render.test.mjs`: Tests for html render behavior in this revision.
+- `html-suggest.test.mjs`: Tests for html suggest behavior in this revision.
+- `html-summary.test.mjs`: Tests for html summary behavior in this revision.
+- `html-zoom.test.mjs`: Tests for html zoom behavior in this revision.
 - `plugin.test.mjs`: Tests for plugin behavior in this revision.
 - `png.test.mjs`: Tests for png behavior in this revision.
 - `project-session.test.mjs`: Tests for project session behavior in this revision.

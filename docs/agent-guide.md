@@ -210,17 +210,58 @@ Do not base64-encode exports into strings. Byte values nested anywhere in the re
 
 ## Exporting HTML
 
-`html` generates fixed-size, self-contained HTML from frames or saved extracts. Chrome compares it with the reference from the same extract by default; `--no-check` only generates.
+`html` generates fixed-size, self-contained HTML and compares it with a reference PNG from the same extract. Chrome is required for comparison; `--no-check` only generates. The [HTML protocol](protocol.md#html-export) defines the manifest and diagnostics.
 
 ```sh
-figma-agent-control html --node 12:34 --out out
-figma-agent-control html --from <extract-job-id> --out out
-figma-agent-control html-check <page.html>
+figma-agent-control inspect --depth 1
+figma-agent-control html --node 12:34 --node 12:56 --out out
 ```
 
-The complete manifest is `<out>/html.json`; comparison evidence is under `.figma-agent-control/check/<extract-job-id>/`. Record corrections with `--overrides <file.json>` and regenerate.
+Read `instruction` regardless of exit code. Its command covers the full batch: reusable extracts appear as `--from`, and frames needing a new extract appear as `--node`. Keep the original `--out` and options when resuming; `html.json` is rewritten as a complete manifest for that invocation.
 
-Read `instruction` first. On exit `2`, wait for the listed pending extracts, then run the full-batch continuation command. A batch accepts up to 50 frames, with a default 30-second extract wait and 90-second submission/wait budget.
+### Reading HTML diagnostics
+
+| Field | Interpretation |
+|---|---|
+| `verdict` | `fail` exceeds 2% differing pixels; `pass-with-findings` meets the pixel target but has diagnostic findings; `clean` has neither; `unchecked` was not compared |
+| `top` | Highest-difference nodes, ranked by the larger of HTML-side and Figma-side attribution |
+| `top[].hint`, `fix` | Translation-search result and, when useful, an override-ready transform with its original `basis` |
+| `suggest` | Candidate `bake:"ref"` entries; review the frozen area share and `textNodes` first |
+| `hints` | Reasons a suggestion was withheld, conflicts with existing overrides, or crop-edge seams |
+| `totals` | Counts of approximations, geometry findings, and fonts across the batch |
+
+`glass`, `background-blur`, `blend-shadow`, `blend-mode`, and `island-vetoed` are background-dependent approximations. `needs-island` requires Figma-rendered SVG; `--node` permits a second extract, while `--from` may mark `needsExtract`. Other approximations, such as unsupported paint or corner smoothing, remain explicit in `approximationNodes`.
+
+### Corrections
+
+Corrections belong in an overrides JSON file, grouped by frame ID and then node ID. Use colon-form IDs and explain every entry with `note`:
+
+```json
+{
+  "12:34": {
+    "12:80": {"style":{"transform":"translate(12px,601px)"},"basis":{"transform":"translate(12px,603px)"},"note":"Move the title up by the measured 2 px"},
+    "12:95": {"bake":"ref","note":"Glass button depends on the background"}
+  }
+}
+```
+
+Fix position and text before baking. Copy `top[].fix` into the correct frame group and preserve `basis`; a changed basis makes an entry stale instead of silently applying an outdated correction. Use `transform` even when the emitted page uses `left`/`top` for a blending container. Every group is validated, including frames not exported in this batch.
+
+Font substitution needs the correct local font, not an override. `figmaMissing` means Figma also substituted it. Report systematic generator defects: the same blocking geometry class across multiple frames, missing or mismatched text, or any output `violations`. Do not hide them with raster crops.
+
+- `bake:"svg"` delegates a non-background-dependent shape to Figma. A new extract may be needed. SVG does not include the underlying background.
+
+- `bake:"ref"` crops the reference image and places that rectangle above the canvas. It freezes everything visible in the rectangle, including text, and suppresses the target subtree. Descendant overrides become stale with `inside-ref`; review suggested `replaces` entries first. A frame using reference crops cannot be `clean`.
+
+- Never hand-edit generated HTML: the next run overwrites it, and `html-check` reports a regeneration mismatch. Avoid pixel-score tricks such as thickening strokes or freezing fixable text/position differences.
+
+For a specific node, use `html-check <page.html> --node <id>`. For magnified comparison, first run `extract --node <id> --scale 4`, then `html-check <page.html> --zoom <extract-job-id>`. Zoom requires scale above 1 and at most 4, an unrotated node, and available evidence. Focus and zoom do not alter the overall verdict. Run `html-check` in the project that generated the page; it does not connect to Figma.
+
+### Batching and stopping
+
+Use about ten frames per invocation even though the hard limit is fifty. Give separate batches separate output directories. On exit `2`, follow `instruction`: wait for pending extract IDs, then run the supplied full-batch command. The default extract wait is 30 seconds and the default submission/wait budget is 90 seconds.
+
+Stop when a frame is `clean`, when remaining findings have been visually reviewed and accepted as benign rendering differences, or after five correction rounds without convergence. In the last case, regenerate from the best overrides and document the remaining blocks. Exit `0` means the configured checks passed; include accepted visual findings and interaction checks in the delivery notes.
 
 ## Troubleshooting
 

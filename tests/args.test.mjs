@@ -109,11 +109,17 @@ test('html accepts repeated --node and --from totaling 1-50 frames, maps --from 
   ]) assert.throws(() => parse(['html', ...argv]), error => message.test(error.message), argv.join(' '));
 });
 
-test('html-check accepts 1-50 pages, rejects zero or 51 with usage, and accepts no options', () => {
-  const pages = n => Array.from({ length: n }, (_, i) => `p${i}.html`);
+test('html-check accepts 1-50 pages, normalizes up to 50 distinct --node values, and accepts --zoom once as a task ID', () => {
+  const pages = n => Array.from({ length: n }, (_, i) => `p${i}.html`), nodes = n => Array.from({ length: n }, (_, i) => ['--node', `1-${i + 1}`]).flat();
   assert.deepEqual(parse(['html-check', ...pages(50)]).positionals.length, 50);
   for (const n of [0, 51]) assert.throws(() => parse(['html-check', ...pages(n)]), usageOf('html-check'), String(n));
   assert.throws(() => parse(['html-check', 'a.html', '--no-check']), /^Error: Invalid arguments/);
+  assert.deepEqual(opts('html-check', 'a.html', '--node', '1-2', '--node', 'I1-3;4-5', '--zoom', ID), { targetNodeId: '1:2', nodes: ['1:2', 'I1:3;4:5'], zoomId: ID });
+  assert.deepEqual(opts('html-check', 'a.html', '--node', '1:2'), { targetNodeId: '1:2' });
+  assert.equal(opts('html-check', 'a.html', ...nodes(50)).nodes.length, 50);
+  for (const [argv, message] of [[nodes(51), /^--node takes at most 50 nodes, without duplicates$/], [['--node', '1:2', '--node', '1-2'], /^--node takes at most 50 nodes, without duplicates$/],
+    [['--node', 'x'], /^--node needs a valid node ID/], [['--zoom', 'abc'], /^--zoom must be an extract job ID \(lowercase UUID\): abc$/], [['--zoom', ID, '--zoom', ID2], /--zoom may be given only once/]])
+    assert.throws(() => parse(['html-check', 'a.html', ...argv]), error => message.test(error.message), argv.join(' '));
 });
 
 test('Commands other than preview reject repeated --node instead of silently writing to the last target', () => {
