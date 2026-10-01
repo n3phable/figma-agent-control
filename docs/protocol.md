@@ -67,6 +67,7 @@ The caller must use the CLI role.
 | `expect` | Run | `changed` or `unchanged` |
 | `tolerance` | Run with expect | Nonnegative changed-pixel allowance; default `0` |
 | `risk` | Run | `{level:"high", reason}` requires plugin-panel approval |
+| `cleanOnFail` | Run | Boolean; maps to CLI `--clean-on-fail` |
 | `requestId` | All | Lowercase UUID used as the job ID; the CLI exposes it on `run` |
 
 A repeated request ID returns the original job with HTTP `200` and `reused:true`. Binding, operation, source, libraries, target, depth, nodes, scale, data, effective high-risk reason, expectation, tolerance, islands, cleanup, and names must remain identical or submission returns `400`. Omitted cleanup and `false` are equivalent; an omitted target and an explicitly supplied bound node are not. `label` is not compared. This identity check precedes transient rejection conditions, so a repeated request can still retrieve its original job while disconnected or busy.
@@ -166,8 +167,17 @@ Atomic creation of `runs/<job-id>/result.json` is the sole completion commit poi
 | `after` | Partial-write snapshot, retained only after execution started and failed |
 | `bindingVerified` | Actually verified file, page, and node |
 | `undoBoundaries` | `before`, `after`, and optionally cleanup `clean` boundary outcomes |
+| `created`, `cleaned`, `cleanFailed` | Failed-script node tracking and cleanup results |
 | `warnings`, `binaryErrors` | Evidence/cleanup limitations and binary transport issues |
 | `pluginMs`, `approvalMs`, `finishedAt` | Execution timing excluding approval, approval timing, and landing time |
+
+### Failed-script node tracking
+
+The plugin listens to target-page `nodechange` CREATE/DELETE events during execution and excludes `origin: REMOTE`. Nested creation/deletion is reported at the highest parent. Registration failure adds a warning without preventing execution.
+
+With `cleanOnFail`, cleanup runs only after a successful closing boundary. It protects a node that existed on the target page before execution, or contains such a node. Successful deletions go to `cleaned`; protection/deletion failures go to `cleanFailed` with a reason. At least one deletion causes another Undo boundary, recorded in `undoBoundaries.clean`; a failed cleanup boundary warns that its deletions may merge into the next Undo step.
+
+Creation tracking excludes other pages and failures after the script body completed, such as serialization failure. New components may not emit CREATE events. Local user edits during execution are indistinguishable from script edits. Existing content moved in from another page is not covered by cleanup protection. Evidence/cleanup errors add warnings while preserving the original script error.
 
 ### Change sets
 
@@ -441,3 +451,11 @@ The bridge uses port 32523. Keep only one project bridge active on the machine. 
 ## Preparation ordering
 
 Target revalidation currently precedes the before-render and later preparation reads. Keep the target unchanged throughout preparation.
+
+## Failed-run cleanup
+
+A script-thrown failure reports surviving top-level nodes created on the target page. Inspect them before manual repair. --clean-on-fail can delete eligible new nodes as a separate Undo step; existing edits are not rolled back. Use inspection evidence to guide any remaining repair.
+
+### Creation-event timing
+
+Creation evidence depends on Figma delivering nodechange events. Inspect the target page after failure while event batches are settling.

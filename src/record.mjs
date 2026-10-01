@@ -136,9 +136,16 @@ const lostBinaries = (/** @type {RunRecord} */ record) => extractOk(record) && A
 /** @param {RunRecord} record */
 function instruction(record) {
   const { result } = record;
-  if (result?.ok === false) return result.executionStarted === false
-    ? 'The script did not run; the document was not modified; fix it and resubmit'
-    : 'The script started running; the document may have been modified; keep the evidence; verify the current state with inspect first; do not replay the script';
+  if (result?.ok === false) {
+    if (result.executionStarted === false) return 'The script did not run; the document was not modified; fix it and resubmit';
+    // After script errors, created lists new nodes; --clean-on-fail also returns cleaned/cleanFailed. These describe new-node disposition only; modified existing nodes still require inspect.
+    // New nodes may contain existing layers moved inside them, so inspect subtrees before deletion. cleanFailed covers both failed deletion and intentional preservation of existing content.
+    const count = (/** @type {string} */ key) => Array.isArray(result[key]) ? result[key].length : 0, review = 'keep the evidence; verify the current state with inspect first; do not replay the script';
+    if (!count('cleaned') && count('cleanFailed')) return `The script started running; the document may have been modified; created nodes were not deleted: ${count('cleanFailed')} node(s) kept or failed to delete (reasons in cleanFailed); ${review}`;
+    if (count('cleaned')) return `The script started running; deleted ${count('cleaned')} node(s) created by this job${count('cleanFailed') ? `, ${count('cleanFailed')} not deleted (reasons in cleanFailed)` : ''}; modified existing nodes were not rolled back; ${review}`;
+    if (count('created')) return `The script started running; the document may have been modified; at failure it had created ${count('created')} node(s) (see created), which may contain existing layers: inspect their subtrees, then delete them${record.job?.cleanOnFail ? '' : ', or add --clean-on-fail next time'}; ${review}`;
+    return 'The script started running; the document may have been modified; ' + review;
+  }
   if (result?.verify?.error) return `The script ran, but the visual check did not run (${result.verify.error}); check the rendering with preview or inspect first; do not replay the script`;
   if (result?.verify && result.verify.pass !== true) return `The script ran, but the visual check failed (expect ${result.verify.expect}); review the diff image in verify; do not replay the script; fix it with a new script`;
   if (lostBinaries(record)) return 'Binary files were not fully saved (see binaryErrors); the document was not modified; resubmit extract';
@@ -156,6 +163,12 @@ export function summarizeRecord(record) {
     for (const key of ['executionStarted', 'targetMissing', 'missingNodeId', 'fileVerified']) if (result[key] !== undefined) summary[key] = result[key];
     if (result.recovery !== undefined) summary.recoveryHint = result.recovery;
     if (record.checkpointFile) summary.checkpointFile = record.checkpointFile;
+    // Limit each created/cleaned list to 50 nodes, matching change-set limits.
+    for (const key of ['created', 'cleaned', 'cleanFailed']) if (Array.isArray(result[key])) {
+      summary[key] = result[key].slice(0, LIST_LIMIT);
+      if (result[key].length > LIST_LIMIT) summary[key + 'Omitted'] = result[key].length - LIST_LIMIT;
+    }
+    if (result.warnings !== undefined) summary.warnings = result.warnings;
   }
   const target = result?.bindingVerified?.nodeId ?? job.targetNodeId;
   if (target) summary.target = target;

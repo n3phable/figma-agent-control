@@ -236,6 +236,38 @@ test('Summaries give distinct next steps for success, unexecuted failure, execut
   assert.notEqual(verdict.instruction, started.instruction);
 });
 
+test('Failure summaries explain created-node outcomes, cap lists at 50, expose listener warnings, and retain inspect-first/no-replay guidance', async t => {
+  const { write, read } = await evidence(t);
+  const failed = { id: ID, operation: 'run', state: 'failed' }, base = { id: ID, ok: false, error: '\u4e2d\u9014\u5931\u8d25', executionStarted: true };
+  const nodes = n => Array.from({ length: n }, (_, i) => ({ id: `10:${i + 1}`, name: `FRAME-${i + 1}`, type: 'FRAME' }));
+
+  await write({ 'job.json': failed, 'result.json': { ...base, created: nodes(60) } });
+  const left = summarizeRecord(await read());
+  assert.deepEqual([left.created.length, left.createdOmitted, left.created[0]], [50, 10, nodes(1)[0]]);
+  assert.match(left.instruction, /at failure it had created 60 node\(s\) \(see created\), which may contain existing layers: inspect their subtrees, then delete them, or add --clean-on-fail next time; keep the evidence; verify the current state with inspect first; do not replay the script/);
+  // When --clean-on-fail was supplied but only created is available because the closing boundary failed, do not suggest adding it next time.
+  await write({ 'job.json': { ...failed, cleanOnFail: true } });
+  assert.match(summarizeRecord(await read()).instruction, /inspect their subtrees, then delete them; keep the evidence/);
+  await write({ 'job.json': failed });
+
+  await write({ 'result.json': { ...base, created: nodes(3), cleaned: nodes(2), cleanFailed: [{ ...nodes(3)[2], reason: '\u8282\u70b9\u5df2\u9501\u5b9a' }] } });
+  const cleaned = summarizeRecord(await read());
+  assert.deepEqual([cleaned.cleaned.length, cleaned.cleanFailed[0].reason, 'cleanedOmitted' in cleaned], [2, '\u8282\u70b9\u5df2\u9501\u5b9a', false]);
+  assert.match(cleaned.instruction, /deleted 2 node\(s\) created by this job, 1 not deleted \(reasons in cleanFailed\); modified existing nodes were not rolled back; keep the evidence; verify the current state with inspect first; do not replay the script/);
+  // If nothing was removed because nodes were kept or deletion failed, do not say zero nodes were deleted.
+  await write({ 'result.json': { ...base, created: nodes(2), cleaned: [], cleanFailed: nodes(2).map(n => ({ ...n, reason: '\u542b\u6267\u884c\u524d\u5df2\u5b58\u5728\u7684\u8282\u70b9 1:4\uff0c\u672a\u5220\u9664' })) } });
+  assert.equal(summarizeRecord(await read()).instruction, 'The script started running; the document may have been modified; created nodes were not deleted: 2 node(s) kept or failed to delete (reasons in cleanFailed); keep the evidence; verify the current state with inspect first; do not replay the script');
+
+  await write({ 'result.json': { ...base, created: [], cleaned: [], cleanFailed: [] } });
+  const none = summarizeRecord(await read());
+  assert.equal(none.instruction, 'The script started running; the document may have been modified; keep the evidence; verify the current state with inspect first; do not replay the script');
+
+  await write({ 'result.json': { ...base, warnings: ['nodechange \u76d1\u542c\u4e0d\u53ef\u7528'] } });
+  const deaf = summarizeRecord(await read());
+  assert.deepEqual([deaf.warnings, 'created' in deaf, deaf.instruction], [['nodechange \u76d1\u542c\u4e0d\u53ef\u7528'], false, none.instruction]);
+  assert.equal(exitCode(await read()), 1);
+});
+
 test('Summaries omit output above 16 KiB and provide a command to read the original value', async t => {
   // JSON.stringify({ items }) occupies 12 + items.length bytes for ASCII.
   const exact = { items: 'a'.repeat(16 * 1024 - 12) };

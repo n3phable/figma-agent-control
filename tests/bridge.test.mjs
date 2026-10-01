@@ -163,7 +163,9 @@ test('Every protocol.md job-field constraint rejects out-of-bounds values with 4
     'high risk without reason': { ...RUN, risk: { level: 'high' } },
     'high risk on inspect': { operation: 'inspect', risk: { level: 'high', reason: '\u8bf4\u660e' } },
     'unknown risk level': { ...RUN, risk: { level: 'urgent', reason: '\u8bf4\u660e' } },
-    'non-UUID requestId': { operation: 'inspect', requestId: 'abc' }
+    'non-UUID requestId': { operation: 'inspect', requestId: 'abc' },
+    'cleanOnFail on inspect': { operation: 'inspect', cleanOnFail: true },
+    'nonboolean cleanOnFail': { ...RUN, cleanOnFail: 'true' }
   };
   const accepted = {
     'minimal run': RUN,
@@ -179,7 +181,9 @@ test('Every protocol.md job-field constraint rejects out-of-bounds values with 4
     'high risk with reason': { ...RUN, risk: { level: 'high', reason: '\u8c03\u6574\u5171\u4eab\u7ec4\u4ef6' } },
     'instance descendant target': { operation: 'inspect', targetNodeId: 'I1:2;3:4' },
     'variables': { operation: 'variables' },
-    'UUID requestId': { operation: 'inspect', requestId: uuid(9) }
+    'UUID requestId': { operation: 'inspect', requestId: uuid(9) },
+    'cleanOnFail（run）': { ...RUN, cleanOnFail: true },
+    'cleanOnFail false': { ...RUN, cleanOnFail: false }
   };
   for (const [name, body] of Object.entries(rejected)) {
     const r = await b.cli('/job', body);
@@ -224,7 +228,7 @@ test('requestId resubmission returns the original task, rejects any changed cont
 
   const variants = { code: { code: 'return 2;' }, libs: { libs: [{ name: 'lib.js', code: 'const k = 2;' }] }, data: { data: { text: '\u65b0\u6587' } },
     expect: { expect: 'unchanged' }, tolerance: { tolerance: 3 }, scale: { scale: 1 }, snapshotDepth: { snapshotDepth: 4 },
-    targetNodeId: { targetNodeId: '1:4' }, risk: { risk: { level: 'normal' } } };
+    targetNodeId: { targetNodeId: '1:4' }, risk: { risk: { level: 'normal' } }, cleanOnFail: { cleanOnFail: true } };
   for (const [field, change] of Object.entries(variants)) {
     // A new requestId reaches only ACTIVE_JOB, proving each variant is otherwise valid and 400 specifically means the same ID has different content.
     assert.equal((await b.cli('/job', { ...original, ...change, requestId: uuid(2) })).body.code, 'ACTIVE_JOB', field);

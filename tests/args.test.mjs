@@ -55,6 +55,7 @@ test('Unknown commands point to help; unknown, disallowed, or valueless options 
     ['run', 'a.js', '--bogus'], ['status', '--node', '1:2'], ['inspect', '--high-risk', '\u98ce\u9669'], ['inspect', '--expect', 'changed'],
     ['preview', '--depth', '1'], ['run', 'a.js', '--threshold', '3'], ['image-diff', 'a.png', 'b.png', '--tolerance', '3'],
     ['wait', ID, '--no-wait'], ['run', 'a.js', '--high-risk'], ['run', 'a.js', '--high-risk', '--node', '1:2'], ['inspect', '--node'],
+    ['inspect', '--clean-on-fail'], ['extract', '--clean-on-fail'], ['run', 'a.js', '--clean-on-fail=yes'],
   ]) assert.throws(() => parse([cmd, ...rest]), ({ message }) => message.startsWith('Invalid arguments') && message.endsWith('; usage: ' + COMMANDS[cmd].usage), rest.join(' '));
 });
 
@@ -176,12 +177,14 @@ test('--no-wait cannot combine with --timeout or --full; --timeout uses positive
 
 // -- run submission options -----------------------------------------------
 
-test('run validates UUID --request-id and nonempty --high-risk reasons, and preserves repeated --lib order', () => {
+test('run validates UUID --request-id and nonempty --high-risk reasons, preserves repeated --lib order, and accepts --clean-on-fail once', () => {
   assert.equal(opts('run', 'a.js', '--request-id', ID).requestId, ID);
   for (const bad of ['abc', ID.slice(1), ID + '0']) assert.throws(() => parse(['run', 'a.js', '--request-id', bad]), /--request-id/, bad);
   assert.deepEqual(opts('run', 'a.js', '--high-risk', '\u5220\u9664\u65e7\u56fe\u5c42').risk, { level: 'high', reason: '\u5220\u9664\u65e7\u56fe\u5c42' });
   for (const bad of ['', '   ']) assert.throws(() => parse(['run', 'a.js', '--high-risk', bad]), /requires a risk description/, JSON.stringify(bad));
   assert.deepEqual(opts('run', 'a.js', '--lib', 'outer.js', '--lib', 'inner.js').libFiles, ['outer.js', 'inner.js']);
+  assert.deepEqual([opts('run', 'a.js', '--clean-on-fail').cleanOnFail, opts('run', 'a.js').cleanOnFail], [true, undefined]);
+  assert.throws(() => parse(['run', 'a.js', '--clean-on-fail', '--clean-on-fail']), /--clean-on-fail may be given only once/);
 });
 
 // ── resolve ─────────────────────────────────────────────────────────────

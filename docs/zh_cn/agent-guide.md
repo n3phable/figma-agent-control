@@ -63,6 +63,7 @@ printf '%s' '{"name":"Account card"}' | figma-agent-control run rename.js --node
 | 覆盖全部写入的共同祖先全深度不超过 2,000 个节点 | 以该祖先为目标，不加 `--depth`，保留嵌套变化证据 |
 | 跨更大页面或 Section 的写入 | 保留正确的共同祖先，显式声明深度；页面→Section→画框通常用 `--depth 2` |
 | 可见改动或应保持画面的重构 | 对最小相关目标加 `--expect changed` 或 `--expect unchanged` |
+| 先删后建内容 | 加 `--clean-on-fail`，并理解它不能恢复先删掉的原内容 |
 
 浅快照以细节换覆盖范围：更深的变化看不到，跨越深度边界的移动显示为新增或删除。不要把 `--node` 指向无关的小节点来绕过预算，否则写前证据、最终复核和变更集都会覆盖错误的内容。
 
@@ -175,7 +176,25 @@ jq '.output' out.json
 
 每个脚本有独立证据与 Undo 边界。第一个非零退出就停止，避免继续修改半成品：
 
+```sh
+code=0
+for step in colors layout content; do
+  figma-agent-control run "scripts/$step.js" --lib helpers.js --data data.json --clean-on-fail > "out-$step.json" 2> "receipt-$step.log" || { code=$?; break; }
+done
+# code 非零时，先检查 out-$step.json。
+```
+
 反复执行的序列存为带参数的项目脚本。`break` 本身返回零，应先保存失败码，或在合适的 shell 脚本中使用 `set -e`。退出码 `2` 时停下，等待或核验该任务，不能跳到下一步。
+
+### 脚本中途失败
+
+`executionStarted:true` 表示此前写入可能已生效。**禁止重放脚本。** 先 inspect 当前文档，只修正仍需要处理的部分。
+
+- `--clean-on-fail` 在脚本的结束 Undo 边界成功后立即尝试清理，并为清理单独提交边界。执行前已在目标页的节点及包含它们的新容器受保护。删除成功记 `cleaned`，受保护或失败记 `cleanFailed`。
+
+清理后，已有节点的改名、修改、移动和删除仍然保留。先删后建的脚本经清理后可能留下空位；撤销清理步骤会恢复未完成的替代品。原有改动应单独 inspect 并明确修复。
+
+限制包括：只观察目标页，且只处理脚本自身抛错，不处理之后的序列化失败；新组件可能不发创建事件；运行期间本地用户新建的内容可能被计入，远端协作者事件被排除；从其他页面移入的已有内容不受即时清理保护。监听失败记警告。结束 Undo 边界失败时只列节点，不自动清理。摘要清单各最多 50 项，超出部分给省略计数。
 
 ## 画面验收
 
@@ -307,3 +326,7 @@ figma-agent-control resolve <original-job-id> --inspect <inspect-job-id> --previ
 ## 连接范围
 
 桥接使用端口 32523，同一台机器只保留一个项目桥接运行。全局插件可在桥接重启后重连；连接另一个项目前先停止原项目。
+
+## 失败任务清理
+
+脚本自身抛错后报告目标页上新建且仍存在的最高层节点。人工修复前先 inspect。--clean-on-fail 可把符合条件的新节点作为单独 Undo 步骤删除，已有改动不回滚。其余修复依据 inspect 证据执行。
