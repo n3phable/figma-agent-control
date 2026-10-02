@@ -23,23 +23,56 @@ export const cliFile = fileURLToPath(new URL('../../bin/figma-agent-control.mjs'
 export const pluginSource = await fs.readFile(new URL('../../plugin/main.js', import.meta.url), 'utf8');
 
 // -- Mock document --------------------------------------------------------
-// Page 1:1 contains bound frame 1:2, text 1:3 and swatch 1:4. exportAsync renders the current node fill so tests observe actual visual changes.
+// Page 1:1 contains bound frame 1:2, text 1:3, and color block 1:4; page 2:1 is empty. exportAsync renders the current fill color
 // so --expect observes actual visual changes.
+// Model Figma nodechange timing: queue create/remove changes in a batch and deliver to page listeners in a macrotask 5 ms later;
+// Nested creations in one batch report only the highest CREATE. create accepts REMOTE origin to simulate collaborators.
 export function createDoc() {
-  const node = (id, type, name, extra = {}) => ({ id, type, name, removed: false, visible: true, ...extra });
-  const page = node('1:1', 'PAGE', '\u9875\u9762', { children: [], loadAsync: async () => {} });
+  const listeners = new Map();
+  let seq = 0, batch = null;
+  const pageOf = n => { while (n && n.type !== 'PAGE') n = n.parent; return n; };
+  const detach = n => { if (n.parent) n.parent.children = n.parent.children.filter(child => child !== n); n.parent = null; };
+  const queue = (change, n) => {
+    if (!batch) { batch = []; setTimeout(flush, 5); }
+    batch.push({ ...change, id: n.id, node: n, page: pageOf(n) });
+  };
+  const flush = () => {
+    const changes = batch, created = new Set(changes.filter(c => c.type === 'CREATE').map(c => c.id));
+    batch = null;
+    const top = changes.filter(c => { if (c.type === 'CREATE') for (let p = c.node.parent; p; p = p.parent) if (created.has(p.id)) return false; return true; });
+    for (const page of new Set(top.map(c => c.page))) {
+      const nodeChanges = top.filter(c => c.page === page).map(({ page: _, ...c }) => c);
+      for (const fn of [...(listeners.get(page) ?? [])]) fn({ nodeChanges });
+    }
+  };
+  const node = (id, type, name, extra = {}) => ({ id, type, name, removed: false, visible: true,
+    remove() { queue({ type: 'DELETE', origin: 'LOCAL' }, this); detach(this); const mark = n => { n.removed = true; (n.children ?? []).forEach(mark); }; mark(this); },
+    appendChild(child) { detach(child); child.parent = this; this.children.push(child); },
+    findAll(fn = () => true) { const out = [], walk = n => (n.children ?? []).forEach(c => { if (fn(c)) out.push(c); walk(c); }); walk(this); return out; },
+    findOne(fn) { return this.findAll(fn)[0] ?? null; }, ...extra });
+  const pageNode = (id, name) => node(id, 'PAGE', name, { children: [], loadAsync: async () => {},
+    on(type, fn) { if (type === 'nodechange') listeners.set(this, (listeners.get(this) ?? new Set()).add(fn)); },
+    off(type, fn) { if (type === 'nodechange') listeners.get(this)?.delete(fn); } });
+  const page = pageNode('1:1', '\u9875\u9762'), other = pageNode('2:1', '\u5176\u4ed6\u9875\u9762');
   const frame = node('1:2', 'FRAME', '\u753b\u677f', { width: 100, height: 50, fills: [{ type: 'SOLID', visible: true, opacity: 1, color: { r: 1, g: 1, b: 1 } }], children: [] });
   const text = node('1:3', 'TEXT', '\u6807\u9898', { characters: '\u539f\u6587', width: 40, height: 20 });
   const swatch = node('1:4', 'RECTANGLE', '\u8272\u5757', { width: 10, height: 10, fills: [{ type: 'SOLID', visible: true, opacity: 1, color: { r: 0, g: 0, b: 1 } }] });
   page.children.push(frame); frame.parent = page;
   frame.children.push(text, swatch); text.parent = frame; swatch.parent = frame;
-  const all = new Map([page, frame, text, swatch].map(n => [n.id, n]));
+  const all = new Map([page, frame, text, swatch, other].map(n => [n.id, n]));
   const pixel = n => { const c = n.fills?.[0]?.color ?? { r: 0.5, g: 0.5, b: 0.5 }; return [c.r, c.g, c.b].map(v => Math.round(v * 255)).concat(255); };
   for (const n of all.values()) if (n.type !== 'PAGE') n.exportAsync = async options => {
     const scale = options?.constraint?.value ?? 1, w = Math.max(1, Math.round(2 * scale)), h = Math.max(1, Math.round(2 * scale));
     return encodePng(w, h, new Uint8Array(Array.from({ length: w * h }, () => pixel(n)).flat()));
   };
-  return { page, frame, text, swatch, all };
+  // Append new nodes to parent, as Figma create* appends to the current page; IDs are 10:<ordinal> and names are <type>-<ordinal>.
+  const create = (type, parent, { origin = 'LOCAL' } = {}) => {
+    const n = node(`10:${++seq}`, type, `${type}-${seq}`, { width: 10, height: 10, ...(type === 'RECTANGLE' ? {} : { children: [] }) });
+    parent.appendChild(n); all.set(n.id, n);
+    queue({ type: 'CREATE', origin }, n);
+    return n;
+  };
+  return { page, other, frame, text, swatch, all, create, listening: page => listeners.get(page)?.size ?? 0 };
 }
 
 export function fakeFigma(doc, { fileKey = 'example', onUi = () => {} } = {}) {
@@ -48,6 +81,7 @@ export function fakeFigma(doc, { fileKey = 'example', onUi = () => {} } = {}) {
     showUI() {}, commitUndo() {}, base64Encode: bytes => Buffer.from(bytes).toString('base64'),
     getNodeByIdAsync: async id => { const n = doc.all.get(id); return n && !n.removed ? n : null; },
     setCurrentPageAsync: async page => { figma.currentPage = page; },
+    createFrame: () => doc.create('FRAME', figma.currentPage), createRectangle: () => doc.create('RECTANGLE', figma.currentPage),
     variables: {
       getLocalVariableCollectionsAsync: async () => [{ id: 'C:1', name: '\u989c\u8272', modes: [{ modeId: 'M:1', name: '\u9ed8\u8ba4' }], defaultModeId: 'M:1' }],
       getLocalVariablesAsync: async () => [{ id: 'VariableID:1:1', name: 'brand', variableCollectionId: 'C:1', resolvedType: 'COLOR', valuesByMode: { 'M:1': { r: 0, g: 0, b: 1, a: 1 } }, scopes: ['ALL_FILLS'] }]

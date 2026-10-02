@@ -74,7 +74,7 @@ CLI submits -> bridge validates and persists queued job
             -> CLI record reader summarizes outcome
 ```
 
-The original script outcome is separate from evidence availability. A completed script can have an unavailable after snapshot or failed visual expectation. Those are not invitations to replay.
+The original script outcome is separate from evidence availability. A completed script can have an unavailable after snapshot or failed visual expectation. Those are not invitations to replay. Failed scripts expose partial changes and eligible new nodes; optional cleanup is a separate Undo step and cannot restore earlier deletions or edits.
 
 ### Waiting and recovery
 

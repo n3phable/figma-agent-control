@@ -19,9 +19,9 @@ export const COMMANDS = {
   stop: { usage: 'stop [--force]: stop only the local bridge process; does not modify the Figma document or affect cloud sync; requires --force while a job is unfinished (queued or running); exit code 2 if still shutting down after about 5 s, confirm later with status', positionals: [0, 0], options: { force: { type: 'boolean' } } },
   status: { usage: 'status: live status of the bridge and plugin', positionals: [0, 0], options: {} },
   doctor: { usage: 'doctor: diagnose binding, session, lock, plugin files and connection; also report Chrome, required only by html commands', positionals: [0, 0], options: {} },
-  run: { usage: 'run <script.js> [--node <ID>] [--lib <file.js>]... [--data <file.json>] [--depth <1-31>] [--expect changed|unchanged] [--tolerance <pixels>] [--scale <0.1-4>] [--request-id <uuid>] [--high-risk <reason>] [--timeout <seconds>] [--no-wait] [--full]',
+  run: { usage: 'run <script.js> [--node <ID>] [--lib <file.js>]... [--data <file.json>] [--depth <1-31>] [--expect changed|unchanged] [--tolerance <pixels>] [--scale <0.1-4>] [--request-id <uuid>] [--high-risk <reason>] [--clean-on-fail] [--timeout <seconds>] [--no-wait] [--full]',
     positionals: [1, 1], submit: true, options: { ...node, lib: { type: 'string', multiple: true }, data: { type: 'string' }, depth: { type: 'string' }, expect: { type: 'string' }, tolerance: { type: 'string' },
-      scale: { type: 'string' }, 'request-id': { type: 'string' }, 'high-risk': { type: 'string' }, ...wait } },
+      scale: { type: 'string' }, 'request-id': { type: 'string' }, 'high-risk': { type: 'string' }, 'clean-on-fail': { type: 'boolean' }, ...wait } },
   inspect: { usage: 'inspect [--node <ID>] [--depth <1-31>]: read the node tree (including masks and the ancestor visibility chain)', positionals: [0, 0], submit: true, options: { ...node, depth: { type: 'string' }, ...wait } },
   preview: { usage: 'preview [--node <ID>]... [--scale <0.1-4>]: export PNG; repeat --node for batch export', positionals: [0, 0], submit: true, options: { node: { type: 'string', multiple: true }, scale: { type: 'string' }, ...wait } },
   variables: { usage: 'variables [--node <ID>]: local variable catalog and binding counts within the target', positionals: [0, 0], submit: true, options: { ...node, ...wait } },
@@ -66,12 +66,12 @@ const expect = value => {
 
 // parseArgs sees only ParseArgsOptionsConfig and a union of all option value types; COMMANDS above defines each option's exact type.
 /** @typedef {{ node?: string | string[], lib?: string[], island?: string[], data?: string, depth?: string, expect?: string, tolerance?: string, scale?: string,
- *   'request-id'?: string, 'high-risk'?: string, timeout?: string, 'no-wait'?: boolean, full?: boolean, force?: boolean, inspect?: string,
+ *   'request-id'?: string, 'high-risk'?: string, 'clean-on-fail'?: boolean, timeout?: string, 'no-wait'?: boolean, full?: boolean, force?: boolean, inspect?: string,
  *   'previous-plugin-stopped'?: boolean, threshold?: string, since?: string, from?: string[], out?: string, overrides?: string, 'no-check'?: boolean, budget?: string,
  *   zoom?: string }} Values */
 // Normalized options, read by bin according to the command.
 /** @typedef {{ targetNodeId?: string, nodes?: string[], snapshotDepth?: number, timeoutSeconds?: number, threshold?: number, expect?: string, tolerance?: number,
- *   scale?: number, requestId?: string, risk?: { level: 'high', reason: string }, islands?: string[], libFiles?: string[], dataFile?: string, since?: string,
+ *   scale?: number, requestId?: string, risk?: { level: 'high', reason: string }, cleanOnFail?: true, islands?: string[], libFiles?: string[], dataFile?: string, since?: string,
  *   inspectId?: string, previousPluginStopped?: true, force?: true, full?: true, noWait?: true,
  *   fromIds?: string[], outDir?: string, overridesFile?: string, noCheck?: true, budgetSeconds?: number, zoomId?: string }} Options */
 /** @param {string[]} argv @returns {{ command: string, positionals: string[], options: Options }} */
@@ -150,5 +150,6 @@ export function parse(argv) {
   }
   for (const key of /** @type {const} */ (['force', 'full'])) if (v[key]) o[key] = true;
   if (v['no-wait']) o.noWait = true;
+  if (v['clean-on-fail']) o.cleanOnFail = true;
   return { command: first, positionals, options: o };
 }

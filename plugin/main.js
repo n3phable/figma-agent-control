@@ -8,7 +8,7 @@
 // ui.html relays bridge-built jobs; /poll adds binding and the iframe adds channelNonce. Declare only fields read by the plugin.
 /** @typedef {{ id: string, operation: string, channelNonce: string, binding: { fileKey: string, nodeId: string }, targetNodeId?: string, nodes?: string[],
  *   snapshotDepth?: number, scale?: number, islands?: string[], expect?: string, code: string, libs?: { name: string, code: string }[], data?: unknown,
- *   risk?: { level: string, reason?: string }, scriptHash?: string }} Job */
+ *   risk?: { level: string, reason?: string }, scriptHash?: string, cleanOnFail?: boolean }} Job */
 /** @typedef {(message: Record<string, unknown>) => void} Send */
 /** @typedef {{ id: string, channelNonce: string, finish(message: { ok?: unknown, approved?: unknown }): void }} Waiter */
 figma.showUI(__html__, { width: 320, height: 200, themeColors: true });
@@ -475,6 +475,38 @@ function compile(job) {
   return new Function('figma', 'target', 'data', `return (async () => {\n${body}\n})();`);
 }
 
+// -- Failure evidence: newly created nodes -------------------------------
+// Listen to target-page nodechange during execution, collecting CREATE only. Nested creation reports the highest parent; exclude REMOTE collaborator changes.
+// Avoid figma.on('documentchange'), which requires loadAllPagesAsync under dynamic-page. Consequently, nodes created after the script switches to another page are outside coverage.
+// Events arrive asynchronously in batches. After script failure, wait for 50 ms without new events, capped at about 500 ms wall time; throttling can add one interval.
+// Real-device verification is still needed for Figma event delivery timing and whether plugin timers throttle when Figma moves to the background.
+/** @param {() => number} count */
+async function settleEvents(count) {
+  const end = Date.now() + 500;
+  for (let seen = -1; seen !== count() && Date.now() < end;) { seen = count(); await new Promise(resolve => setTimeout(resolve, 50)); }
+}
+// Listener registration failure only warns; stop is idempotent. created returns surviving nodes without a newly created ancestor, or null when listening is unavailable.
+/** @param {PageNode} page @param {string[]} warnings */
+function watchCreated(page, warnings) {
+  const ids = /** @type {Set<string>} */ (new Set());
+  /** @param {NodeChangeEvent} event */
+  const onChange = event => { for (const change of event.nodeChanges) if (change.type === 'CREATE' && change.origin !== 'REMOTE') ids.add(change.id); };
+  let listening = false;
+  try { page.on('nodechange', onChange); listening = true; }
+  catch (error) { warnings.push('nodechange listener unavailable; created nodes cannot be listed if the script fails: ' + String(error)); }
+  return {
+    stop() { if (listening) try { page.off('nodechange', onChange); } catch (_) {} listening = false; },
+    async created() {
+      if (!listening) return null;
+      await settleEvents(() => ids.size);
+      const nodes = /** @type {BaseNode[]} */ ([]);
+      for (const id of ids) { const node = await figma.getNodeByIdAsync(id); if (node && !node.removed) nodes.push(node); }
+      const found = new Set(nodes.map(node => node.id));
+      return nodes.filter(node => { for (let up = node.parent; up; up = up.parent) if (found.has(up.id)) return false; return true; });
+    }
+  };
+}
+
 // -- Target guidance ----------------------------------------------------
 // The panel answers whether the currently open file and page match the bound target.
 /** @param {{ fileKey: string, nodeId: string } | undefined} binding */
@@ -525,8 +557,11 @@ figma.ui.onmessage = async job => {
   // preview, variables and extract snapshot only the root; inspect defaults to one level for pages; all others default to a full snapshot.
   // Call only after target assignment, inside try or catch after executionStarted.
   const snapshot = () => { const node = /** @type {SceneNode | PageNode} */ (target); return tree(node, ['preview', 'variables', 'extract'].includes(job.operation) ? 0 : declaredDepth ?? (job.operation === 'inspect' && node.type === 'PAGE' ? 1 : SNAPSHOT_DEPTH)); };
+  /** @type {{ before: string, after: string, clean?: string }} */
   const undoBoundaries = { before: 'not-run', after: 'not-run' };
-  const budget = { size: 0 };
+  const budget = { size: 0 }, warnings = /** @type {string[]} */ ([]);
+  // Return failed-script evidence: created, plus cleaned/cleanFailed when cleanOnFail is enabled.
+  let watch = /** @type {ReturnType<typeof watchCreated> | null} */ (null), leftovers = /** @type {Record<string, unknown>} */ ({});
   try {
     if (!figma.fileKey) throw Error('Cannot verify the file key; use the development plugin with the private API enabled');
     if (figma.fileKey !== job.binding.fileKey) throw Error('The current file does not match the binding');
@@ -573,20 +608,51 @@ figma.ui.onmessage = async job => {
       // Export the before image outside the Undo boundary. Export is read-only, and failure means the script has not executed.
       /** @type {{ before: string, after?: string, error?: string } | null} */
       const renders = job.expect ? { before: await render(target, job.scale, budget) } : null;
+      // cleanOnFail records existing target-page IDs before the boundary. Preserve new nodes that are themselves preexisting or contain existing layers, such as figma.group results, to avoid deleting original content.
+      // Covers only the target page; existing nodes moved from other pages into new nodes are absent from the protection list.
+      const existing = job.cleanOnFail ? new Set(page.findAll().map(node => node.id)) : null;
       if (typeof figma.commitUndo !== 'function') throw Error('This environment does not support Undo boundaries; the script did not run');
       const commitUndo = figma.commitUndo.bind(figma);
       try { commitUndo(); undoBoundaries.before = 'committed'; }
       catch (error) { undoBoundaries.before = 'failed'; throw error; }
+      watch = watchCreated(page, warnings);
       executionStarted = true;
-      let scriptFailure;
+      let scriptFailure, boundaryFailure;
       try { output = await /** @type {Function} */ (program)(figma, target, job.data ?? null); }
       catch (error) { scriptFailure = { error }; }
       // Create history boundaries for success and partial failure alike; never trigger global Undo automatically.
       try { commitUndo(); undoBoundaries.after = 'committed'; }
       catch (error) {
         undoBoundaries.after = 'failed';
-        throw Error(`${scriptFailure ? `Script error: ${String(scriptFailure.error)}; ` : ''}Failed to commit the closing Undo boundary: ${String(error)}; verify the document, do not auto-undo or replay the script`);
+        boundaryFailure = Error(`${scriptFailure ? `Script error: ${String(scriptFailure.error)}; ` : ''}Failed to commit the closing Undo boundary: ${String(error)}; verify the document, do not auto-undo or replay the script`);
       }
+      if (scriptFailure) {
+        // Default to reporting only. cleanOnFail deletes highest-level new nodes and commits another boundary, making cleanup a separate Undo step. Existing modifications remain, so execution is not atomic.
+        // If the ending boundary fails, cleanup cannot be a separate step, so report without deletion. Preserve new nodes that are or contain preexisting nodes, recording cleanFailed.
+        // Evidence/cleanup errors only warn; keep the original script error. Read names and types before deletion because removed-node properties are inaccessible.
+        try {
+          const nodes = await watch.created();
+          if (nodes) {
+            const created = nodes.map(node => ({ id: node.id, name: node.name, type: node.type }));
+            leftovers.created = created;
+            if (existing && boundaryFailure) warnings.push('Closing Undo boundary failed to commit; created nodes were not deleted');
+            else if (existing) {
+              const cleaned = /** @type {typeof created} */ ([]), cleanFailed = /** @type {(typeof created[0] & { reason: string })[]} */ ([]);
+              nodes.forEach((node, i) => {
+                try {
+                  const kept = existing.has(node.id) ? node : 'findOne' in node ? node.findOne(child => existing.has(child.id)) : null;
+                  if (kept) cleanFailed.push({ ...created[i], reason: kept === node ? 'Already on the target page before execution; not deleted' : `Contains node ${kept.id} that existed before execution; not deleted` });
+                  else { node.remove(); cleaned.push(created[i]); }
+                } catch (error) { cleanFailed.push({ ...created[i], reason: String(error) }); }
+              });
+              Object.assign(leftovers, { cleaned, cleanFailed });
+              if (cleaned.length) try { commitUndo(); undoBoundaries.clean = 'committed'; }
+              catch (error) { undoBoundaries.clean = 'failed'; warnings.push('Undo boundary after cleanup failed to commit; this deletion will merge into the next Undo step: ' + String(error)); }
+            }
+          }
+        } catch (error) { warnings.push('Failed to list or clean up created nodes: ' + String(error)); }
+      }
+      if (boundaryFailure) throw boundaryFailure;
       if (scriptFailure) throw scriptFailure.error;
       // Failed after-image export does not invalidate script success: mark the visual verdict unavailable and still return output.
       if (renders) {
@@ -611,8 +677,10 @@ figma.ui.onmessage = async job => {
     let after;
     if (executionStarted) { try { after = /** @type {SceneNode | PageNode} */ (target).removed ? null : snapshot(); } catch (_) {} }
     send({ id: job.id, ok: false, error: String(e), executionStarted, ...(after !== undefined ? { before, after } : {}), ...(ancestors ? { ancestors } : {}),
-      recovery: executionStarted ? 'The script started running; keep the current state, verify with inspect first, do not replay the script' : 'The script did not run; fix it and resubmit', ...(run ? { undoBoundaries } : {}) });
+      recovery: executionStarted ? 'The script started running; keep the current state, verify with inspect first, do not replay the script' : 'The script did not run; fix it and resubmit', ...(run ? { undoBoundaries } : {}),
+      ...leftovers, ...(warnings.length ? { warnings } : {}) });
   } finally {
+    watch?.stop();
     busy = false;
   }
 };

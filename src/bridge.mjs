@@ -28,15 +28,16 @@ const PIXEL_LIMIT = 16e6, JOB_PIXEL_LIMIT = 32e6;
 /** @typedef {{ id: string, operation: string, code: string, libs?: { name: string, code: string }[], targetNodeId?: string, snapshotDepth?: number,
  *   nodes?: string[], scale?: number, label?: string, data?: unknown, expect?: string, tolerance?: number, islands?: string[],
  *   risk: { level: string, reason?: string }, state: string, createdAt: string, claimedAt?: string, finishedAt?: string, scriptHash: string,
- *   bindingId: string, recovered?: boolean }} Job */
+ *   bindingId: string, recovered?: boolean, cleanOnFail?: boolean }} Job */
 // Request bodies and plugin results are external JSON. Each route validates fields before use; the type system offers no stronger guarantee, so these parameters use any.
 
 /** @param {{ level?: string, reason?: string } | undefined} risk */
 const normalizeRisk = risk => risk?.level === 'high' ? { level: 'high', reason: risk.reason } : { level: 'normal' };
-// A requestId must always describe identical work: resubmission retrieves the original job, never new content. Append islands to preserve comparisons with older records.
+// A requestId must always describe identical work: resubmission retrieves the original job, never new content. Append islands and cleanOnFail to preserve comparisons with older records;
+// compare cleanOnFail by whether it is true, treating omission and false equally.
 /** @param {Job} job */
 const specKey = job => JSON.stringify([job.bindingId, job.operation, job.code ?? '', job.libs ?? [], job.targetNodeId ?? null, job.snapshotDepth ?? null,
-  job.nodes ?? null, job.scale ?? null, job.data ?? null, normalizeRisk(job.risk), job.expect ?? null, job.tolerance ?? null, job.islands ?? null]);
+  job.nodes ?? null, job.scale ?? null, job.data ?? null, normalizeRisk(job.risk), job.expect ?? null, job.tolerance ?? null, job.islands ?? null, job.cleanOnFail === true]);
 
 // -- Task validation ----------------------------------------------------
 // Pure normalization of CLI requests into task records; reject every out-of-range field.
@@ -57,11 +58,12 @@ function buildJob(data, binding) {
   if (data.scale !== undefined && ((!['preview', 'extract'].includes(data.operation) && data.expect === undefined) || typeof data.scale !== 'number' || !Number.isFinite(data.scale) || data.scale < 0.1 || data.scale > 4)) throw Error('scale is for preview, extract, or run with expect, and must be 0.1-4');
   if (data.data !== undefined && (!run || Buffer.byteLength(JSON.stringify(data.data) ?? '') > 1024 * 1024)) throw Error('data is only for run; JSON <= 1 MiB (UTF-8)');
   if (data.label !== undefined && (typeof data.label !== 'string' || !data.label.trim() || data.label.length > 200)) throw Error('label must be non-empty text of <= 200 characters');
+  if (data.cleanOnFail !== undefined && (!run || typeof data.cleanOnFail !== 'boolean')) throw Error('cleanOnFail is only for run and must be a boolean');
   const risk = normalizeRisk(data.risk);
   if (data.risk !== undefined && !['normal', 'high'].includes(data.risk?.level)) throw Error('Invalid risk declaration');
   if (risk.level === 'high' && (!run || typeof risk.reason !== 'string' || !risk.reason.trim() || risk.reason.length > 1000)) throw Error('A high-risk declaration is only for run and needs a reason of <= 1000 characters');
   if (data.requestId !== undefined && !isJobId(data.requestId)) throw Error('requestId must be a UUID');
-  const optional = Object.fromEntries(['libs', 'targetNodeId', 'snapshotDepth', 'nodes', 'scale', 'label', 'data', 'expect', 'tolerance', 'islands'].filter(key => data[key] !== undefined).map(key => [key, data[key]]));
+  const optional = Object.fromEntries(['libs', 'targetNodeId', 'snapshotDepth', 'nodes', 'scale', 'label', 'data', 'expect', 'tolerance', 'islands', 'cleanOnFail'].filter(key => data[key] !== undefined).map(key => [key, data[key]]));
   const code = run ? data.code : '';
   return { id: data.requestId ?? crypto.randomUUID(), operation: data.operation, code, ...optional, risk, state: 'queued', createdAt: new Date().toISOString(),
     scriptHash: hash(JSON.stringify([data.libs ?? [], code])), bindingId: binding.id };

@@ -20,7 +20,8 @@ const pixel = base64 => [...decodePng(Buffer.from(base64, 'base64')).data.subarr
 // Run real main.js in a VM. Capture postMessage with structuredClone to match the host boundary; unwrap large-result string envelopes before dispatch.
 // Respond to checkpoints and high-risk approvals by scenario: true/false acknowledges automatically; wait leaves acknowledgment to the test.
 // events records host-call order: show, approval, checkpoint, undo, export, and script markers through figma.mark.
-function plugin({ checkpoint = true, approval = 'wait', beforeAck } = {}) {
+// sandbox can replace globals, such as timers and the clock.
+function plugin({ checkpoint = true, approval = 'wait', beforeAck, sandbox } = {}) {
   const doc = createDoc(), events = [], checkpoints = [], approvals = [], results = [], infos = [];
   const reply = message => queueMicrotask(() => figma.ui.onmessage(message));
   const figma = fakeFigma(doc, { onUi: raw => {
@@ -40,8 +41,8 @@ function plugin({ checkpoint = true, approval = 'wait', beforeAck } = {}) {
   figma.commitUndo = () => { events.push('undo'); };
   figma.ui.show = () => { events.push('show'); };
   figma.mark = label => { events.push(label); };
-  // Inject no-op timers for 10 s / 300 s waits; those timeouts never fire and tests do not depend on wall-clock time.
-  vm.runInNewContext(pluginSource, { figma, __html__: '', setTimeout: () => 0, clearTimeout() {} });
+  // Replace 10 s / 300 s timeouts with no-ops so tests do not depend on wall time. Millisecond waits for nodechange delivery after failures still run normally.
+  vm.runInNewContext(pluginSource, { figma, __html__: '', setTimeout: (fn, ms) => ms < 1000 ? setTimeout(fn, ms) : 0, clearTimeout() {}, ...sandbox });
   let seq = 0;
   const start = job => {
     const id = `job-${++seq}`, channelNonce = `nonce-${seq}`;
@@ -310,6 +311,159 @@ test('The second Undo boundary failure records executionStarted:true and after=f
   }
 });
 
+// -- Failure evidence: newly created nodes -------------------------------
+// Mock nodechange batches arrive in macrotasks after 5 ms; script setTimeout splits creates into separate batches.
+const nextBatch = 'await new Promise(resolve => setTimeout(resolve, 20));';
+const info = (id, type) => ({ id, name: `${type}-${id.slice(3)}`, type });
+
+test('Script failure lists surviving top-level nodes created on the target page, excluding descendants, deleted nodes, and REMOTE changes without modifying the document; success omits them', async () => {
+  const f = plugin();
+  f.figma.remoteCreate = () => f.doc.create('RECTANGLE', f.doc.page, { origin: 'REMOTE' });
+  const r = await f.send({ code: `figma.mark("script");
+    const card = figma.createFrame();
+    ${nextBatch}
+    card.appendChild(figma.createRectangle());
+    const icon = figma.createFrame(); icon.appendChild(figma.createRectangle());
+    target.appendChild(figma.createRectangle());
+    figma.createRectangle().remove();
+    figma.remoteCreate();
+    throw Error("\u4e2d\u9014\u5931\u8d25");` });
+  assert.equal(r.ok, false);
+  assert.equal(r.executionStarted, true);
+  assert.match(r.error, /\u4e2d\u9014\u5931\u8d25/);
+  // 10:2 arrives in another batch but belongs to 10:1; 10:4 shares 10:3's batch so only 10:3 is reported; 10:6 was deleted and 10:7 is remote.
+  assert.deepEqual(r.created, [info('10:1', 'FRAME'), info('10:3', 'FRAME'), info('10:5', 'RECTANGLE')]);
+  assert.equal('cleaned' in r, false);
+  assert.equal(r.warnings, undefined);
+  assert.deepEqual(r.undoBoundaries, { before: 'committed', after: 'committed' });
+  assert.deepEqual(f.events, ['checkpoint', 'undo', 'script', 'undo']);
+  for (const id of ['10:1', '10:2', '10:3', '10:5', '10:7']) assert.equal(f.doc.all.get(id).removed, false, id);
+  assert.equal(r.after.children.at(-1).id, '10:5');
+  assert.equal(f.doc.listening(f.doc.page), 0);
+
+  const ok = await f.send({ code: 'figma.createFrame(); return 1;' });
+  assert.equal(ok.ok, true, ok.error);
+  assert.deepEqual(['created' in ok, 'warnings' in ok, ok.undoBoundaries], [false, false, { before: 'committed', after: 'committed' }]);
+  assert.equal(f.doc.listening(f.doc.page), 0);
+});
+
+test('cleanOnFail removes top-level created nodes after the closing boundary and adds a cleanup boundary; protected or undeletable nodes enter cleanFailed without reverting existing edits', async () => {
+  const f = plugin();
+  const create = f.doc.create;
+  f.doc.create = (...args) => {
+    const n = create(...args), remove = n.remove;
+    n.remove = function () { f.events.push('remove ' + n.id); if (n.id === '10:3') throw Error('\u8282\u70b9\u5df2\u9501\u5b9a'); return remove.call(this); };
+    return n;
+  };
+  const r = await f.send({ cleanOnFail: true, code: `figma.mark("script"); target.name = "\u6539\u8fc7";
+    figma.createFrame().appendChild(figma.createRectangle()); figma.createRectangle(); throw Error("\u4e2d\u9014\u5931\u8d25");` });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /\u4e2d\u9014\u5931\u8d25/);
+  assert.deepEqual(r.created, [info('10:1', 'FRAME'), info('10:3', 'RECTANGLE')]);
+  assert.deepEqual(r.cleaned, [info('10:1', 'FRAME')]);
+  assert.equal(r.cleanFailed.length, 1);
+  assert.deepEqual({ ...r.cleanFailed[0], reason: undefined }, { ...info('10:3', 'RECTANGLE'), reason: undefined });
+  assert.match(r.cleanFailed[0].reason, /\u8282\u70b9\u5df2\u9501\u5b9a/);
+  // Delete only top-level nodes: 10:2 disappears with 10:1 without a separate remove call.
+  assert.deepEqual(f.events, ['checkpoint', 'undo', 'script', 'undo', 'remove 10:1', 'remove 10:3', 'undo']);
+  assert.deepEqual(r.undoBoundaries, { before: 'committed', after: 'committed', clean: 'committed' });
+  assert.deepEqual(['10:1', '10:2', '10:3'].map(id => f.doc.all.get(id).removed), [true, true, false]);
+  assert.equal(f.doc.frame.name, '\u6539\u8fc7');
+  assert.equal(r.after.name, '\u6539\u8fc7');
+
+  // A new frame containing a preexisting node (the moved color block) is protected and enters cleanFailed, preserving the existing node.
+  const wrap = plugin();
+  const wrapped = await wrap.send({ cleanOnFail: true, code: 'figma.createFrame().appendChild(target.children[1]); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.deepEqual([wrapped.created, wrapped.cleaned, wrapped.undoBoundaries.clean], [[info('10:1', 'FRAME')], [], undefined]);
+  assert.equal(wrapped.cleanFailed[0].reason, 'Contains node 1:4 that existed before execution; not deleted');
+  assert.deepEqual([wrap.doc.all.get('10:1').removed, wrap.doc.swatch.removed, wrap.doc.swatch.parent.id], [false, false, '10:1']);
+
+  // With no new nodes, do not delete or add a boundary. A failed cleanup boundary is recorded while retaining the original script error.
+  const none = await plugin().send({ cleanOnFail: true, code: 'target.name = "\u6539\u8fc7"; throw Error("\u6ca1\u6709\u65b0\u5efa");' });
+  assert.deepEqual([none.created, none.cleaned, none.cleanFailed, none.undoBoundaries], [[], [], [], { before: 'committed', after: 'committed' }]);
+  const g = plugin();
+  let calls = 0;
+  g.figma.commitUndo = () => { if (++calls === 3) throw Error('\u8fb9\u754c\u4e09\u5931\u8d25'); };
+  const late = await g.send({ cleanOnFail: true, code: 'figma.createFrame(); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.match(late.error, /\u4e2d\u9014\u5931\u8d25/);
+  assert.deepEqual([late.cleaned.length, late.undoBoundaries.clean], [1, 'failed']);
+  assert.match(late.warnings[0], /Undo boundary after cleanup failed to commit.*\u8fb9\u754c\u4e09\u5931\u8d25/);
+
+  // A failed closing boundary still lists created nodes, but skips deletion because cleanup cannot be a separate Undo step.
+  const h = plugin();
+  calls = 0;
+  h.figma.commitUndo = () => { if (++calls === 2) throw Error('\u8fb9\u754c\u4e8c\u5931\u8d25'); };
+  const broken = await h.send({ cleanOnFail: true, code: 'figma.createFrame(); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.match(broken.error, /Script error: Error: \u4e2d\u9014\u5931\u8d25; Failed to commit the closing Undo boundary: Error: \u8fb9\u754c\u4e8c\u5931\u8d25/);
+  assert.deepEqual([broken.created, broken.cleaned, broken.undoBoundaries], [[info('10:1', 'FRAME')], undefined, { before: 'committed', after: 'failed' }]);
+  assert.deepEqual([broken.warnings, h.doc.all.get('10:1').removed], [['Closing Undo boundary failed to commit; created nodes were not deleted'], false]);
+});
+
+test('cleanOnFail protects preexisting nodes misreported as new; one revalidation failure enters cleanFailed while other nodes and cleanup boundaries proceed', async () => {
+  // Model Figma possibly reporting a moved existing page-root node as CREATE (not yet verified on a real device): the pre-execution inventory protects it.
+  const f = plugin();
+  let listener;
+  const on = f.doc.page.on;
+  f.doc.page.on = function (type, fn) { listener = fn; return on.call(this, type, fn); };
+  f.figma.echo = id => setTimeout(() => listener({ nodeChanges: [{ type: 'CREATE', id, origin: 'LOCAL' }] }), 1);
+  const moved = await f.send({ cleanOnFail: true, code: 'target.parent.appendChild(target.children[1]); figma.echo("1:4"); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.deepEqual([moved.created, moved.cleaned], [[{ id: '1:4', name: '\u8272\u5757', type: 'RECTANGLE' }], []]);
+  assert.deepEqual([moved.cleanFailed[0].reason, f.doc.swatch.removed], ['Already on the target page before execution; not deleted', false]);
+
+  const g = plugin();
+  const create = g.doc.create;
+  g.doc.create = (...args) => { const n = create(...args); if (n.id === '10:1') n.findOne = () => { throw Error('\u8bfb\u53d6\u5b50\u6811\u5931\u8d25'); }; return n; };
+  const r = await g.send({ cleanOnFail: true, code: 'figma.createFrame(); figma.createFrame(); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.match(r.error, /\u4e2d\u9014\u5931\u8d25/);
+  assert.deepEqual([r.cleaned, r.cleanFailed.map(n => n.id), r.undoBoundaries.clean, r.warnings], [[info('10:2', 'FRAME')], ['10:1'], 'committed', undefined]);
+  assert.match(r.cleanFailed[0].reason, /\u8bfb\u53d6\u5b50\u6811\u5931\u8d25/);
+  assert.deepEqual(['10:1', '10:2'].map(id => g.doc.all.get(id).removed), [false, true]);
+});
+
+test('Event settling uses a wall-clock cap: even with continuous events and throttled timers, stop after about 500 ms', async () => {
+  // Treat each 50 ms timer as a throttled 200 ms interval delivering another CREATE. An iteration cap would wait ten times; the wall-clock cap stops after three.
+  let now = 1e6, waits = 0, listener;
+  const f = plugin({ sandbox: {
+    Date: class extends Date { static now() { return now; } },
+    setTimeout: (fn, ms) => {
+      if (ms !== 50) return ms < 1000 ? setTimeout(fn, ms) : 0;
+      now += 200; listener?.({ nodeChanges: [{ type: 'CREATE', id: `9:${++waits}`, origin: 'LOCAL' }] });
+      return setTimeout(fn, 0);
+    }
+  } });
+  const on = f.doc.page.on;
+  f.doc.page.on = function (type, fn) { listener = fn; return on.call(this, type, fn); };
+  const r = await f.send({ code: 'throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.match(r.error, /\u4e2d\u9014\u5931\u8d25/);
+  assert.deepEqual([waits, r.created], [3, []]);
+});
+
+test('Listener/evidence failures produce warnings without replacing script errors; nodes created after switching pages are excluded from created', async () => {
+  const deaf = plugin();
+  deaf.doc.page.on = () => { throw Error('unsupported event'); };
+  const failed = await deaf.send({ code: 'target.name = "\u5199\u5165"; figma.createFrame(); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.match(failed.error, /\u4e2d\u9014\u5931\u8d25/);
+  assert.equal(failed.created, undefined);
+  assert.match(failed.warnings[0], /nodechange listener unavailable.*unsupported event/);
+  const ok = await deaf.send({ code: 'target.name = "\u6210\u529f"; return 1;' });
+  assert.deepEqual([ok.ok, ok.output, ok.warnings, deaf.doc.frame.name], [true, 1, undefined, '\u6210\u529f']);
+
+  const stuck = plugin();
+  stuck.doc.page.off = () => { throw Error('off failed'); };
+  const offFailed = await stuck.send({ code: 'figma.createFrame(); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.deepEqual([offFailed.created.length, offFailed.warnings], [1, undefined]);
+
+  const lost = await plugin().send({ cleanOnFail: true, code: 'figma.createFrame(); figma.getNodeByIdAsync = async () => { throw Error("\u8bfb\u53d6\u5931\u8d25"); }; throw Error("\u811a\u672c\u5931\u8d25");' });
+  assert.match(lost.error, /\u811a\u672c\u5931\u8d25/);
+  assert.equal(lost.created, undefined);
+  assert.match(lost.warnings[0], /Failed to list or clean up created nodes.*\u8bfb\u53d6\u5931\u8d25/);
+
+  const f = plugin();
+  const r = await f.send({ cleanOnFail: true, code: 'figma.createFrame(); await figma.setCurrentPageAsync(await figma.getNodeByIdAsync("2:1")); figma.createFrame(); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.deepEqual(r.created, [info('10:1', 'FRAME')]);
+  assert.deepEqual([f.doc.all.get('10:1').removed, f.doc.all.get('10:2').removed, f.doc.other.children.map(n => n.id)], [true, false, ['10:2']]);
+});
+
 // -- Single-task execution ------------------------------------------------
 test('A second task arriving during execution is discarded without snapshot, execution, or result, while the first completes normally', async () => {
   const f = plugin({ checkpoint: 'wait' });
@@ -516,5 +670,25 @@ test('result.json retains only changes on success and keeps after as evidence on
   assert.equal(failure.executionStarted, true);
   assert.equal(failure.after.characters, '\u90e8\u5206');
   assert.equal('before' in failure, false);
+  assert.deepEqual(h.errors, []);
+});
+
+test('--clean-on-fail travels through job.json, result and summary created/cleaned lists, with guidance explaining the disposition of new nodes', { timeout: 20000 }, async t => {
+  const h = await harness(t);
+  const script = await writeScript(h.cwd, 'leaky.js', 'target.name = "\u6539\u8fc7"; figma.createFrame(); figma.createRectangle(); throw Error("\u4e2d\u9014\u5931\u8d25");');
+  const kept = await h.run('run', script);
+  assert.equal(kept.code, 1);
+  assert.deepEqual(kept.json.created.map(n => n.id), ['10:1', '10:2']);
+  assert.match(kept.json.instruction, /created 2 node\(s\) \(see created\), which may contain existing layers: inspect their subtrees, then delete them, or add --clean-on-fail next time.*do not replay the script/);
+  assert.deepEqual([h.doc.all.get('10:1').removed, h.doc.all.get('10:2').removed], [false, false]);
+
+  const cleaned = await h.run('run', script, '--clean-on-fail');
+  assert.equal(cleaned.code, 1);
+  const job = JSON.parse(await fs.readFile(cleaned.json.evidence + '/job.json', 'utf8')), result = JSON.parse(await fs.readFile(cleaned.json.resultFile, 'utf8'));
+  assert.equal(job.cleanOnFail, true);
+  assert.deepEqual([result.created.map(n => n.id), result.cleaned.map(n => n.id), result.cleanFailed, result.undoBoundaries.clean], [['10:3', '10:4'], ['10:3', '10:4'], [], 'committed']);
+  assert.deepEqual(cleaned.json.cleaned, result.cleaned);
+  assert.match(cleaned.json.instruction, /deleted 2 node\(s\) created by this job; modified existing nodes were not rolled back; .*inspect first.*do not replay the script/);
+  assert.deepEqual([h.doc.all.get('10:3').removed, h.doc.all.get('10:4').removed, h.doc.frame.name], [true, true, '\u6539\u8fc7']);
   assert.deepEqual(h.errors, []);
 });

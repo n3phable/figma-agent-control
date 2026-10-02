@@ -63,6 +63,7 @@ Use `--data file.json` for parameters. `/dev/stdin` supports a pipe or heredoc w
 | Writes whose common ancestor contains at most 2,000 nodes at full depth | Target that ancestor without `--depth`, so nested changes remain visible |
 | Writes across a larger page or Section | Keep the common ancestor as target and set an explicit depth, often `--depth 2` for page → Section → frame |
 | A visible change or a visual-preserving refactor | Add `--expect changed` or `--expect unchanged` on the smallest relevant target |
+| Rebuilding content by deleting then creating nodes | Add `--clean-on-fail`, and understand that it cannot restore the deleted original |
 
 A shallow snapshot trades detail for coverage. Changes below its depth are invisible; moves across that boundary appear as creations or deletions. Do not point `--node` at a small unrelated node to evade the snapshot budget: the before evidence, final recheck, and change set would cover the wrong content.
 
@@ -175,7 +176,25 @@ The default summary includes `output` only up to 16 KiB, then gives a reading co
 
 Each script has separate evidence and Undo boundaries. Stop on the first nonzero exit; do not continue writing into a partial result:
 
+```sh
+code=0
+for step in colors layout content; do
+  figma-agent-control run "scripts/$step.js" --lib helpers.js --data data.json --clean-on-fail > "out-$step.json" 2> "receipt-$step.log" || { code=$?; break; }
+done
+# If code is nonzero, inspect out-$step.json before continuing.
+```
+
 Store recurring sequences in a project script with parameters. `break` itself returns zero, so save the failing command's status first, or use `set -e` in an appropriate shell script. On exit `2`, stop the sequence and wait for or review that job; do not skip to the next step.
+
+### Partial script failure
+
+When `executionStarted` is `true`, earlier writes may already exist. **Do not replay the script.** Inspect the current document and repair only what is necessary.
+
+- `--clean-on-fail` attempts immediate cleanup after the script's closing Undo boundary, with a separate cleanup boundary. It protects nodes that existed on the target page before execution, including those inside new containers. Successful deletions are `cleaned`; protected nodes and failures are `cleanFailed`.
+
+Cleanup preserves existing edits, moves, renames and deletions. A delete-then-rebuild script can leave an empty location after cleanup; undoing that cleanup step restores the unfinished replacement. Inspect the original edits separately and repair them deliberately.
+
+Limits matter: creation tracking observes only the target page and only script-thrown failures, not later serialization failures. New components may not emit creation events. Locally created canvas content during the run can be counted; remote collaborators' events are excluded. Existing nodes imported from another page are outside immediate cleanup's protection. Tracking failures are reported as warnings. If the closing Undo boundary fails, nodes are listed but not automatically cleaned. Summary lists are capped at 50 entries, with omitted counts.
 
 ## Visual verification
 
@@ -305,3 +324,7 @@ Keep `.figma-agent-control/` out of version control. It includes credentials and
 ## Connection scope
 
 The bridge uses port 32523. Keep only one project bridge active on the machine. The globally installed plugin can reconnect after a bridge restart; stop the previous project before connecting another.
+
+## Failed-run cleanup
+
+A script-thrown failure reports surviving top-level nodes created on the target page. Inspect them before manual repair. --clean-on-fail can delete eligible new nodes as a separate Undo step; existing edits are not rolled back. Use inspection evidence to guide any remaining repair.
