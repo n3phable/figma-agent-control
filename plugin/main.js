@@ -6,7 +6,7 @@
  */
 /** @import { Bounds, ExtractImage, ExtractNode, ExtractRequest, ExtractStats, PluginExtractOutput, TextSegment } from '../src/html/extract-contract.js' */
 // ui.html relays bridge-built jobs; /poll adds binding and the iframe adds channelNonce. Declare only fields read by the plugin.
-/** @typedef {{ id: string, operation: string, channelNonce: string, binding: { fileKey: string, nodeId: string }, targetNodeId?: string, nodes?: string[],
+/** @typedef {{ id: string, operation: string, channelNonce: string, binding: { fileKey: string, nodeId: string }, targetNodeId?: string, nodes?: string[], names?: string[],
  *   snapshotDepth?: number, scale?: number, islands?: string[], expect?: string, code: string, libs?: { name: string, code: string }[], data?: unknown,
  *   risk?: { level: string, reason?: string }, scriptHash?: string, cleanOnFail?: boolean }} Job */
 /** @typedef {(message: Record<string, unknown>) => void} Send */
@@ -19,6 +19,8 @@ let checkpointWaiter = null;
 let approvalWaiter = null;
 // Web components often have nested wrappers; cover typical component trees without increasing the total node budget.
 const SNAPSHOT_DEPTH = 32, NODE_BUDGET = 2000;
+// If snapshots exceed budget, trade depth for scope on writes. Shrinking the target outside the written area would make change sets, write-ahead evidence and final checks describe unrelated nodes.
+const SCOPE_HINT = 'for write jobs, target the ancestor that covers all writes (usually the page or a Section) and add --depth (2 for page -> Section -> frame); do not retarget a small node outside the write scope, or the change set will be empty; when the target is a page, omit --expect and do the visual check with preview on specific frames';
 // Combined image/binary return limit, measured as base64.
 const BINARY_LIMIT = 48 * 1024 * 1024;
 const BINARY_KEY = '__figmaAgentControlBinary';
@@ -77,7 +79,7 @@ const KEYS = [
 const prop = (node, key) => /** @type {Record<string, unknown>} */ (node)[key];
 /** @param {BaseNode} node @param {number} maxDepth @returns {Snapshot} */
 function tree(node, maxDepth, depth = 0, budget = { count: 0 }) {
-  if (++budget.count > NODE_BUDGET) throw Error(`Target exceeds the ${NODE_BUDGET}-node budget; narrow the target with --node, or add --depth for read-only jobs`);
+  if (++budget.count > NODE_BUDGET) throw Error(`Target exceeds the ${NODE_BUDGET}-node budget: ${SCOPE_HINT}; for read-only jobs, add --depth or narrow with --node`);
   /** @type {Snapshot} */
   const value = { id: node.id, name: node.name, type: node.type };
   for (const key of KEYS) if (key in node && prop(node, key) !== undefined) value[key] = copy(prop(node, key));
@@ -110,6 +112,31 @@ function within(node, rootId) {
 function pageOf(node) {
   while (node && node.type !== 'PAGE') node = node.parent;
   return node;
+}
+// Distinguish missing nodes from out-of-scope nodes: scripts may recreate by name and change IDs. A missing binding itself requires a separate error because target relocation cannot proceed.
+/** @param {BaseNode | null} node @param {string} id @param {string} rootId @returns {BaseNode} */
+function inBinding(node, id, rootId) {
+  if (!node) throw Error(id === rootId ? `Bound node ${id} does not exist; it may have been deleted. Restore it in Figma, or run init again in a new project directory` : `Local target ${id} does not exist; it may have been deleted or recreated. Locate it again`);
+  if (!within(node, rootId)) throw Error(`Local target ${id} is outside the binding scope`);
+  return node;
+}
+
+// -- Preview targets by name --------------------------------------------
+// Search binding children and descend only through SECTION nodes. Repeated layer names inside frames, components, instances and groups are excluded.
+// Resolve every exact name before exporting anything; missing or ambiguous names fail without falling back to the binding. Return IDs, then apply normal scope checks for each export.
+/** @param {SceneNode | PageNode} root @param {string[]} names @returns {string[]} */
+function idsByName(root, names) {
+  const scope = /** @type {{ node: SceneNode, at: string }[]} */ ([]);
+  /** @param {SceneNode | PageNode} parent @param {string} at */
+  const visit = (parent, at) => { if ('children' in parent) for (const node of parent.children) { scope.push({ node, at }); if (node.type === 'SECTION') visit(node, `Section "${node.name}"`); } };
+  visit(root, 'bound node root');
+  const list = (/** @type {string[]} */ items) => items.slice(0, 20).join(', ') + (items.length > 20 ? `, ... (${items.length} total)` : '');
+  return names.map(name => {
+    const found = scope.filter(entry => entry.node.name === name);
+    if (found.length === 1) return found[0].node.id;
+    if (found.length) throw Error(`Name "${name}" has ${found.length} matches: ${list(found.map(entry => `${entry.node.id} (${entry.at})`))}; remove the duplicate names first, or use --node instead`);
+    throw Error(`Name "${name}" not found among the children and Sections of the bound node; names in scope: ${list([...new Set(scope.map(entry => entry.node.name))]) || 'none'}`);
+  });
 }
 
 // -- Return values ------------------------------------------------------
@@ -568,14 +595,13 @@ figma.ui.onmessage = async job => {
     if (figma.editorType !== 'figma' || figma.mode !== 'default') throw Error('Run the plugin in Figma Design edit mode');
     // Compile first: syntax errors return before snapshots, approval or writes, preserving executionStarted false.
     const program = run ? compile(job) : null;
-    const candidate = await figma.getNodeByIdAsync(job.targetNodeId ?? job.binding.nodeId);
+    const targetId = job.targetNodeId ?? job.binding.nodeId, candidate = await figma.getNodeByIdAsync(targetId);
     if (candidate === null && job.operation === 'inspect') {
-      send({ id: job.id, ok: false, executionStarted: false, targetMissing: true, missingNodeId: job.targetNodeId ?? job.binding.nodeId, fileVerified: figma.fileKey,
+      send({ id: job.id, ok: false, executionStarted: false, targetMissing: true, missingNodeId: targetId, fileVerified: figma.fileKey,
         error: 'Queried the original target in the bound file; the node no longer exists. Verify against the original job and the canvas', recovery: 'Keep the missing-node evidence; do not replay the original script' });
       return;
     }
-    if (!candidate || !within(candidate, job.binding.nodeId)) throw Error('The local target does not exist or is outside the binding scope');
-    target = /** @type {SceneNode | PageNode} */ (candidate);
+    target = /** @type {SceneNode | PageNode} */ (inBinding(candidate, targetId, job.binding.nodeId));
     page = pageOf(target);
     if (!page) throw Error('Target is not inside a page');
     await page.loadAsync();
@@ -587,17 +613,16 @@ figma.ui.onmessage = async job => {
     else if (job.operation === 'variables') output = await localVariables(target);
     else if (job.operation === 'extract') output = await extract(target, job, page);
     else if (job.operation === 'preview') {
-      // Validate binding scope for every batch export; any out-of-scope node fails the entire job.
+      // Validate every batch target's binding scope; missing or out-of-scope nodes fail the whole task. Resolve all names to IDs first, exporting nothing if any resolution fails, then use the same export path.
       const images = [];
-      for (const id of Array.isArray(job.nodes) ? job.nodes : [target.id]) {
-        const node = id === target.id ? target : await figma.getNodeByIdAsync(id);
-        if (!node || !within(node, job.binding.nodeId)) throw Error('Preview node does not exist or is outside the binding scope: ' + id);
-        images.push({ nodeId: node.id, name: node.name, base64: await render(/** @type {SceneNode | PageNode} */ (node), job.scale, budget) });
+      for (const id of Array.isArray(job.names) ? idsByName(target, job.names) : Array.isArray(job.nodes) ? job.nodes : [target.id]) {
+        const node = /** @type {SceneNode | PageNode} */ (inBinding(id === target.id ? target : await figma.getNodeByIdAsync(id), id, job.binding.nodeId));
+        images.push({ nodeId: node.id, name: node.name, base64: await render(node, job.scale, budget) });
       }
       send({ id: job.id, ok: true, images, bindingVerified: { fileKey: figma.fileKey, pageId: page.id, nodeId: target.id } });
       return;
     } else if (run) {
-      if (declaredDepth === null && isTruncated(before)) throw Error('Before-snapshot truncated; the script did not run. Narrow the target with --node');
+      if (declaredDepth === null && isTruncated(before)) throw Error(`Before-snapshot truncated (deeper than ${SNAPSHOT_DEPTH} levels); the script did not run. Retarget a shallower node that still covers all writes to keep full-depth evidence; otherwise, ${SCOPE_HINT}`);
       if (job.risk?.level === 'high') {
         const asked = Date.now();
         try { await requestApproval(job, send); } finally { approvalMs = Date.now() - asked; }

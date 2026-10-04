@@ -121,6 +121,14 @@ Run output and extract output share a binary channel.
 
 - Binary data is excluded from the iframe's structured-result limit. Base64 strings returned by a script are not excluded and can cause the whole return value to be discarded.
 
+### Preview by name
+
+Names match exact strings among the bound node's children, recursively entering Sections only. Sections themselves can match; frames, groups, components, and instances are not traversed.
+
+All names are resolved after loading the page and before any export. Any missing or ambiguous name fails with `executionStarted:false` and exports nothing. Missing-name errors list up to twenty available names; ambiguous-name errors list the count and up to twenty IDs and locations. Resolved nodes then use the ordinary per-node scope check and export path.
+
+`job.json` records the names. `result.json` records resolved `images[].nodeId`. The bridge checks image count, ordered names, and valid node IDs before accepting the evidence.
+
 ### Extract
 
 Extract is a built-in read, not a script. It has no approval, write-ahead checkpoint, or Undo boundary. It loads the target page without changing the page the user is viewing. Every failure has `executionStarted:false`; interrupted extracts can be resubmitted.

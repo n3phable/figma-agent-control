@@ -26,18 +26,18 @@ const PIXEL_LIMIT = 16e6, JOB_PIXEL_LIMIT = 32e6;
 /** @import { BinaryFile } from './html/extract-contract.js' */
 // Task records come from buildJob and persist to job.json; session reloads prior-session records as recovered.
 /** @typedef {{ id: string, operation: string, code: string, libs?: { name: string, code: string }[], targetNodeId?: string, snapshotDepth?: number,
- *   nodes?: string[], scale?: number, label?: string, data?: unknown, expect?: string, tolerance?: number, islands?: string[],
+ *   nodes?: string[], names?: string[], scale?: number, label?: string, data?: unknown, expect?: string, tolerance?: number, islands?: string[],
  *   risk: { level: string, reason?: string }, state: string, createdAt: string, claimedAt?: string, finishedAt?: string, scriptHash: string,
  *   bindingId: string, recovered?: boolean, cleanOnFail?: boolean }} Job */
 // Request bodies and plugin results are external JSON. Each route validates fields before use; the type system offers no stronger guarantee, so these parameters use any.
 
 /** @param {{ level?: string, reason?: string } | undefined} risk */
 const normalizeRisk = risk => risk?.level === 'high' ? { level: 'high', reason: risk.reason } : { level: 'normal' };
-// A requestId must always describe identical work: resubmission retrieves the original job, never new content. Append islands and cleanOnFail to preserve comparisons with older records;
+// A requestId must always describe identical work: resubmission retrieves the original task, never executes new content under an old ID. Append islands, cleanOnFail and names to preserve comparisons with older records;
 // compare cleanOnFail by whether it is true, treating omission and false equally.
 /** @param {Job} job */
 const specKey = job => JSON.stringify([job.bindingId, job.operation, job.code ?? '', job.libs ?? [], job.targetNodeId ?? null, job.snapshotDepth ?? null,
-  job.nodes ?? null, job.scale ?? null, job.data ?? null, normalizeRisk(job.risk), job.expect ?? null, job.tolerance ?? null, job.islands ?? null, job.cleanOnFail === true]);
+  job.nodes ?? null, job.scale ?? null, job.data ?? null, normalizeRisk(job.risk), job.expect ?? null, job.tolerance ?? null, job.islands ?? null, job.cleanOnFail === true, job.names ?? null]);
 
 // -- Task validation ----------------------------------------------------
 // Pure normalization of CLI requests into task records; reject every out-of-range field.
@@ -52,6 +52,9 @@ function buildJob(data, binding) {
     || data.libs.reduce((/** @type {number} */ n, /** @type {{ code: string }} */ lib) => n + Buffer.byteLength(lib.code), 0) > 2 * 1024 * 1024)) throw Error('libs is only for run: at most 20, total <= 2 MiB (UTF-8)');
   if (data.snapshotDepth !== undefined && (!['run', 'inspect'].includes(data.operation) || !Number.isInteger(data.snapshotDepth) || data.snapshotDepth < 1 || data.snapshotDepth > 31)) throw Error('snapshotDepth is only for run or inspect and must be an integer 1-31');
   if (data.nodes !== undefined && (data.operation !== 'preview' || !Array.isArray(data.nodes) || data.nodes.length < 2 || data.nodes.length > 50 || data.nodes.some((/** @type {unknown} */ id) => !isNodeId(id)) || new Set(data.nodes).size !== data.nodes.length || data.nodes[0] !== (data.targetNodeId ?? binding.nodeId))) throw Error('nodes is only for preview: 2-50 unique node IDs, the first equal to the target node');
+  // names: preview exports by name, resolved by the plugin beneath the binding node; mutually exclusive with targetNodeId and nodes.
+  if (data.names !== undefined && (data.operation !== 'preview' || data.targetNodeId !== undefined || data.nodes !== undefined || !Array.isArray(data.names) || !data.names.length || data.names.length > 50
+    || data.names.some((/** @type {unknown} */ name) => typeof name !== 'string' || !name || name.length > 200) || new Set(data.names).size !== data.names.length)) throw Error('names is only for preview: 1-50 unique, non-empty names of <= 200 characters; cannot be combined with targetNodeId or nodes');
   if (data.expect !== undefined && (!run || !['changed', 'unchanged'].includes(data.expect))) throw Error('expect is only for run: changed or unchanged');
   if (data.tolerance !== undefined && (data.expect === undefined || !Number.isInteger(data.tolerance) || data.tolerance < 0 || data.tolerance > 1e8)) throw Error('tolerance requires expect and must be a non-negative integer pixel count');
   if (data.islands !== undefined && (data.operation !== 'extract' || !Array.isArray(data.islands) || !data.islands.length || data.islands.length > 500 || data.islands.some((/** @type {unknown} */ id) => !isNodeId(id)) || new Set(data.islands).size !== data.islands.length)) throw Error('islands is only for extract: 1-500 unique node IDs');
@@ -63,7 +66,7 @@ function buildJob(data, binding) {
   if (data.risk !== undefined && !['normal', 'high'].includes(data.risk?.level)) throw Error('Invalid risk declaration');
   if (risk.level === 'high' && (!run || typeof risk.reason !== 'string' || !risk.reason.trim() || risk.reason.length > 1000)) throw Error('A high-risk declaration is only for run and needs a reason of <= 1000 characters');
   if (data.requestId !== undefined && !isJobId(data.requestId)) throw Error('requestId must be a UUID');
-  const optional = Object.fromEntries(['libs', 'targetNodeId', 'snapshotDepth', 'nodes', 'scale', 'label', 'data', 'expect', 'tolerance', 'islands', 'cleanOnFail'].filter(key => data[key] !== undefined).map(key => [key, data[key]]));
+  const optional = Object.fromEntries(['libs', 'targetNodeId', 'snapshotDepth', 'nodes', 'names', 'scale', 'label', 'data', 'expect', 'tolerance', 'islands', 'cleanOnFail'].filter(key => data[key] !== undefined).map(key => [key, data[key]]));
   const code = run ? data.code : '';
   return { id: data.requestId ?? crypto.randomUUID(), operation: data.operation, code, ...optional, risk, state: 'queued', createdAt: new Date().toISOString(),
     scriptHash: hash(JSON.stringify([data.libs ?? [], code])), bindingId: binding.id };
@@ -119,11 +122,12 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       return { pixels: imageStats(bytes) };
     } catch { return {}; }
   };
-  // preview writes images/ in request order; results contain only paths, dimensions and pixel summaries.
+  // preview writes images/ in request order and returns only paths, dimensions and pixel summaries. Name-based requests verify each name; plugin-resolved node IDs need format validation because they also enter filenames.
   /** @param {Job} job @param {any} data @param {{ used: number }} budget */
   async function saveImages(job, data, budget) {
-    const expected = job.nodes ?? [job.targetNodeId ?? binding.nodeId];
-    if (job.operation !== 'preview' || !Array.isArray(data.images) || data.images.length !== expected.length || data.images.some((/** @type {any} */ image, /** @type {number} */ i) => image?.nodeId !== expected[i])) throw Error('Preview images do not match the requested nodes');
+    const names = job.names, expected = names ?? job.nodes ?? [job.targetNodeId ?? binding.nodeId];
+    const mismatch = (/** @type {any} */ image, /** @type {number} */ i) => names ? image?.name !== names[i] || !isNodeId(image?.nodeId) : image?.nodeId !== expected[i];
+    if (job.operation !== 'preview' || !Array.isArray(data.images) || data.images.length !== expected.length || data.images.some(mismatch)) throw Error('Preview images do not match the requested nodes');
     data.images = await Promise.all(data.images.map(async (/** @type {any} */ image, /** @type {number} */ i) => {
       const bytes = bytesOf(image.base64), size = pngSize(bytes);
       return { nodeId: image.nodeId, name: String(image.name ?? '').slice(0, 200), ...await writeFile(job, `images/${i + 1}-${image.nodeId.replace(/[^0-9A-Za-z]+/g, '-')}.png`, bytes), ...size, ...pixelSummary(bytes, budget) };

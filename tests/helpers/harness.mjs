@@ -61,14 +61,15 @@ export function createDoc() {
   frame.children.push(text, swatch); text.parent = frame; swatch.parent = frame;
   const all = new Map([page, frame, text, swatch, other].map(n => [n.id, n]));
   const pixel = n => { const c = n.fills?.[0]?.color ?? { r: 0.5, g: 0.5, b: 0.5 }; return [c.r, c.g, c.b].map(v => Math.round(v * 255)).concat(255); };
-  for (const n of all.values()) if (n.type !== 'PAGE') n.exportAsync = async options => {
+  const exportable = n => { n.exportAsync = async options => {
     const scale = options?.constraint?.value ?? 1, w = Math.max(1, Math.round(2 * scale)), h = Math.max(1, Math.round(2 * scale));
     return encodePng(w, h, new Uint8Array(Array.from({ length: w * h }, () => pixel(n)).flat()));
-  };
+  }; };
+  for (const n of all.values()) if (n.type !== 'PAGE') exportable(n);
   // Append new nodes to parent, as Figma create* appends to the current page; IDs are 10:<ordinal> and names are <type>-<ordinal>.
   const create = (type, parent, { origin = 'LOCAL' } = {}) => {
     const n = node(`10:${++seq}`, type, `${type}-${seq}`, { width: 10, height: 10, ...(type === 'RECTANGLE' ? {} : { children: [] }) });
-    parent.appendChild(n); all.set(n.id, n);
+    parent.appendChild(n); all.set(n.id, n); exportable(n);
     queue({ type: 'CREATE', origin }, n);
     return n;
   };

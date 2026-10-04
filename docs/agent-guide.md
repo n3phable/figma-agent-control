@@ -59,6 +59,7 @@ Use `--data file.json` for parameters. `/dev/stdin` supports a pipe or heredoc w
 
 | Work | Target and snapshot depth |
 |---|---|
+| Built-in read or preview | Use `inspect`, `preview --node`, or `preview --name` |
 | A custom read-only script | Use `run --depth 1` to reduce snapshot cost; it still uses the run lifecycle |
 | Writes whose common ancestor contains at most 2,000 nodes at full depth | Target that ancestor without `--depth`, so nested changes remain visible |
 | Writes across a larger page or Section | Keep the common ancestor as target and set an explicit depth, often `--depth 2` for page → Section → frame |
@@ -203,6 +204,8 @@ Limits matter: creation tracking observes only the target page and only script-t
 Choose the smallest relevant target because it is exported twice. Masks, hidden layers and covering bitmaps can hide a property change, so inspect the rendered result as well as the assigned values. The check covers the target's own export. Use `preview` and `image-diff <before> <after> --expect changed|unchanged` to inspect other regions.
 
 ### Previews and batch exports
+
+Without selectors, `preview` exports the entire bound node. Repeated `--node` exports multiple IDs. Repeated `--name` resolves exact names among the bound node's children and recursively inside Sections; it does not descend into frames, groups, components, or instances. Missing or ambiguous names fail the whole request before exporting. Use IDs when names are not unique.
 
 For a larger batch, return bytes directly:
 

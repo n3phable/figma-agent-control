@@ -23,7 +23,9 @@ export const COMMANDS = {
     positionals: [1, 1], submit: true, options: { ...node, lib: { type: 'string', multiple: true }, data: { type: 'string' }, depth: { type: 'string' }, expect: { type: 'string' }, tolerance: { type: 'string' },
       scale: { type: 'string' }, 'request-id': { type: 'string' }, 'high-risk': { type: 'string' }, 'clean-on-fail': { type: 'boolean' }, ...wait } },
   inspect: { usage: 'inspect [--node <ID>] [--depth <1-31>]: read the node tree (including masks and the ancestor visibility chain)', positionals: [0, 0], submit: true, options: { ...node, depth: { type: 'string' }, ...wait } },
-  preview: { usage: 'preview [--node <ID>]... [--scale <0.1-4>]: export PNG; repeat --node for batch export', positionals: [0, 0], submit: true, options: { node: { type: 'string', multiple: true }, scale: { type: 'string' }, ...wait } },
+  preview: { usage: 'preview [--node <ID>]... [--name <name>]... [--scale <0.1-4>]: export PNG; without --node or --name exports the whole bound node; --node is repeatable for batch export; '
+    + '--name is repeatable and matches names exactly among the bound node\'s children and inside Sections among them (does not descend into frames, components, instances or groups); fails if a name is missing or duplicated; mutually exclusive with --node',
+    positionals: [0, 0], submit: true, options: { node: { type: 'string', multiple: true }, name: { type: 'string', multiple: true }, scale: { type: 'string' }, ...wait } },
   variables: { usage: 'variables [--node <ID>]: local variable catalog and binding counts within the target', positionals: [0, 0], submit: true, options: { ...node, ...wait } },
   extract: { usage: 'extract [--node <ID>] [--scale <0.1-4>] [--island <ID>]... [--timeout <seconds>] [--no-wait] [--full]: read-only extraction of pixel-replica data (node tree, reference PNG, bitmaps, SVG islands); --island adds islands, exit code 1 if any is skipped',
     positionals: [0, 0], submit: true, options: { ...node, scale: { type: 'string' }, island: { type: 'string', multiple: true }, ...wait } },
@@ -65,12 +67,12 @@ const expect = value => {
 };
 
 // parseArgs sees only ParseArgsOptionsConfig and a union of all option value types; COMMANDS above defines each option's exact type.
-/** @typedef {{ node?: string | string[], lib?: string[], island?: string[], data?: string, depth?: string, expect?: string, tolerance?: string, scale?: string,
+/** @typedef {{ node?: string | string[], name?: string[], lib?: string[], island?: string[], data?: string, depth?: string, expect?: string, tolerance?: string, scale?: string,
  *   'request-id'?: string, 'high-risk'?: string, 'clean-on-fail'?: boolean, timeout?: string, 'no-wait'?: boolean, full?: boolean, force?: boolean, inspect?: string,
  *   'previous-plugin-stopped'?: boolean, threshold?: string, since?: string, from?: string[], out?: string, overrides?: string, 'no-check'?: boolean, budget?: string,
  *   zoom?: string }} Values */
 // Normalized options, read by bin according to the command.
-/** @typedef {{ targetNodeId?: string, nodes?: string[], snapshotDepth?: number, timeoutSeconds?: number, threshold?: number, expect?: string, tolerance?: number,
+/** @typedef {{ targetNodeId?: string, nodes?: string[], names?: string[], snapshotDepth?: number, timeoutSeconds?: number, threshold?: number, expect?: string, tolerance?: number,
  *   scale?: number, requestId?: string, risk?: { level: 'high', reason: string }, cleanOnFail?: true, islands?: string[], libFiles?: string[], dataFile?: string, since?: string,
  *   inspectId?: string, previousPluginStopped?: true, force?: true, full?: true, noWait?: true,
  *   fromIds?: string[], outDir?: string, overridesFile?: string, noCheck?: true, budgetSeconds?: number, zoomId?: string }} Options */
@@ -96,6 +98,16 @@ export function parse(argv) {
     if (new Set(ids).size !== ids.length || ids.length > 50) throw Error('--node takes at most 50 nodes, without duplicates');
     o.targetNodeId = ids[0];
     if (ids.length > 1) o.nodes = ids;
+  }
+  // preview --name accepts 1-50 distinct, nonempty exact strings, each at most 200 characters. Check in CLI to name the offending option; the bridge validates again.
+  if (v.name !== undefined) {
+    const names = v.name, twice = names.find((name, i) => names.indexOf(name) !== i);
+    if (v.node !== undefined) throw Error('--name cannot be combined with --node');
+    if (names.some(name => !name)) throw Error('--name must not be empty');
+    if (twice !== undefined) throw Error(`--name has a duplicate name: ${twice}`);
+    if (names.length > 50) throw Error('--name takes at most 50 names');
+    if (names.some(name => name.length > 200)) throw Error('--name values must be at most 200 characters each');
+    o.names = names;
   }
   if (v.depth !== undefined) o.snapshotDepth = integer(v.depth, 1, 31, '--depth must be an integer 1-31');
   if (v.timeout !== undefined) o.timeoutSeconds = integer(v.timeout, 1, 300, '--timeout must be 1-300 seconds');

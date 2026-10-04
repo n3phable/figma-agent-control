@@ -127,6 +127,7 @@ test('Every protocol.md job-field constraint rejects out-of-bounds values with 4
   await b.submit({ operation: 'inspect' });
   const preview = { operation: 'preview', targetNodeId: '1:3' };
   const nodes = n => ['1:3', ...Array.from({ length: n - 1 }, (_, i) => `2:${i + 1}`)];
+  const names = n => Array.from({ length: n }, (_, i) => `\u753b\u6846 ${i}`), named = list => ({ operation: 'preview', names: list });
   const lib = (name, code) => ({ name, code });
   const rejected = {
     'unknown operation': { operation: 'rollback' },
@@ -148,6 +149,17 @@ test('Every protocol.md job-field constraint rejects out-of-bounds values with 4
     'duplicate nodes': { ...preview, nodes: ['1:3', '1:3'] },
     'first node is not the target': { ...preview, nodes: ['1:4', '1:3'] },
     'nodes on inspect': { operation: 'inspect', targetNodeId: '1:3', nodes: ['1:3', '1:4'] },
+    'names on run': { ...RUN, names: ['\u753b\u6846'] },
+    'names on inspect': { operation: 'inspect', names: ['\u753b\u6846'] },
+    'names with targetNodeId': { ...preview, names: ['\u753b\u6846'] },
+    'names with nodes': { operation: 'preview', nodes: ['1:2', '1:3'], names: ['\u753b\u6846'] },
+    'empty names array': named([]),
+    '51 names': named(names(51)),
+    'duplicate names': named(['\u753b\u6846', '\u753b\u6846']),
+    'names contain empty string': named(['\u753b\u6846', '']),
+    'name exceeds 200 characters': named(['\u5b57'.repeat(201)]),
+    'names contain nonstring': named(['\u753b\u6846', 1]),
+    'names is not an array': named('\u753b\u6846'),
     'scale on inspect': { operation: 'inspect', scale: 1 },
     'scale on run without expect': { ...RUN, scale: 1 },
     'scale below 0.1': { ...preview, scale: 0.09 },
@@ -174,6 +186,9 @@ test('Every protocol.md job-field constraint rejects out-of-bounds values with 4
     'snapshotDepth 31（inspect）': { operation: 'inspect', snapshotDepth: 31 },
     '2 nodes': { ...preview, nodes: ['1:3', '1:4'] },
     '50 nodes': { ...preview, nodes: nodes(50) },
+    '1 name': named(['\u9996\u9875 · 1440']),
+    '50 names': named(names(50)),
+    '200-character name': named(['\u5b57'.repeat(200)]),
     'scale 0.1（preview）': { ...preview, scale: 0.1 },
     'scale 4 on run with expect': { ...RUN, expect: 'changed', scale: 4 },
     'data exactly 1 MiB': { ...RUN, data: 'a'.repeat(MiB - 2) },
@@ -412,7 +427,37 @@ test('/complete allows 72 MiB for images and binaries; other routes allow 16 MiB
   assert.equal((await json(path.join(b.run(job.id), 'result.json'))).output.length, 17 * MiB);
 });
 
+test('Preview names participate in requestId comparison: changed names/order, nodes substitution, or names omission are rejected', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const named = { operation: 'preview', requestId: uuid(1), names: ['\u6807\u9898', '\u8272\u5757'] };
+  assert.equal((await b.cli('/job', named)).status, 202);
+  assert.deepEqual(await b.cli('/job', named).then(r => [r.status, r.body.id, r.body.reused]), [200, uuid(1), true]);
+  for (const change of [{ names: ['\u6807\u9898'] }, { names: ['\u8272\u5757', '\u6807\u9898'] }, { names: undefined, nodes: ['1:2', '1:3'] }, { names: undefined }])
+    assert.equal((await b.cli('/job', { ...named, ...change })).status, 400, JSON.stringify(change));
+  assert.deepEqual((await json(path.join(b.run(uuid(1)), 'job.json'))).names, ['\u6807\u9898', '\u8272\u5757']);
+});
+
 // -- Persisted evidence ---------------------------------------------------
+test('Named previews validate image count, names, and node IDs; images use resolved IDs and job.json stores only names', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const red = png(2, 2, RED), image = (name, nodeId) => ({ nodeId, name, base64: b64(red) });
+  const job = await b.deliver({ operation: 'preview', names: ['\u9996\u9875 · 1440', '\u8272\u5757'] });
+  for (const images of [
+    [image('\u9996\u9875 · 1440', '30:7')],
+    [image('\u8272\u5757', '1:4'), image('\u9996\u9875 · 1440', '30:7')],
+    [image('\u9996\u9875 · 1440', '../30:7'), image('\u8272\u5757', '1:4')],
+    [image('\u9996\u9875 · 1440', '30:7'), image('\u8272\u5757 ', '1:4')],
+  ]) assert.equal((await b.plugin('/complete', { id: job.id, ok: true, images, bindingVerified: verified('1:2') })).status, 400, JSON.stringify(images.map(i => [i.name, i.nodeId])));
+  assert.equal(await exists(path.join(b.run(job.id), 'result.json')), false);
+  const ok = await b.plugin('/complete', { id: job.id, ok: true, images: [image('\u9996\u9875 · 1440', '30:7'), image('\u8272\u5757', '1:4')], bindingVerified: verified('1:2') });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  const result = await json(path.join(b.run(job.id), 'result.json')), saved = await json(path.join(b.run(job.id), 'job.json'));
+  assert.deepEqual(result.images.map(i => [i.nodeId, i.name, i.file]), [['30:7', '\u9996\u9875 · 1440', 'images/1-30-7.png'], ['1:4', '\u8272\u5757', 'images/2-1-4.png']]);
+  assert.deepEqual([saved.names, saved.targetNodeId, saved.nodes], [['\u9996\u9875 · 1440', '\u8272\u5757'], undefined, undefined]);
+});
+
 test('Preview images use ordinal and node names; binary placeholders become files, before stays in checkpoints, and after is retained only for post-execution failures', OPTIONS, async t => {
   const b = await fixture(t);
   await b.poll();
