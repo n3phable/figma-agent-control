@@ -158,7 +158,7 @@ test('Change lists cap at 50 with omitted counts; declared depth adds a limitati
   const unknown = changeSet(frame([rect('1:3')]), frame([rect('1:3', { truncated: true })]));
   assert.deepEqual(Object.keys(unknown), ['scope', 'unavailable']);
   assert.equal(unknown.scope, 'subtree');
-  assert.match(unknown.unavailable, /truncated/);
+  assert.match(unknown.unavailable, /truncated.*target a shallower node that still covers all writes, or declare --depth/);
 });
 
 // -- Readback -------------------------------------------------------------

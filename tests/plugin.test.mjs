@@ -57,6 +57,19 @@ function trackExports(f, node, failOn) {
   let calls = 0;
   node.exportAsync = async options => { f.events.push('export'); if (++calls === failOn) throw Error('\u5bfc\u51fa\u5931\u8d25'); return original(options); };
 }
+// Named-export fixture: bound page 1:1 contains frame 1:2 (text and color block), a project Section with a detail frame, and an archive Section with a deeper frame.
+const PAGE_BINDING = { fileKey: 'example', nodeId: '1:1' };
+function namedDoc(f) {
+  const { doc } = f, section = doc.create('SECTION', doc.page), detail = doc.create('FRAME', section), archive = doc.create('SECTION', section), deep = doc.create('FRAME', archive);
+  Object.assign(section, { name: '\u9879\u76ee' }); Object.assign(detail, { name: '\u8be6\u60c5' }); Object.assign(archive, { name: '\u5f52\u6863' }); Object.assign(deep, { name: '\u6df1\u5904' });
+  return { section, detail, archive, deep };
+}
+// Track every exported node ID: name-resolution failure must not call exportAsync at all.
+function trackAll(f) {
+  const exported = [];
+  for (const n of f.doc.all.values()) if (n.exportAsync) { const original = n.exportAsync; n.exportAsync = options => { exported.push(n.id); return original(options); }; }
+  return exported;
+}
 
 // -- Compilation and libraries --------------------------------------------
 test('Libraries nest in order with earlier ones outside; body code can call them, same-name declarations shadow, and top-level library code runs inside Undo boundaries', async () => {
@@ -120,14 +133,15 @@ test('Top-level library and body runtime errors count as execution and return be
 });
 
 // -- Preconditions and snapshot budgets -----------------------------------
-test('Invalid binding prerequisites reject before snapshots: wrong fileKey, non-editing mode, out-of-scope target, or missing target', async () => {
+test('Binding precondition failures reject without snapshots: file mismatch, non-edit mode, out-of-scope/missing target, or missing bound node', async () => {
   const cases = [
     ['fileKey mismatch', f => { f.figma.fileKey = 'other'; }, {}, /does not match the binding/],
     ['Cannot verify fileKey', f => { f.figma.fileKey = ''; }, {}, /file key/],
     ['Dev Mode', f => { f.figma.mode = 'inspect'; }, {}, /edit mode/],
     ['FigJam', f => { f.figma.editorType = 'figjam'; }, {}, /edit mode/],
-    ['Target is outside binding scope', () => {}, { targetNodeId: '1:1' }, /binding scope/],
-    ['Target is missing', () => {}, { targetNodeId: '9:9' }, /does not exist/]
+    ['Target is outside binding scope', () => {}, { targetNodeId: '1:1' }, /^Error: Local target 1:1 is outside the binding scope$/],
+    ['Target is missing', () => {}, { targetNodeId: '9:9' }, /^Error: Local target 9:9 does not exist; it may have been deleted or recreated\. Locate it again$/],
+    ['Bound node is missing', () => {}, { binding: { ...BINDING, nodeId: '9:9' } }, /^Error: Bound node 9:9 does not exist; it may have been deleted\. Restore it in Figma, or run init again in a new project directory$/]
   ];
   for (const [name, setup, job, reason] of cases) {
     const f = plugin();
@@ -147,7 +161,7 @@ test('Without explicit depth, snapshots exceeding 2000 nodes or truncating are r
   wide.doc.frame.children = Array.from({ length: 2100 }, (_, i) => ({ id: `5:${i}`, type: 'TEXT', name: '\u5b57', parent: wide.doc.frame }));
   const tooMany = await wide.send({ code: 'figma.mark("script");' });
   assert.equal(tooMany.executionStarted, false);
-  assert.match(tooMany.error, /2000/);
+  assert.match(tooMany.error, /2000-node budget: for write jobs, target the ancestor that covers all writes \(usually the page or a Section\) and add --depth.*or the change set will be empty; when the target is a page, omit --expect and do the visual check with preview on specific frames; for read-only jobs, add --depth or narrow with --node/);
   assert.deepEqual(wide.events, []);
 
   const deep = plugin();
@@ -155,7 +169,7 @@ test('Without explicit depth, snapshots exceeding 2000 nodes or truncating are r
   for (let i = 0; i < 33; i++) { const child = { id: `6:${i}`, type: 'FRAME', name: '\u5c42', parent: node }; node.children = [child]; node = child; }
   const truncated = await deep.send({ targetNodeId: '1:4', code: 'figma.mark("script");' });
   assert.equal(truncated.executionStarted, false);
-  assert.match(truncated.error, /truncated/);
+  assert.match(truncated.error, /truncated \(deeper than 32 levels\); the script did not run\. Retarget a shallower node that still covers all writes to keep full-depth evidence; otherwise, for write jobs, target the ancestor that covers all writes.*--depth/);
   assert.deepEqual(deep.events, []);
 
   const shallow = plugin();
@@ -601,7 +615,7 @@ test('Missing inspect targets return targetMissing and fileVerified, but file mi
   assert.equal(wrongFile.fileVerified, undefined);
 });
 
-test('preview exports nodes in request order and scale; any out-of-scope node fails the entire job', async () => {
+test('preview exports multiple nodes in request order and scale; any missing/out-of-scope node fails the whole task with distinct errors', async () => {
   const f = plugin();
   const r = await f.send({ operation: 'preview', targetNodeId: '1:3', nodes: ['1:3', '1:4'], scale: 2 });
   assert.equal(r.ok, true, r.error);
@@ -616,9 +630,55 @@ test('preview exports nodes in request order and scale; any out-of-scope node fa
   f.doc.page.children.push(outside); f.doc.all.set(outside.id, outside);
   const rejected = await f.send({ operation: 'preview', targetNodeId: '1:3', nodes: ['1:3', '1:9'] });
   assert.equal(rejected.ok, false);
-  assert.match(rejected.error, /1:9/);
+  assert.match(rejected.error, /Local target 1:9 is outside the binding scope/);
   assert.equal(rejected.images, undefined);
   assert.deepEqual(f.events, []);
+  // Report missing nodes separately: scripts may recreate them with new IDs.
+  const missing = await f.send({ operation: 'preview', targetNodeId: '1:3', nodes: ['1:3', '9:9'] });
+  assert.match(missing.error, /Local target 9:9 does not exist; it may have been deleted or recreated\. Locate it again/);
+  assert.doesNotMatch(missing.error, /binding scope/);
+});
+
+test('Named preview matches exact children and nested Sections of the bound node, exports in request order, and can name Sections themselves', async () => {
+  const f = plugin(), { section, detail, deep } = namedDoc(f), exported = trackAll(f);
+  const r = await f.send({ operation: 'preview', binding: PAGE_BINDING, names: ['\u6df1\u5904', '\u753b\u677f', '\u8be6\u60c5', '\u9879\u76ee'] });
+  assert.equal(r.ok, true, r.error);
+  assert.deepEqual(r.images.map(i => [i.nodeId, i.name]), [[deep.id, '\u6df1\u5904'], ['1:2', '\u753b\u677f'], [detail.id, '\u8be6\u60c5'], [section.id, '\u9879\u76ee']]);
+  assert.deepEqual(exported, [deep.id, '1:2', detail.id, section.id]);
+  assert.equal(r.bindingVerified.nodeId, '1:1');
+});
+
+test('Named preview does not descend into frames; missing names or whitespace mismatches list in-scope names and export nothing', async () => {
+  const f = plugin();
+  namedDoc(f);
+  const exported = trackAll(f);
+  for (const names of [['\u6807\u9898'], ['\u8be6\u60c5', '\u8272\u5757'], ['\u753b\u677f ']]) {
+    const r = await f.send({ operation: 'preview', binding: PAGE_BINDING, names });
+    assert.deepEqual([r.ok, r.executionStarted, r.images], [false, false, undefined], names.join());
+    assert.match(r.error, /Name ".*" not found among the children and Sections of the bound node; names in scope: \u753b\u677f, \u9879\u76ee, \u8be6\u60c5, \u5f52\u6863, \u6df1\u5904$/, names.join());
+  }
+  assert.deepEqual(exported, []);
+});
+
+test('Duplicate names at root and in Sections report every candidate ID/location without falling back to the bound node or exporting', async () => {
+  const f = plugin(), { detail } = namedDoc(f);
+  detail.name = '\u753b\u677f';
+  const exported = trackAll(f);
+  const r = await f.send({ operation: 'preview', binding: PAGE_BINDING, names: ['\u6df1\u5904', '\u753b\u677f'] });
+  assert.deepEqual([r.ok, r.executionStarted, r.images], [false, false, undefined]);
+  assert.equal(r.error, `Error: Name "\u753b\u677f" has 2 matches: 1:2 (bound node root), ${detail.id} (Section "\u9879\u76ee"); remove the duplicate names first, or use --node instead`);
+  assert.deepEqual(exported, []);
+});
+
+test('Named preview still validates resolved-node binding scope before exporting', async () => {
+  const f = plugin(), { detail } = namedDoc(f), lookup = f.figma.getNodeByIdAsync;
+  // Move the frame to another page after name resolution but before ID lookup; binding is page 1:1.
+  f.figma.getNodeByIdAsync = async id => { if (id === detail.id) f.doc.other.appendChild(detail); return lookup(id); };
+  const exported = trackAll(f);
+  const r = await f.send({ operation: 'preview', binding: PAGE_BINDING, names: ['\u8be6\u60c5'] });
+  assert.deepEqual([r.ok, r.executionStarted], [false, false]);
+  assert.match(r.error, new RegExp(`Local target ${detail.id} is outside the binding scope`));
+  assert.deepEqual(exported, []);
 });
 
 test('variables reads local default-mode values through aliases and counts bindings only within the target subtree', async () => {

@@ -82,6 +82,19 @@ test('preview allows repeated --node: use the first target, deduplicate normaliz
   assert.throws(() => parse(['preview', ...many(51)]), /at most 50/);
 });
 
+test('preview preserves repeated --name values, disallows --node, and rejects empty, duplicate, over-200-character, or over-50-name inputs; other commands reject it', () => {
+  assert.deepEqual(opts('preview', '--name', '\u9996\u9875 · 1440', '--name', ' \u8272\u5757 ', '--scale', '0.5'), { names: ['\u9996\u9875 · 1440', ' \u8272\u5757 '], scale: 0.5 });
+  const many = n => Array.from({ length: n }, (_, i) => ['--name', `\u753b\u6846 ${i}`]).flat();
+  assert.equal(opts('preview', ...many(50)).names.length, 50);
+  assert.equal(opts('preview', '--name', '\u5b57'.repeat(200)).names[0].length, 200);
+  for (const [argv, message] of [
+    [['--name', 'a', '--node', '1:2'], /^--name cannot be combined with --node$/], [['--node', '1:2', '--node', '1:3', '--name', 'a'], /^--name cannot be combined with --node$/],
+    [['--name', ''], /^--name must not be empty$/], [['--name', 'a', '--name', ''], /^--name must not be empty$/],
+    [['--name', '\u753b\u6846', '--name', '\u753b\u6846'], /^--name has a duplicate name: \u753b\u6846$/], [many(51), /^--name takes at most 50 names$/], [['--name', '\u5b57'.repeat(201)], /^--name values must be at most 200 characters each$/],
+  ]) assert.throws(() => parse(['preview', ...argv]), error => message.test(error.message), argv.slice(0, 4).join(' '));
+  for (const cmd of [['run', 'a.js'], ['inspect'], ['extract']]) assert.throws(() => parse([...cmd, '--name', 'a']), /^Error: Invalid arguments/, cmd[0]);
+});
+
 test('extract accepts --scale and repeated --island: normalize IDs, reject duplicates or more than 500, name invalid options, and reject script options', () => {
   assert.deepEqual(opts('extract', '--node', '1-2', '--scale', '2', '--island', '3-4', '--island', 'I5:6;7:8'), { targetNodeId: '1:2', scale: 2, islands: ['3:4', 'I5:6;7:8'] });
   assert.deepEqual(opts('extract', '--timeout', '60', '--full'), { timeoutSeconds: 60, full: true });

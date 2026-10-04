@@ -266,6 +266,24 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     }
   });
 
+  // -- Named previews -------------------------------------------------------
+  test('preview --name exports by name, stores only names in job.json, names images by resolved ID, and exits 1 without images for missing names', async t => {
+    const h = await harness(t);
+    const ok = await h.run('preview', '--name', '\u8272\u5757', '--name', '\u6807\u9898', '--scale', '2');
+    assert.equal(ok.code, 0, JSON.stringify(ok.json));
+    assert.deepEqual(ok.json.images.map(i => [i.nodeId, i.name, path.basename(i.file), i.width]), [['1:4', '\u8272\u5757', '1-1-4.png', 4], ['1:3', '\u6807\u9898', '2-1-3.png', 4]]);
+    assert.ok(await exists(ok.json.images[0].file), ok.json.images[0].file);
+    const job = await json(path.join(ok.json.evidence, 'job.json'));
+    assert.deepEqual([job.names, job.targetNodeId, job.nodes], [['\u8272\u5757', '\u6807\u9898'], undefined, undefined]);
+
+    const missing = await h.run('preview', '--name', '\u8272\u5757', '--name', '\u4e0d\u5b58\u5728');
+    assert.equal(missing.code, 1, JSON.stringify(missing.json));
+    assert.deepEqual([missing.json.ok, missing.json.executionStarted, missing.json.images], [false, false, undefined]);
+    assert.match(missing.json.error, /Name "\u4e0d\u5b58\u5728" not found among the children and Sections of the bound node; names in scope: \u6807\u9898, \u8272\u5757/);
+    assert.equal((await json(missing.json.resultFile)).images, undefined);
+    assert.deepEqual(h.errors, []);
+  });
+
   // -- High-risk approval ---------------------------------------------------
   test('--high-risk waits for panel approval before execution/checkpoint, executes when allowed, and does not execute when canceled', async t => {
     const h = await harness(t);

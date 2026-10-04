@@ -59,6 +59,7 @@ printf '%s' '{"name":"Account card"}' | figma-agent-control run rename.js --node
 
 | 工作 | 目标与快照深度 |
 |---|---|
+| 内置读取或预览 | 使用 `inspect`、`preview --node` 或 `preview --name` |
 | 自定义只读脚本 | `run --depth 1` 可降低快照开销，但仍遵循 run 生命周期 |
 | 覆盖全部写入的共同祖先全深度不超过 2,000 个节点 | 以该祖先为目标，不加 `--depth`，保留嵌套变化证据 |
 | 跨更大页面或 Section 的写入 | 保留正确的共同祖先，显式声明深度；页面→Section→画框通常用 `--depth 2` |
@@ -203,6 +204,8 @@ done
 目标会导出两次，应选最小相关范围。蒙版、隐藏层和上方位图可能遮住属性变化，赋值后还应检查渲染结果。判定覆盖目标自身导出；其他区域使用 `preview` 和 `image-diff <before> <after> --expect changed|unchanged` 检查。
 
 ### 预览与批量导出
+
+不指定选择器时，`preview` 导出整个绑定节点。重复 `--node` 可导出多个 ID。重复 `--name` 在绑定节点的子节点和逐层 Section 中精确匹配，不进入画框、组、组件或实例。名称缺失或歧义会在导出前拒绝整个任务；名称不唯一时用 ID。
 
 更大批量可直接返回字节：
 

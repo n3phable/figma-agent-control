@@ -65,7 +65,7 @@ function reordered(a, b) {
 export function changeSet(before, after, depth) {
   const scope = depth ? `depth-${depth}` : 'subtree';
   const a = indexTree(before), b = indexTree(after);
-  if ((a.truncated || b.truncated) && !depth) return { scope, unavailable: 'Snapshot truncated; created or deleted nodes cannot be determined reliably. Narrow the target' };
+  if ((a.truncated || b.truncated) && !depth) return { scope, unavailable: 'Snapshot truncated; created or deleted nodes cannot be determined reliably; target a shallower node that still covers all writes, or declare --depth' };
   const shuffled = reordered(a, b), listed = [], counts = { created: 0, deleted: 0, moved: 0, updated: 0, bindingOnly: 0, positionOnly: 0 };
   for (const [id, old] of a.nodes) {
     const next = b.nodes.get(id);

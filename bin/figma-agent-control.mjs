@@ -27,7 +27,8 @@ const HELP = {
   lib: '--lib is repeatable: each library executes in a separate enclosing scope, and the body can call its functions directly; same-name declarations shadow outer scopes without conflicts',
   expect: '--expect changed|unchanged: export the target once before and once after the script and compare them to check whether the write changed the rendering; --tolerance sets the number of changed pixels allowed',
   cleanOnFail: 'On script failure, created lists surviving nodes created on the target page. --clean-on-fail also deletes them, reporting cleaned/cleanFailed and adding a separate Undo step. Preserve nodes that existed on the target page before execution or contain such nodes. Existing edits are not rolled back; execution is not atomic',
-  output: 'Submission commands wait by default and print a compact summary; --no-wait only submits, and --full prints the complete record',
+  output: 'stdout contains one JSON object. Submission commands wait by default and print a summary with id, output and resultFile; preview also includes images[].name and absolute images[].file. --full prints the complete record with the return value in .result.output and image paths relative to evidence. --no-wait only submits.'
+    + 'When waiting starts, a job ID receipt is written as one line to stderr so you can still wait if the command is killed externally; do not merge 2>&1 when parsing stdout. Fetch results by job ID (result, wait, or run with your own --request-id, a new UUID per submission), never by the timestamps of runs/ directories',
   exitCodes: { 0: 'success', 1: 'failure, failed visual verification, skipped explicit extract islands, or a reviewed result that remains unknown; html also fails for frames below target, unchecked or errored frames, stale overrides, or missing Figma-exported islands',
     2: 'not finished yet (wait expired or verification pending; for stop: the bridge is still shutting down, confirm later with status; for html: needs a resumed run, see instruction)' }
 };
@@ -35,7 +36,7 @@ const HELP = {
 /** @param {string} command @param {string[]} positionals @param {import('../src/args.mjs').Options} o */
 async function submit(command, [file], o) {
   /** @type {Record<string, unknown>} */
-  const body = { operation: command, targetNodeId: o.targetNodeId, nodes: o.nodes, snapshotDepth: o.snapshotDepth, scale: o.scale, risk: o.risk, requestId: o.requestId, expect: o.expect, tolerance: o.tolerance, islands: o.islands, cleanOnFail: o.cleanOnFail };
+  const body = { operation: command, targetNodeId: o.targetNodeId, nodes: o.nodes, names: o.names, snapshotDepth: o.snapshotDepth, scale: o.scale, risk: o.risk, requestId: o.requestId, expect: o.expect, tolerance: o.tolerance, islands: o.islands, cleanOnFail: o.cleanOnFail };
   if (command === 'run') {
     body.code = await fs.readFile(path.resolve(file), 'utf8');
     body.label = path.basename(file);
