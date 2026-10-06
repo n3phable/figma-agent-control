@@ -503,29 +503,40 @@ function compile(job) {
 }
 
 // -- Failure evidence: newly created nodes -------------------------------
-// Listen to target-page nodechange during execution, collecting CREATE only. Nested creation reports the highest parent; exclude REMOTE collaborator changes.
+// Listen to target-page nodechange during execution, collecting CREATE and DELETE (typings report only the highest nested creation/deletion), excluding REMOTE collaborator changes.
 // Avoid figma.on('documentchange'), which requires loadAllPagesAsync under dynamic-page. Consequently, nodes created after the script switches to another page are outside coverage.
-// Events arrive asynchronously in batches. After script failure, wait for 50 ms without new events, capped at about 500 ms wall time; throttling can add one interval.
-// Real-device verification is still needed for Figma event delivery timing and whether plugin timers throttle when Figma moves to the background.
+// Events arrive only after the script yields, batched roughly every 100 ms. Observed delays after creating 1, 20 and 300 nodes were 99, 87 and 16 ms.
+// After failure, wait at least 200 ms (two delivery cycles), then stop after 120 ms without new events, capped at 1 s wall-clock. Poll every 40 ms; throttled timers can add one interval.
 /** @param {() => number} count */
 async function settleEvents(count) {
-  const end = Date.now() + 500;
-  for (let seen = -1; seen !== count() && Date.now() < end;) { seen = count(); await new Promise(resolve => setTimeout(resolve, 50)); }
+  const start = Date.now();
+  for (let now = start, seen = count(), last = start; now - start < 1000 && (now - start < 200 || now - last < 120);) {
+    await new Promise(resolve => setTimeout(resolve, 40));
+    now = Date.now();
+    if (count() !== seen) { seen = count(); last = now; }
+  }
 }
 // Listener registration failure only warns; stop is idempotent. created returns surviving nodes without a newly created ancestor, or null when listening is unavailable.
+// Call deletedFrom after created, once events settle: count preexisting nodes with DELETE events that no longer exist. Nodes moved to another page still exist and do not count.
+// detachInstance and flatten replace existing content with new IDs, emitting CREATE for replacements in observed behavior. Cleanup would treat them as new and remove them; this count supports the warning.
+// Observed createComponent and createComponentFromNode results emit no CREATE, so they do not enter created and are not deleted.
 /** @param {PageNode} page @param {string[]} warnings */
 function watchCreated(page, warnings) {
-  const ids = /** @type {Set<string>} */ (new Set());
+  const ids = /** @type {Set<string>} */ (new Set()), deleted = /** @type {Set<string>} */ (new Set());
   /** @param {NodeChangeEvent} event */
-  const onChange = event => { for (const change of event.nodeChanges) if (change.type === 'CREATE' && change.origin !== 'REMOTE') ids.add(change.id); };
+  const onChange = event => {
+    for (const change of event.nodeChanges) if (change.origin !== 'REMOTE') { if (change.type === 'CREATE') ids.add(change.id); if (change.type === 'DELETE') deleted.add(change.id); }
+  };
   let listening = false;
   try { page.on('nodechange', onChange); listening = true; }
   catch (error) { warnings.push('nodechange listener unavailable; created nodes cannot be listed if the script fails: ' + String(error)); }
   return {
     stop() { if (listening) try { page.off('nodechange', onChange); } catch (_) {} listening = false; },
+    /** @param {Set<string>} existing */
+    async deletedFrom(existing) { let n = 0; for (const id of deleted) if (existing.has(id)) { const node = await figma.getNodeByIdAsync(id); if (!node || node.removed) n++; } return n; },
     async created() {
       if (!listening) return null;
-      await settleEvents(() => ids.size);
+      await settleEvents(() => ids.size + deleted.size);
       const nodes = /** @type {BaseNode[]} */ ([]);
       for (const id of ids) { const node = await figma.getNodeByIdAsync(id); if (node && !node.removed) nodes.push(node); }
       const found = new Set(nodes.map(node => node.id));
@@ -587,7 +598,7 @@ figma.ui.onmessage = async job => {
   /** @type {{ before: string, after: string, clean?: string }} */
   const undoBoundaries = { before: 'not-run', after: 'not-run' };
   const budget = { size: 0 }, warnings = /** @type {string[]} */ ([]);
-  // Return failed-script evidence: created, plus cleaned/cleanFailed when cleanOnFail is enabled.
+  // Return failed-script evidence: created, optional cleanOnFail cleaned/cleanFailed, and deletedExisting from watchCreated.
   let watch = /** @type {ReturnType<typeof watchCreated> | null} */ (null), leftovers = /** @type {Record<string, unknown>} */ ({});
   try {
     if (!figma.fileKey) throw Error('Cannot verify the file key; use the development plugin with the private API enabled');
@@ -662,7 +673,7 @@ figma.ui.onmessage = async job => {
             leftovers.created = created;
             if (existing && boundaryFailure) warnings.push('Closing Undo boundary failed to commit; created nodes were not deleted');
             else if (existing) {
-              const cleaned = /** @type {typeof created} */ ([]), cleanFailed = /** @type {(typeof created[0] & { reason: string })[]} */ ([]);
+              const cleaned = /** @type {typeof created} */ ([]), cleanFailed = /** @type {(typeof created[0] & { reason: string })[]} */ ([]), deletedExisting = await watch.deletedFrom(existing);
               nodes.forEach((node, i) => {
                 try {
                   const kept = existing.has(node.id) ? node : 'findOne' in node ? node.findOne(child => existing.has(child.id)) : null;
@@ -673,6 +684,11 @@ figma.ui.onmessage = async job => {
               Object.assign(leftovers, { cleaned, cleanFailed });
               if (cleaned.length) try { commitUndo(); undoBoundaries.clean = 'committed'; }
               catch (error) { undoBoundaries.clean = 'failed'; warnings.push('Undo boundary after cleanup failed to commit; this deletion will merge into the next Undo step: ' + String(error)); }
+              // When cleanup removes nodes and execution also deleted originals, removed nodes may represent original content under new IDs. Report counts and warnings while continuing cleanup.
+              if (cleaned.length && deletedExisting) {
+                leftovers.deletedExisting = deletedExisting;
+                warnings.push(`${deletedExisting} pre-existing node(s) were deleted during execution (by the script, or replaced with new IDs by detachInstance, flatten or createComponentFromNode); the cleaned nodes may include their replacements. Run inspect first; if needed, undo once in Figma to restore what the cleanup removed`);
+              }
             }
           }
         } catch (error) { warnings.push('Failed to list or clean up created nodes: ' + String(error)); }
