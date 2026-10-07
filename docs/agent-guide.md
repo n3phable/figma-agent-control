@@ -193,6 +193,8 @@ When `executionStarted` is `true`, earlier writes may already exist. **Do not re
 
 - `--clean-on-fail` attempts immediate cleanup after the script's closing Undo boundary, with a separate cleanup boundary. It protects nodes that existed on the target page before execution, including those inside new containers. Successful deletions are `cleaned`; protected nodes and failures are `cleanFailed`.
 
+- `deletedExisting` warns that existing nodes disappeared during execution while cleanup also deleted newly created nodes. Operations such as `detachInstance` and `flatten` can replace existing content with new IDs, making it look newly created. Inspect; if cleanup removed content that should remain, one deliberate Undo in Figma can restore the cleanup step. It does not undo earlier script edits.
+
 Cleanup preserves existing edits, moves, renames and deletions. A delete-then-rebuild script can leave an empty location after cleanup; undoing that cleanup step restores the unfinished replacement. Inspect the original edits separately and repair them deliberately.
 
 Limits matter: creation tracking observes only the target page and only script-thrown failures, not later serialization failures. New components may not emit creation events. Locally created canvas content during the run can be counted; remote collaborators' events are excluded. Existing nodes imported from another page are outside immediate cleanup's protection. Tracking failures are reported as warnings. If the closing Undo boundary fails, nodes are listed but not automatically cleaned. Summary lists are capped at 50 entries, with omitted counts.

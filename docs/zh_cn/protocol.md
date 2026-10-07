@@ -176,6 +176,7 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 | `bindingVerified` | 实际核验的文件、页面和节点 |
 | `undoBoundaries` | `before`、`after`，以及可选的清理边界 `clean` 的结果 |
 | `created`, `cleaned`, `cleanFailed` | 失败脚本的新建节点跟踪与清理结果 |
+| `deletedExisting` | 同时执行了清理的 run 在执行期间删除的已有节点数 |
 | `warnings`, `binaryErrors` | 取证/清理限制与二进制传输问题 |
 | `pluginMs`, `approvalMs`, `finishedAt` | 不含确认的执行耗时、确认耗时和结果落盘时间 |
 
@@ -184,6 +185,8 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 插件在执行期间监听目标页 `nodechange` 的 CREATE/DELETE 事件，排除 `origin: REMOTE`。嵌套的新建/删除只报告最高层父节点。监听注册失败只追加警告，不阻止执行。
 
 `cleanOnFail` 只在结束边界成功后清理。执行前已在目标页上的节点，以及包含这些已有节点的新节点，均受到保护。删除成功的放入 `cleaned`；因保护或删除失败而保留的放入 `cleanFailed`，并附原因。至少删除一个节点时，再提交一次 Undo 边界，记录在 `undoBoundaries.clean`。清理边界失败会警告：这些删除可能并入下一步 Undo。
+
+如果清理删除了节点，且执行期间原目标页上的节点消失，`deletedExisting` 会统计事件报告的顶层删除数，并追加警告。detach/flatten 等替换 ID 的操作可能让已有内容看起来像新建。主动撤销清理步骤可以找回这些内容；脚本对已有节点的修改绝不自动回滚。
 
 新建跟踪不覆盖其他页面，也不覆盖脚本正文已经成功完成后的失败，例如序列化失败。新建组件可能不发出 CREATE。执行期间本地用户的编辑无法与脚本编辑区分。清理保护也不覆盖从其他页面移入的已有内容。取证或清理错误只追加警告，保留原始脚本错误。
 
@@ -467,7 +470,3 @@ HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内
 ## 失败任务清理
 
 脚本自身抛错后报告目标页上新建且仍存在的最高层节点。人工修复前先 inspect。--clean-on-fail 可把符合条件的新节点作为单独 Undo 步骤删除，已有改动不回滚。其余修复依据 inspect 证据执行。
-
-### 创建事件时序
-
-创建证据依赖 Figma 送达 nodechange 事件。失败后应在事件批次送达期间 inspect 目标页面。

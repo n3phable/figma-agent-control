@@ -25,15 +25,15 @@ export const pluginSource = await fs.readFile(new URL('../../plugin/main.js', im
 // -- Mock document --------------------------------------------------------
 // Page 1:1 contains bound frame 1:2, text 1:3, and color block 1:4; page 2:1 is empty. exportAsync renders the current fill color
 // so --expect observes actual visual changes.
-// Model Figma nodechange timing: queue create/remove changes in a batch and deliver to page listeners in a macrotask 5 ms later;
-// Nested creations in one batch report only the highest CREATE. create accepts REMOTE origin to simulate collaborators.
-export function createDoc() {
+// Model Figma nodechange timing: create, remove, and moving to another page (DELETE per the typings) first enter the current batch.
+// Deliver to the page listeners in a macrotask after delay milliseconds (default 5 ms; about 100 ms on a real device). Nested creates in one batch report only the highest CREATE. REMOTE origin models collaborators.
+export function createDoc({ delay = 5 } = {}) {
   const listeners = new Map();
   let seq = 0, batch = null;
   const pageOf = n => { while (n && n.type !== 'PAGE') n = n.parent; return n; };
   const detach = n => { if (n.parent) n.parent.children = n.parent.children.filter(child => child !== n); n.parent = null; };
   const queue = (change, n) => {
-    if (!batch) { batch = []; setTimeout(flush, 5); }
+    if (!batch) { batch = []; setTimeout(flush, delay); }
     batch.push({ ...change, id: n.id, node: n, page: pageOf(n) });
   };
   const flush = () => {
@@ -47,7 +47,7 @@ export function createDoc() {
   };
   const node = (id, type, name, extra = {}) => ({ id, type, name, removed: false, visible: true,
     remove() { queue({ type: 'DELETE', origin: 'LOCAL' }, this); detach(this); const mark = n => { n.removed = true; (n.children ?? []).forEach(mark); }; mark(this); },
-    appendChild(child) { detach(child); child.parent = this; this.children.push(child); },
+    appendChild(child) { const from = pageOf(child); if (from && from !== pageOf(this)) queue({ type: 'DELETE', origin: 'LOCAL' }, child); detach(child); child.parent = this; this.children.push(child); },
     findAll(fn = () => true) { const out = [], walk = n => (n.children ?? []).forEach(c => { if (fn(c)) out.push(c); walk(c); }); walk(this); return out; },
     findOne(fn) { return this.findAll(fn)[0] ?? null; }, ...extra });
   const pageNode = (id, name) => node(id, 'PAGE', name, { children: [], loadAsync: async () => {},

@@ -20,9 +20,9 @@ const pixel = base64 => [...decodePng(Buffer.from(base64, 'base64')).data.subarr
 // Run real main.js in a VM. Capture postMessage with structuredClone to match the host boundary; unwrap large-result string envelopes before dispatch.
 // Respond to checkpoints and high-risk approvals by scenario: true/false acknowledges automatically; wait leaves acknowledgment to the test.
 // events records host-call order: show, approval, checkpoint, undo, export, and script markers through figma.mark.
-// sandbox can replace globals, such as timers and the clock.
-function plugin({ checkpoint = true, approval = 'wait', beforeAck, sandbox } = {}) {
-  const doc = createDoc(), events = [], checkpoints = [], approvals = [], results = [], infos = [];
+// sandbox replaces globals such as timers and clocks; delay controls mock nodechange delivery in milliseconds.
+function plugin({ checkpoint = true, approval = 'wait', beforeAck, sandbox, delay } = {}) {
+  const doc = createDoc({ delay }), events = [], checkpoints = [], approvals = [], results = [], infos = [];
   const reply = message => queueMicrotask(() => figma.ui.onmessage(message));
   const figma = fakeFigma(doc, { onUi: raw => {
     let message = structuredClone(raw);
@@ -434,22 +434,75 @@ test('cleanOnFail protects preexisting nodes misreported as new; one revalidatio
   assert.deepEqual(['10:1', '10:2'].map(id => g.doc.all.get(id).removed), [false, true]);
 });
 
-test('Event settling uses a wall-clock cap: even with continuous events and throttled timers, stop after about 500 ms', async () => {
-  // Treat each 50 ms timer as a throttled 200 ms interval delivering another CREATE. An iteration cap would wait ten times; the wall-clock cap stops after three.
-  let now = 1e6, waits = 0, listener;
-  const f = plugin({ sandbox: {
-    Date: class extends Date { static now() { return now; } },
-    setTimeout: (fn, ms) => {
-      if (ms !== 50) return ms < 1000 ? setTimeout(fn, ms) : 0;
-      now += 200; listener?.({ nodeChanges: [{ type: 'CREATE', id: `9:${++waits}`, origin: 'LOCAL' }] });
-      return setTimeout(fn, 0);
-    }
-  } });
+test('With real-device-style batches arriving after about 100 ms, short failed scripts still report created nodes', async () => {
+  const f = plugin({ delay: 100 });
+  const r = await f.send({ cleanOnFail: true, code: 'figma.createFrame(); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.match(r.error, /\u4e2d\u9014\u5931\u8d25/);
+  assert.deepEqual([r.created, r.cleaned, f.doc.all.get('10:1').removed], [[info('10:1', 'FRAME')], [info('10:1', 'FRAME')], true]);
+});
+
+test('Event delivery waits at least 200 ms then for 120 ms of silence, caps at 1 s wall time, and overshoots by at most one throttled interval', async () => {
+  // Fake clock: each 40 ms plugin wait advances step milliseconds; arrive(waitNumber) injects a CREATE during that wait. Return the wait count.
+  const waitsFor = async (step, arrive) => {
+    let now = 1e6, waits = 0, listener;
+    const f = plugin({ sandbox: {
+      Date: class extends Date { static now() { return now; } },
+      setTimeout: (fn, ms) => {
+        if (ms !== 40) return ms < 1000 ? setTimeout(fn, ms) : 0;
+        now += step; if (arrive(++waits)) listener?.({ nodeChanges: [{ type: 'CREATE', id: `9:${waits}`, origin: 'LOCAL' }] });
+        return setTimeout(fn, 0);
+      }
+    } });
+    const on = f.doc.page.on;
+    f.doc.page.on = function (type, fn) { listener = fn; return on.call(this, type, fn); };
+    const r = await f.send({ code: 'throw Error("\u4e2d\u9014\u5931\u8d25");' });
+    assert.match(r.error, /\u4e2d\u9014\u5931\u8d25/);
+    return waits;
+  };
+  // No events: wait 200 ms (five waits). An event at the fifth wait restarts 120 ms of silence, ending at 320 ms (eight waits).
+  assert.equal(await waitsFor(40, () => false), 5);
+  assert.equal(await waitsFor(40, n => n === 5), 8);
+  // With each throttled wait lasting 300 ms and delivering events, stop by wall time at 1200 ms (four waits), only one interval past 1 s rather than 25 waits.
+  assert.equal(await waitsFor(300, () => true), 4);
+});
+
+test('cleanOnFail reports deletedExisting and warnings when execution deleted old nodes and cleanup deleted new ones, excluding REMOTE deletes and moved-but-surviving nodes', async () => {
+  // Model figma.flatten replacing existing color block 1:4 with new ID 10:1, which cleanup treats as a new node.
+  const flatten = f => { f.figma.flatten = nodes => { nodes.forEach(n => n.remove()); return f.doc.create('VECTOR', f.doc.frame); }; };
+  const f = plugin();
+  flatten(f);
+  let listener;
   const on = f.doc.page.on;
   f.doc.page.on = function (type, fn) { listener = fn; return on.call(this, type, fn); };
-  const r = await f.send({ code: 'throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  // A collaborator actually deletes text 1:3; the node is gone but REMOTE deletion does not count.
+  f.figma.remoteDelete = id => { f.doc.all.get(id).removed = true; setTimeout(() => listener({ nodeChanges: [{ type: 'DELETE', id, origin: 'REMOTE' }] }), 1); };
+  const r = await f.send({ cleanOnFail: true, code: 'figma.flatten([target.children[1]]); figma.remoteDelete("1:3"); throw Error("\u4e2d\u9014\u5931\u8d25");' });
   assert.match(r.error, /\u4e2d\u9014\u5931\u8d25/);
-  assert.deepEqual([waits, r.created], [3, []]);
+  assert.deepEqual([r.created, r.cleaned, r.cleanFailed, r.deletedExisting, r.undoBoundaries.clean], [[info('10:1', 'VECTOR')], [info('10:1', 'VECTOR')], [], 1, 'committed']);
+  assert.equal(r.warnings.length, 1);
+  assert.equal(r.warnings[0], '1 pre-existing node(s) were deleted during execution (by the script, or replaced with new IDs by detachInstance, flatten or createComponentFromNode); the cleaned nodes may include their replacements. Run inspect first; if needed, undo once in Figma to restore what the cleanup removed');
+  assert.deepEqual([f.doc.swatch.removed, f.doc.all.get('10:1').removed], [true, true]);
+
+  // Default mode neither scans the target page nor counts existing deletions; it still lists new nodes without deleting them.
+  const g = plugin();
+  flatten(g);
+  let scans = 0;
+  const findAll = g.doc.page.findAll;
+  g.doc.page.findAll = function (...args) { scans++; return findAll.apply(this, args); };
+  const kept = await g.send({ code: 'figma.flatten([target.children[1]]); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.deepEqual([kept.created, 'cleaned' in kept, 'deletedExisting' in kept, kept.warnings, scans], [[info('10:1', 'VECTOR')], false, false, undefined, 0]);
+  assert.equal(g.doc.all.get('10:1').removed, false);
+
+  // Do not report if only old nodes were deleted and cleanup deleted none; nodes created in this run do not count as existing.
+  const h = plugin();
+  const onlyDeleted = await h.send({ cleanOnFail: true, code: 'target.children[1].remove(); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.deepEqual([onlyDeleted.cleaned, 'deletedExisting' in onlyDeleted, onlyDeleted.warnings], [[], false, undefined]);
+  const own = await plugin().send({ cleanOnFail: true, code: 'figma.createFrame().remove(); figma.createFrame(); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.deepEqual([own.cleaned, 'deletedExisting' in own, own.warnings], [[info('10:2', 'FRAME')], false, undefined]);
+  // Moving an existing node to another page also emits DELETE, but the node survives and does not count as deleted.
+  const m = plugin();
+  const moved = await m.send({ cleanOnFail: true, code: '(await figma.getNodeByIdAsync("2:1")).appendChild(target.children[1]); figma.createFrame(); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  assert.deepEqual([moved.cleaned, 'deletedExisting' in moved, moved.warnings, m.doc.other.children.map(n => n.id)], [[info('10:1', 'FRAME')], false, undefined, ['1:4']]);
 });
 
 test('Listener/evidence failures produce warnings without replacing script errors; nodes created after switching pages are excluded from created', async () => {
@@ -733,7 +786,7 @@ test('result.json retains only changes on success and keeps after as evidence on
   assert.deepEqual(h.errors, []);
 });
 
-test('--clean-on-fail travels through job.json, result and summary created/cleaned lists, with guidance explaining the disposition of new nodes', { timeout: 20000 }, async t => {
+test('--clean-on-fail flows from job.json through result/summary created and cleaned lists, deletedExisting when applicable, and guidance explaining new-node outcomes', { timeout: 20000 }, async t => {
   const h = await harness(t);
   const script = await writeScript(h.cwd, 'leaky.js', 'target.name = "\u6539\u8fc7"; figma.createFrame(); figma.createRectangle(); throw Error("\u4e2d\u9014\u5931\u8d25");');
   const kept = await h.run('run', script);
@@ -750,5 +803,13 @@ test('--clean-on-fail travels through job.json, result and summary created/clean
   assert.deepEqual(cleaned.json.cleaned, result.cleaned);
   assert.match(cleaned.json.instruction, /deleted 2 node\(s\) created by this job; modified existing nodes were not rolled back; .*inspect first.*do not replay the script/);
   assert.deepEqual([h.doc.all.get('10:3').removed, h.doc.all.get('10:4').removed, h.doc.frame.name], [true, true, '\u6539\u8fc7']);
+  assert.equal('deletedExisting' in result, false);
+
+  // Deleting an existing block during execution adds deletedExisting/warnings to result.json and summaries, with guidance about replacements and Undo recovery.
+  const swapped = await h.run('run', await writeScript(h.cwd, 'swap.js', 'target.children[1].remove(); figma.createFrame(); throw Error("\u4e2d\u9014\u5931\u8d25");'), '--clean-on-fail');
+  const swappedResult = JSON.parse(await fs.readFile(swapped.json.resultFile, 'utf8'));
+  assert.deepEqual([swappedResult.deletedExisting, swapped.json.deletedExisting, swapped.json.cleaned.map(n => n.id)], [1, 1, ['10:5']]);
+  assert.match(swapped.json.warnings[0], /1 pre-existing node\(s\) were deleted during execution/);
+  assert.match(swapped.json.instruction, /not rolled back; 1 node\(s\) that existed before the run were deleted during it \(by the script, or replaced with new IDs by detachInstance, flatten or createComponentFromNode\), so the cleaned nodes may include their replacements; inspect first, and if needed undo once in Figma to restore what the cleanup deleted; .*do not replay the script/);
   assert.deepEqual(h.errors, []);
 });

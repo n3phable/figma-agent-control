@@ -140,9 +140,11 @@ function instruction(record) {
     if (result.executionStarted === false) return 'The script did not run; the document was not modified; fix it and resubmit';
     // After script errors, created lists new nodes; --clean-on-fail also returns cleaned/cleanFailed. These describe new-node disposition only; modified existing nodes still require inspect.
     // New nodes may contain existing layers moved inside them, so inspect subtrees before deletion. cleanFailed covers both failed deletion and intentional preservation of existing content.
+    // If cleanup removed nodes and deletedExisting is positive, they may be replacement IDs for existing content; suggest one Undo to recover the cleanup.
     const count = (/** @type {string} */ key) => Array.isArray(result[key]) ? result[key].length : 0, review = 'keep the evidence; verify the current state with inspect first; do not replay the script';
     if (!count('cleaned') && count('cleanFailed')) return `The script started running; the document may have been modified; created nodes were not deleted: ${count('cleanFailed')} node(s) kept or failed to delete (reasons in cleanFailed); ${review}`;
-    if (count('cleaned')) return `The script started running; deleted ${count('cleaned')} node(s) created by this job${count('cleanFailed') ? `, ${count('cleanFailed')} not deleted (reasons in cleanFailed)` : ''}; modified existing nodes were not rolled back; ${review}`;
+    if (count('cleaned')) return `The script started running; deleted ${count('cleaned')} node(s) created by this job${count('cleanFailed') ? `, ${count('cleanFailed')} not deleted (reasons in cleanFailed)` : ''}; modified existing nodes were not rolled back; `
+      + (result.deletedExisting > 0 ? `${result.deletedExisting} node(s) that existed before the run were deleted during it (by the script, or replaced with new IDs by detachInstance, flatten or createComponentFromNode), so the cleaned nodes may include their replacements; inspect first, and if needed undo once in Figma to restore what the cleanup deleted; ` : '') + review;
     if (count('created')) return `The script started running; the document may have been modified; at failure it had created ${count('created')} node(s) (see created), which may contain existing layers: inspect their subtrees, then delete them${record.job?.cleanOnFail ? '' : ', or add --clean-on-fail next time'}; ${review}`;
     return 'The script started running; the document may have been modified; ' + review;
   }
@@ -160,7 +162,7 @@ export function summarizeRecord(record) {
     state: record.recordedState, journalComplete: record.journalComplete, ok: result?.ok ?? null };
   if (result?.ok === false) {
     if (result.error !== undefined) summary.error = clip(String(result.error), 500);
-    for (const key of ['executionStarted', 'targetMissing', 'missingNodeId', 'fileVerified']) if (result[key] !== undefined) summary[key] = result[key];
+    for (const key of ['executionStarted', 'targetMissing', 'missingNodeId', 'fileVerified', 'deletedExisting']) if (result[key] !== undefined) summary[key] = result[key];
     if (result.recovery !== undefined) summary.recoveryHint = result.recovery;
     if (record.checkpointFile) summary.checkpointFile = record.checkpointFile;
     // Limit each created/cleaned list to 50 nodes, matching change-set limits.

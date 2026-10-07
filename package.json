@@ -1,6 +1,6 @@
 {
   "name": "figma-agent-control",
-  "version": "0.5.0-rc",
+  "version": "0.5.1-rc",
   "description": "Figma Agent Control",
   "type": "module",
   "bin": {

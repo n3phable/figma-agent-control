@@ -94,8 +94,8 @@ function compactFailure(message, minimal = false, error = 'Result exceeds the re
   const result = { id: message.id, ok: false, error,
     executionStarted: typeof message.executionStarted === 'boolean' ? message.executionStarted : activeOperation === 'run',
     recovery: 'Keep the existing evidence; narrow the target and inspect independently; do not replay the script' };
-  // Created/cleaned lists from failed runs are small and essential cleanup evidence; preserve them together with verification fields.
-  for (const field of ['bindingVerified', 'undoBoundaries', 'created', 'cleaned', 'cleanFailed', 'warnings']) if (message[field] !== undefined) result[field] = message[field];
+  // Created/cleaned lists and deleted-existing counts from failed runs are small and essential cleanup evidence; preserve them with verification fields.
+  for (const field of ['bindingVerified', 'undoBoundaries', 'created', 'cleaned', 'cleanFailed', 'deletedExisting', 'warnings']) if (message[field] !== undefined) result[field] = message[field];
   if (!minimal) for (const field of ['after', 'before']) {
     if (message[field] === undefined) continue;
     result[field] = message[field];

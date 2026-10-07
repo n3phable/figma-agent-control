@@ -236,7 +236,7 @@ test('Summaries give distinct next steps for success, unexecuted failure, execut
   assert.notEqual(verdict.instruction, started.instruction);
 });
 
-test('Failure summaries explain created-node outcomes, cap lists at 50, expose listener warnings, and retain inspect-first/no-replay guidance', async t => {
+test('Failure summaries explain created-node outcomes, cap lists at 50, expose deleted-existing counts and listener warnings, and retain inspect-first/no-replay guidance', async t => {
   const { write, read } = await evidence(t);
   const failed = { id: ID, operation: 'run', state: 'failed' }, base = { id: ID, ok: false, error: '\u4e2d\u9014\u5931\u8d25', executionStarted: true };
   const nodes = n => Array.from({ length: n }, (_, i) => ({ id: `10:${i + 1}`, name: `FRAME-${i + 1}`, type: 'FRAME' }));
@@ -254,6 +254,13 @@ test('Failure summaries explain created-node outcomes, cap lists at 50, expose l
   const cleaned = summarizeRecord(await read());
   assert.deepEqual([cleaned.cleaned.length, cleaned.cleanFailed[0].reason, 'cleanedOmitted' in cleaned], [2, '\u8282\u70b9\u5df2\u9501\u5b9a', false]);
   assert.match(cleaned.instruction, /deleted 2 node\(s\) created by this job, 1 not deleted \(reasons in cleanFailed\); modified existing nodes were not rolled back; keep the evidence; verify the current state with inspect first; do not replay the script/);
+  assert.equal('deletedExisting' in cleaned, false);
+  // If execution deleted old nodes and cleanup deleted new ones, expose the count and explain that cleanup may remove replacements and one Undo restores cleanup.
+  await write({ 'result.json': { ...base, created: nodes(1), cleaned: nodes(1), cleanFailed: [], deletedExisting: 2 } });
+  const swapped = summarizeRecord(await read());
+  assert.equal(swapped.deletedExisting, 2);
+  assert.equal(swapped.instruction, 'The script started running; deleted 1 node(s) created by this job; modified existing nodes were not rolled back; 2 node(s) that existed before the run were deleted during it (by the script, or replaced with new IDs by detachInstance, flatten or createComponentFromNode), '
+    + 'so the cleaned nodes may include their replacements; inspect first, and if needed undo once in Figma to restore what the cleanup deleted; keep the evidence; verify the current state with inspect first; do not replay the script');
   // If nothing was removed because nodes were kept or deletion failed, do not say zero nodes were deleted.
   await write({ 'result.json': { ...base, created: nodes(2), cleaned: [], cleanFailed: nodes(2).map(n => ({ ...n, reason: '\u542b\u6267\u884c\u524d\u5df2\u5b58\u5728\u7684\u8282\u70b9 1:4\uff0c\u672a\u5220\u9664' })) } });
   assert.equal(summarizeRecord(await read()).instruction, 'The script started running; the document may have been modified; created nodes were not deleted: 2 node(s) kept or failed to delete (reasons in cleanFailed); keep the evidence; verify the current state with inspect first; do not replay the script');
