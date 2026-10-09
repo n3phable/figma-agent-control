@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Inputs and types declared below; no runtime package dependencies.
- * [OUTPUT]: Exports num, px, esc, cssStr, color, place, linearGradient, svgLinearGradient, paintLayer, radius, stroke, effects, backdrop, blend, lineHeight, baselineShift, postScriptGuess, segmentStyle, textBox, maskImage, VECTORS, vectorSvg, fillAlpha, bakeReason, paintsBackground.
+ * [OUTPUT]: Exports num, px, esc, cssStr, color, place, painted, linearGradient, svgLinearGradient, paintLayer, radius, stroke, effects, backdrop, blend, lineHeight, baselineShift, postScriptGuess, segmentStyle, textBox, maskImage, VECTORS, FRAMES, vectorSvg, fillAlpha, bakeReason, paintsBackground.
  * [POS]: Pure conversion of Figma drawing properties into CSS and SVG fragments.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -42,6 +42,9 @@ export function place(m) {
 // Visible paints/effects; TEXT fills may be 'MIXED', treated as absent.
 /** @template T @param {ReadonlyArray<T> | string | undefined} list @returns {T[]} */
 const shown = list => Array.isArray(list) ? list.filter(p => p?.visible !== false) : [];
+// Shadow silhouettes include only visible fills with positive opacity: observed Figma behavior excludes 0 but includes 1%.
+/** @param {ExtractNode['fills']} list @returns {Paint[]} */
+export const painted = list => shown(list).filter(p => (p.opacity ?? 1) > 0);
 // Blend modes that do not alter blending; omission defaults to PASS_THROUGH.
 const PLAIN = new Set([undefined, 'PASS_THROUGH', 'NORMAL']);
 
@@ -128,22 +131,29 @@ export function stroke(node) {
 }
 
 // -- Effects ------------------------------------------------------------
-// target: box uses box-shadow with spread and inset for inner shadows; CSS does not draw it behind the box, so showShadowBehindNode=true records an approximation;
+// target box uses box-shadow, with inset for inner shadows. CSS excludes shadows behind the box, so showShadowBehindNode true is approximate.
 // text uses text-shadow without spread or inner shadows; image uses filter:drop-shadow following alpha/child silhouettes, with blur r/2.
+// Observed box-shadow spread follows Figma's fill-plus-stroke silhouette: equal outside/center strokes expand shadows by w or w/2.
+// Spread applies only to rectangles, ellipses and frame-like nodes with Clip content plus visible positive-opacity fill. Figma treats it as zero elsewhere, including inner shadows.
+// Mark image spread approximate when Figma would apply it, since drop-shadow cannot. Multiple drop-shadows compound earlier shadows unlike Figma's independent layers, also approximate.
 // Omit blended shadows because box-shadow cannot blend. backdrop handles background blur/GLASS; NOISE, TEXTURE and SHADER require Figma rendering and do not paint in DOM.
 /** @param {ExtractNode} node @param {'box' | 'text' | 'image'} target @returns {{ style: Style, approx: string[] }} */
 export function effects(node, target) {
   const style = /** @type {Style} */ ({}), approx = /** @type {string[]} */ ([]), shadows = [], filters = [];
+  const takes = node.type === 'RECTANGLE' || node.type === 'ELLIPSE' || (FRAMES.has(node.type) && !!node.clipsContent && painted(node.fills).length > 0);
+  const w = shown(node.strokes).length && typeof node.strokeWeight === 'number' ? node.strokeWeight : 0;
+  const grow = node.strokeAlign === 'OUTSIDE' ? w : node.strokeAlign === 'CENTER' ? w / 2 : 0;
   for (const e of shown(node.effects)) {
     if (e.type === 'DROP_SHADOW' || e.type === 'INNER_SHADOW') {
       if (e.blendMode && e.blendMode !== 'NORMAL') { approx.push('blend-shadow'); continue; }
       const inner = e.type === 'INNER_SHADOW', xy = `${px(e.offset.x)} ${px(e.offset.y)}`, c = color(e.color);
       if (!inner && target === 'box' && e.showShadowBehindNode) approx.push('shadow-behind');
       if (target === 'text') { if (inner) approx.push('text-effect'); else shadows.push(`${xy} ${px(e.radius)} ${c}`); }
-      else if (target === 'image' && !inner) filters.push(`drop-shadow(${xy} ${px(e.radius / 2)} ${c})`);
-      else shadows.push(`${inner ? 'inset ' : ''}${xy} ${px(e.radius)}${e.spread ? ' ' + px(e.spread) : ''} ${c}`);
+      else if (target === 'image' && !inner) { filters.push(`drop-shadow(${xy} ${px(e.radius / 2)} ${c})`); if (takes && e.spread) approx.push('shadow-spread'); }
+      else { const s = (takes ? e.spread ?? 0 : 0) + (inner ? 0 : grow); shadows.push(`${inner ? 'inset ' : ''}${xy} ${px(e.radius)}${s ? ' ' + px(s) : ''} ${c}`); }
     } else if (e.type === 'LAYER_BLUR') filters.push(`blur(${px(e.radius / 2)})`);
   }
+  if (filters.filter(f => f.startsWith('drop-shadow')).length > 1) approx.push('shadow-chain');
   if (shadows.length) style[target === 'text' ? 'text-shadow' : 'box-shadow'] = shadows.join(',');
   if (filters.length) style.filter = filters.join(' ');
   return { style, approx };
@@ -264,6 +274,8 @@ export function maskImage(mask, alpha) {
   return { 'mask-image': `url("data:image/svg+xml,${encodeURIComponent(svg)}")`, 'mask-size': '100% 100%', 'mask-repeat': 'no-repeat' };
 }
 export const VECTORS = new Set(['VECTOR', 'BOOLEAN_OPERATION', 'STAR', 'POLYGON', 'LINE']);
+// Frame-like nodes expose clipsContent: clipping controls spread support and whether shadows follow protruding children. SLOT and FRAME both belong here.
+export const FRAMES = new Set(['FRAME', 'COMPONENT', 'COMPONENT_SET', 'INSTANCE', 'SLOT']);
 // Non-island vectors paint fillGeometry with fills and strokeGeometry outlines with stroke paints, using local-pixel coordinates without viewBox.
 // LINE ignores fills; omit empty paths. Paint blending is unsupported and approximate. Chromium draws nothing for zero-width/height SVG even with overflow:visible, so require at least a 1 px viewport.
 /** @param {ExtractNode} node @returns {{ svg: string, approx: string[] }} */

@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extracted, run, KANIT } from './helpers/generate.mjs';
 import { fontRequests, embed, dataUri, GENERATOR } from '../src/html/generate.mjs';
-import { linearGradient, paintLayer, lineHeight, baselineShift, blend, place, num, svgLinearGradient, bakeReason, maskImage, textBox, segmentStyle } from '../src/html/css.mjs';
+import { linearGradient, paintLayer, lineHeight, baselineShift, blend, place, num, svgLinearGradient, bakeReason, maskImage, textBox, segmentStyle, effects } from '../src/html/css.mjs';
 
 // -- Generated-output queries ---------------------------------------------
 const find = (tree, id) => tree.id === id ? tree : (tree.children || []).map(c => find(c, id)).find(Boolean);
@@ -172,7 +172,7 @@ test('Fills reverse into CSS backgrounds, use layers for translucency/blending, 
   assert.match(style(g.html, '4:19'), /\) -10px -10px\/40px 40px no-repeat$/);
   assert.match(style(g.html, '4:20'), /\) 0 0\/4px 4px repeat$/);
   assert.match(style(g.html, '4:6'), /outline:2px solid #000000;outline-offset:-1px$/);
-  assert.match(style(g.html, '4:24'), /outline:1px solid #000000;outline-offset:0px;box-shadow:0px 2px 4px 2px rgba\(0,0,0,0\.25\)$/);
+  assert.match(style(g.html, '4:24'), /outline:1px solid #000000;outline-offset:0px;box-shadow:0px 2px 4px 3px rgba\(0,0,0,0\.25\)$/);
   assert.match(g.html, /data-node="4:15"[^>]*style="transform:translate\(120px,45px\);width:30px;height:30px"><div class="n" data-node="4:14"[^>]*><\/div><div data-layer="stroke" style="position:absolute;inset:0;border-radius:inherit;outline:1px solid #000000;outline-offset:-1px"><\/div><\/div>/, 'Stroke layers follow children');
   assert.match(style(g.html, '4:13'), /background:linear-gradient\(153\.435deg,#FF0000 0%,#0000FF 100%\)$/);
   const r = run((await extracted('1:2')).output);
@@ -207,6 +207,114 @@ test('Background blur and GLASS precede their node as sibling layers, progressiv
   output.colorProfile = 'DISPLAY_P3';
   assert.deepEqual(kinds(run(output), '1:2'), ['color-profile']);
   assert.deepEqual([blend('LINEAR_DODGE'), blend('COLOR_BURN'), blend('PASS_THROUGH')], [{ value: 'plus-lighter', approx: 'blend-mode' }, { value: 'color-burn' }, { value: '' }]);
+});
+
+test('Real Figma shadows apply spread only to rectangles, ellipses, and filled clipping frames; OUTSIDE/CENTER strokes expand by w/w/2, while inner shadows do not', () => {
+  const sh = (spread, type = 'DROP_SHADOW') => ({ type, visible: true, radius: 4, color: { r: 0, g: 0, b: 0, a: 1 }, offset: { x: 0, y: 2 }, spread, blendMode: 'NORMAL' });
+  const FILL = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }], LINE = [{ type: 'SOLID', color: { r: 0, g: 0, b: 0 } }];
+  const fx = (n, target = 'box') => effects(/** @type {any} */ ({ fills: FILL, effects: [sh(-3)], ...n }), target);
+  const box = n => fx(n).style['box-shadow'];
+  assert.equal(box({ type: 'RECTANGLE' }), '0px 2px 4px -3px #000000');
+  assert.equal(box({ type: 'ELLIPSE' }), '0px 2px 4px -3px #000000');
+  assert.equal(box({ type: 'FRAME', clipsContent: true }), '0px 2px 4px -3px #000000');
+  assert.equal(box({ type: 'COMPONENT', clipsContent: true }), '0px 2px 4px -3px #000000');
+  assert.equal(box({ type: 'INSTANCE', clipsContent: true }), '0px 2px 4px -3px #000000');
+  assert.equal(box({ type: 'SLOT', clipsContent: true }), '0px 2px 4px -3px #000000');
+  assert.equal(box({ type: 'FRAME' }), '0px 2px 4px #000000', 'Without Clip content, Figma uses zero spread');
+  assert.equal(box({ type: 'INSTANCE', clipsContent: false }), '0px 2px 4px #000000');
+  assert.equal(box({ type: 'FRAME', clipsContent: true, fills: [], strokes: LINE, strokeWeight: 1, strokeAlign: 'INSIDE' }), '0px 2px 4px #000000', 'No visible fill');
+  assert.equal(box({ type: 'FRAME', clipsContent: true, fills: [{ ...FILL[0], visible: false }] }), '0px 2px 4px #000000');
+  assert.equal(box({ type: 'FRAME', clipsContent: true, fills: [{ ...FILL[0], opacity: 0 }] }), '0px 2px 4px #000000', 'Zero-opacity fills do not count');
+  assert.equal(box({ type: 'FRAME', clipsContent: true, fills: [{ ...FILL[0], opacity: 0.01 }] }), '0px 2px 4px -3px #000000');
+  // OUTSIDE/CENTER strokes expand the shadow even when spread is ineffective; INSIDE, unequal-edge, and hidden strokes do not.
+  assert.equal(box({ type: 'RECTANGLE', strokes: LINE, strokeWeight: 2, strokeAlign: 'OUTSIDE' }), '0px 2px 4px -1px #000000');
+  assert.equal(box({ type: 'FRAME', strokes: LINE, strokeWeight: 2, strokeAlign: 'CENTER' }), '0px 2px 4px 1px #000000');
+  assert.equal(box({ type: 'FRAME', strokes: LINE, strokeWeight: 3, strokeAlign: 'OUTSIDE', effects: [sh(0)] }), '0px 2px 4px 3px #000000');
+  assert.equal(box({ type: 'RECTANGLE', strokes: LINE, strokeWeight: 2, strokeAlign: 'INSIDE' }), '0px 2px 4px -3px #000000');
+  assert.equal(box({ type: 'RECTANGLE', strokes: LINE, strokeWeight: 'MIXED', strokeTopWeight: 2, strokeAlign: 'OUTSIDE' }), '0px 2px 4px -3px #000000');
+  assert.equal(box({ type: 'RECTANGLE', strokes: [{ ...LINE[0], visible: false }], strokeWeight: 2, strokeAlign: 'OUTSIDE' }), '0px 2px 4px -3px #000000');
+  // Inner shadows also use zero spread on unsupported nodes, without stroke expansion.
+  assert.equal(box({ type: 'FRAME', effects: [sh(3, 'INNER_SHADOW')] }), 'inset 0px 2px 4px #000000');
+  assert.equal(box({ type: 'RECTANGLE', strokes: LINE, strokeWeight: 2, strokeAlign: 'OUTSIDE', effects: [sh(3, 'INNER_SHADOW')] }), 'inset 0px 2px 4px 3px #000000');
+  // Content-shaped drop-shadow cannot express spread; record an approximation when Figma applies it.
+  assert.deepEqual(fx({ type: 'RECTANGLE' }, 'image'), { style: { filter: 'drop-shadow(0px 2px 2px #000000)' }, approx: ['shadow-spread'] });
+  assert.deepEqual(fx({ type: 'FRAME', fills: [] }, 'image').approx, []);
+  assert.deepEqual(fx({ type: 'RECTANGLE', effects: [sh(0)] }, 'image').approx, []);
+  assert.deepEqual(fx({ type: 'FRAME', fills: [], effects: [sh(0), sh(0)] }, 'image').approx, ['shadow-chain'], 'Multiple drop-shadows accumulate in sequence');
+});
+
+test('Real Figma unclipped opaque frames with painted child geometry outside the box use content-shaped shadows, excluding child shadows from the outline and recording approximations', async () => {
+  const { output } = await extracted('1:3');
+  const shadow = { type: 'DROP_SHADOW', visible: true, radius: 4, color: { r: 0, g: 0, b: 0, a: 0.25 }, offset: { x: 0, y: 2 }, spread: -2, blendMode: 'NORMAL', showShadowBehindNode: false };
+  const frame = find(output.root, '4:15'), kid = find(output.root, '4:14'), at = (x, y) => [[1, 0, x], [0, 1, y]];
+  /** Move a 20x20 node by updating both its transform and renderBounds. */
+  const put = (n, x, y) => Object.assign(n, { transform: at(x, y), renderBounds: [x, y, 20, 20] });
+  const SOLID = { type: 'SOLID', visible: true, color: { r: 1, g: 1, b: 1 } };
+  Object.assign(frame, { fills: [SOLID], effects: [shadow] });
+  const css = () => style(run(output).html, '4:15');
+  assert.match(css(), /box-shadow:0px 2px 4px rgba\(0,0,0,0\.25\)$/, 'Children inside the box preserve the box outline without spread');
+  // Overflow right, left, or top from a 30x30 frame at (120,45) with a 20x20 child.
+  for (const [x, y] of [[140, 50], [110, 50], [125, 35]]) { put(kid, x, y); assert.match(css(), /filter:drop-shadow\(0px 2px 2px rgba\(0,0,0,0\.25\)\)$/, `${x},${y}`); }
+  frame.clipsContent = true;
+  assert.match(css(), /box-shadow:0px 2px 4px -2px rgba\(0,0,0,0\.25\);overflow:hidden$/, 'Clip content trims overflow and uses the box with spread');
+  frame.clipsContent = false;
+  // Translucent fills would fade drop-shadow, so retain a box shadow and record an approximation.
+  frame.fills = [{ ...SOLID, opacity: 0.5 }];
+  let r = run(output);
+  assert.match(style(r.html, '4:15'), /box-shadow:0px 2px 4px rgba\(0,0,0,0\.25\)$/);
+  assert.ok(kinds(r, '4:15').includes('shadow-spill'));
+  frame.fills = [SOLID];
+  // Two drop-shadows would accumulate, so retain the box and record an approximation.
+  frame.effects = [shadow, { ...shadow, offset: { x: 0, y: 8 } }];
+  r = run(output);
+  assert.match(style(r.html, '4:15'), /box-shadow:0px 2px 4px rgba\(0,0,0,0\.25\),0px 8px 4px rgba\(0,0,0,0\.25\)$/);
+  assert.ok(kinds(r, '4:15').includes('shadow-spill'));
+  frame.effects = [shadow];
+  // Leaf ink inside the box is not overflow even if its rotated geometry extends outside; masks do not count.
+  Object.assign(kid, { transform: [[0.7071, -0.7071, 135], [0.7071, 0.7071, 41.615]], renderBounds: [125, 50, 20, 20] });
+  assert.doesNotMatch(css(), /filter/, 'Rotation');
+  Object.assign(kid, { isMask: true, maskType: 'ALPHA', transform: at(140, 50), renderBounds: [140, 50, 20, 20] });
+  assert.doesNotMatch(css(), /filter/, 'Mask');
+  delete kid.isMask; delete kid.maskType; put(kid, 125, 50);
+  // LAYER_BLUR alone does not change the shadow target.
+  frame.effects = [{ type: 'LAYER_BLUR', visible: true, radius: 2 }];
+  assert.doesNotMatch(css(), /drop-shadow/);
+  frame.effects = [shadow];
+  // Exclude unpainted children, their own shadow overflow, unfilled/unstroked wrapper bounds (inspect descendants instead), and clipped child containers.
+  kid.renderBounds = null;
+  assert.doesNotMatch(css(), /filter/, 'No paint');
+  Object.assign(kid, { transform: at(125, 50), renderBounds: [125, 50, 20, 40], effects: [{ ...shadow, offset: { x: 0, y: 20 }, spread: 0 }] });
+  assert.doesNotMatch(css(), /filter/, 'Its own shadow');
+  const inner = put({ ...structuredClone(kid), id: '4:99', type: 'RECTANGLE', effects: [], children: undefined }, 125, 50);
+  Object.assign(kid, { type: 'FRAME', fills: [], strokes: [], effects: [], transform: at(120, 45), width: 40, height: 30, renderBounds: [120, 45, 40, 30], children: [inner] });
+  assert.doesNotMatch(css(), /filter/, 'Wrapper overflows but content stays inside');
+  put(inner, 125, 70);
+  assert.match(css(), /filter:drop-shadow/, 'An unclipped descendant container overflows');
+  kid.clipsContent = true;
+  assert.doesNotMatch(css(), /filter/, 'Clipped child container');
+  kid.clipsContent = false;
+  // Zero-opacity fills do not form an outline: alone they cast no shadow; strokes cast ring shadows with Figma hollowing the fill area, requiring an approximation. Such fills on overflowing children do not count as overflow.
+  const solo = output.root.children.find(n => n.id === '4:24'), zero = { ...SOLID, opacity: 0 };
+  Object.assign(solo, { fills: [zero], strokes: [], effects: [shadow] });
+  r = run(output);
+  assert.doesNotMatch(style(r.html, '4:24'), /shadow/);
+  solo.strokes = [{ type: 'SOLID', visible: true, color: { r: 0, g: 0, b: 0 } }];
+  r = run(output);
+  assert.match(style(r.html, '4:24'), /filter:drop-shadow/);
+  assert.ok(kinds(r, '4:24').includes('shadow-knockout'));
+  solo.fills = [SOLID];
+  assert.doesNotMatch(style(run(output).html, '4:24'), /filter/);
+  inner.fills = [zero];
+  assert.doesNotMatch(css(), /filter/, 'Overflowing grandchild has only a zero-opacity fill');
+  inner.fills = [SOLID];
+  // Content-shaped shadows with visible descendant shadows, including grandchildren, require an approximation; hidden and inner shadows do not count.
+  const childShadow = e => { inner.effects = e; return kinds(run(output), '4:15').includes('shadow-children'); };
+  assert.equal(childShadow([{ ...shadow, spread: 0 }]), true);
+  assert.equal(childShadow([{ ...shadow, visible: false }]), false);
+  assert.equal(childShadow([{ ...shadow, type: 'INNER_SHADOW' }]), false);
+  Object.assign(frame, { fills: [], effects: [{ type: 'LAYER_BLUR', visible: true, radius: 2 }] });
+  assert.match(css(), /filter:blur/);
+  assert.equal(childShadow([{ ...shadow, spread: 0 }]), false, 'No shadow on the node itself');
 });
 
 test('CSS numeric contracts cover gradient-stop remapping, SVG gradients, CROP conversion, number formatting, and matrices', () => {

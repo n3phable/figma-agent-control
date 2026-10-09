@@ -6,8 +6,8 @@
  */
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { VECTORS, num, px, esc, cssStr, place, paintLayer, radius, stroke, effects, backdrop, blend, lineHeight, baselineShift, postScriptGuess,
-  segmentStyle, textBox, maskImage, vectorSvg, fillAlpha, bakeReason, paintsBackground } from './css.mjs';
+import { VECTORS, FRAMES, num, px, esc, cssStr, place, paintLayer, radius, stroke, effects, backdrop, blend, lineHeight, baselineShift, postScriptGuess,
+  segmentStyle, textBox, maskImage, vectorSvg, fillAlpha, bakeReason, paintsBackground, painted } from './css.mjs';
 /** @import { LandedExtractOutput, ExtractNode, TextSegment, BinaryFile } from './extract-contract.js' */
 /** @import { Style, Matrix, Paint, FontMetrics } from './css.mjs' */
 /**
@@ -172,13 +172,45 @@ export function generate(output, { fonts = {}, svgs = {}, overrides = {}, extrac
     const raw = output.svgs[key], svg = typeof raw === 'string' ? raw : svgs[key];
     return { svg, why: svg === undefined ? 'island-unavailable' : bg.has(node) && overrides[node.id]?.bake !== 'svg' ? 'island-vetoed' : clipped(node, svg) ? 'island-clipped' : '' };
   };
-  // Effects target: text uses text; vectors, a single image fill, and unfilled containers with children use content-shaped filter shadows; other nodes use boxes, while empty unfilled/unstroked containers cast none.
+  // Effect targets: text for TEXT; content shape/filter for vectors, image-only fills, or unfilled nodes with children/strokes; box otherwise. Empty containers without fill/stroke/children cast no shadow.
+  // Count only positive-opacity painted fills: Figma excludes zero-opacity fills from silhouettes, so stroke-only nodes shadow just the stroke ring;
+  // Figma still cuts shadows out of that fill area, while drop-shadow shows through the transparent box, requiring an approximation warning.
+  // Observed unclipped frames shadow the combined fill/stroke/child geometry, excluding child shadows and unaffected by fill translucency.
+  // Switch to content-shaped shadows only when painted children (visible fills/strokes, excluding masks; recurse into unclipped containers) protrude beyond the box, fill is opaque and there is one drop shadow;
+  // drop-shadow uses element alpha, so translucent fills weaken/show shadows through themselves, and multiple drop-shadows compound earlier shadows. Otherwise keep box shadows and mark approximation.
+  // Effect-free leaves use renderBounds, already mask-clipped and including strokes/rotation. Other nodes use transformed boxes because their renderBounds includes shadows.
+  // drop-shadow also includes descendant shadows in its silhouette, so mark descendant-shadow cases approximate.
+  // ponytail: Bounding-box comparison can miss protrusions on rotated frames and fall back to box shadows; compare in frame-local coordinates if exact handling becomes necessary.
+  /** @param {ExtractNode} node */
+  const spills = node => {
+    if (!FRAMES.has(node.type) || node.clipsContent || !node.children?.length) return false;
+    const [x, y, w, h] = aabb(node);
+    /** @param {ExtractNode} c @returns {boolean} */
+    const out = c => {
+      if (c.renderBounds === null || c.isMask) return false;
+      const [cx, cy, cw, ch] = c.children?.length || shown(c.effects).length ? aabb(c) : c.renderBounds ?? aabb(c);
+      const draws = painted(c.fills).length > 0 || shown(c.strokes).length > 0;
+      return (draws && (cx < x - 0.01 || cy < y - 0.01 || cx + cw > x + w + 0.01 || cy + ch > y + h + 0.01)) || (!c.clipsContent && !!c.children?.some(out));
+    };
+    return node.children.some(out);
+  };
+  /** @param {ExtractNode} n @returns {boolean} */
+  const dropsBelow = n => !!n.children?.some(c => shown(c.effects).some(e => e.type === 'DROP_SHADOW') || dropsBelow(c));
   /** @param {ExtractNode} node */
   const fxOf = node => {
-    const fills = shown(node.fills);
+    const fills = painted(node.fills), strokes = shown(node.strokes).length > 0, drops = shown(node.effects).filter(e => e.type === 'DROP_SHADOW').length;
+    const spill = drops && fills.length > 0 && spills(node);
     if (node.type === 'TEXT') return effects(node, 'text');
-    if (VECTORS.has(node.type) || (fills.length === 1 && fills[0].type === 'IMAGE') || (!fills.length && node.children?.length)) return effects(node, 'image');
-    return fills.length || shown(node.strokes).length ? effects(node, 'box') : { style: /** @type {Style} */ ({}), approx: /** @type {string[]} */ ([]) };
+    if (VECTORS.has(node.type) || (fills.length === 1 && fills[0].type === 'IMAGE') || (!fills.length && (node.children?.length || strokes)) || (spill && drops === 1 && fillAlpha(node) === 1)) {
+      const fx = effects(node, 'image');
+      if (!VECTORS.has(node.type) && drops && dropsBelow(node)) fx.approx.push('shadow-children');
+      if (drops && shown(node.fills).length > fills.length) fx.approx.push('shadow-knockout');
+      return fx;
+    }
+    if (!fills.length) return { style: /** @type {Style} */ ({}), approx: /** @type {string[]} */ ([]) };
+    const fx = effects(node, 'box');
+    if (spill) fx.approx.push('shadow-spill');
+    return fx;
   };
 
   // Postorder preprocessing computes backdrop-dependent subtrees, including root for vetoes, and flat nodes written as left/top. Ref subtrees become reference images and do not participate.
@@ -238,7 +270,7 @@ export function generate(output, { fonts = {}, svgs = {}, overrides = {}, extrac
   // emit individual fill layers at the container start with per-paint blend/opacity; otherwise reverse into CSS backgrounds, since Figma's last paint is topmost but CSS's first layer is topmost.
   // Put strokes after children/fill layers because Chromium outline/inset shadows paint below positioned children, while Figma strokes paint above content;
   // keep outward strokes on clipping containers themselves, or their own overflow would clip them.
-  // Nodes without fills, strokes, or children cast no shadow; unfilled containers with children use content-shaped drop-shadow, while other nodes use box shadows.
+  // fxOf chooses content-shaped drop-shadow or box-shadow.
   /** @param {ExtractNode} node @param {Style} s @param {number} opacity @returns {{ fill: string, stroke: string }} */
   const surface = (node, s, opacity) => {
     const fills = shown(node.fills), w = node.width, h = node.height;

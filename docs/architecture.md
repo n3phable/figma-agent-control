@@ -144,7 +144,7 @@ Read-only extraction runs inside plugin/main.js and shares its document-access h
 
 ## Shadow mapping
 
-CSS shadow shape and spread remain approximations. Compare exported pixels, especially on stroked or unclipped containers, instead of relying on matching property values.
+Shadow outlines account for painted fills and outside/center strokes. Spread follows the observed rectangle/ellipse/filled-clipping-frame rules; overflowing content can require a content-shaped shadow and an explicit approximation finding.
 
 ## Child paint order
 
