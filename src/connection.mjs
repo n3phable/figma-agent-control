@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Inputs and types declared below; no runtime package dependencies.
- * [OUTPUT]: Exports createConnection.
- * [POS]: Owns the exclusive plugin lease independently of transport and persistence.
+ * [INPUT]: No dependencies; injectable clock for tests.
+ * [OUTPUT]: createConnection({ now, timeoutMs, backgroundTimeoutMs }) -> lease object. connected/state/ageMs are read-only; owns checks ownership; touch renews or transfers the lease and returns reason codes on failure.
+ * [POS]: The single-plugin in-memory lease, used only by bridge. A new instance can take over only after expiry and when bridge reports no active run; replaced instances retire permanently. Unknown writes never transfer, while read-only tasks do not prevent takeover. Hidden panels throttle timers, so background leases last 90 s.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 export function createConnection({ now = Date.now, timeoutMs = 15000, backgroundTimeoutMs = 90000 } = {}) {

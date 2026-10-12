@@ -501,6 +501,9 @@ function compile(job) {
   const body = (job.libs || []).reduceRight((inner, lib) => `${lib.code}\nreturn (async () => {\n${inner}\n})();`, job.code);
   return new Function('figma', 'target', 'data', `return (async () => {\n${body}\n})();`);
 }
+// Scripts can throw any value. String() may itself throw for prototype-less objects or proxies with throwing getters, so reporting must remain robust and never leave the task pending.
+/** @param {unknown} value */
+const describe = value => { try { return String(value); } catch (_) { return `The value thrown by the script cannot be converted to text (${typeof value})`; } };
 
 // -- Failure evidence: newly created nodes -------------------------------
 // Listen to target-page nodechange during execution, collecting CREATE and DELETE (typings report only the highest nested creation/deletion), excluding REMOTE collaborator changes.
@@ -598,14 +601,15 @@ figma.ui.onmessage = async job => {
   /** @type {{ before: string, after: string, clean?: string }} */
   const undoBoundaries = { before: 'not-run', after: 'not-run' };
   const budget = { size: 0 }, warnings = /** @type {string[]} */ ([]);
-  // Return failed-script evidence: created, optional cleanOnFail cleaned/cleanFailed, and deletedExisting from watchCreated.
-  let watch = /** @type {ReturnType<typeof watchCreated> | null} */ (null), leftovers = /** @type {Record<string, unknown>} */ ({});
+  // Failure evidence includes created, optional cleanOnFail cleaned/cleanFailed, and deletedExisting (see watchCreated). scriptFailure retains the script's original thrown value, from compilation or execution.
+  let watch = /** @type {ReturnType<typeof watchCreated> | null} */ (null), leftovers = /** @type {Record<string, unknown>} */ ({}), scriptFailure = /** @type {{ error: unknown } | undefined} */ (undefined);
   try {
     if (!figma.fileKey) throw Error('Cannot verify the file key; use the development plugin with the private API enabled');
     if (figma.fileKey !== job.binding.fileKey) throw Error('The current file does not match the binding');
     if (figma.editorType !== 'figma' || figma.mode !== 'default') throw Error('Run the plugin in Figma Design edit mode');
     // Compile first: syntax errors return before snapshots, approval or writes, preserving executionStarted false.
-    const program = run ? compile(job) : null;
+    let program = null;
+    if (run) try { program = compile(job); } catch (error) { scriptFailure = { error }; throw error; }
     const targetId = job.targetNodeId ?? job.binding.nodeId, candidate = await figma.getNodeByIdAsync(targetId);
     if (candidate === null && job.operation === 'inspect') {
       send({ id: job.id, ok: false, executionStarted: false, targetMissing: true, missingNodeId: targetId, fileVerified: figma.fileKey,
@@ -647,29 +651,31 @@ figma.ui.onmessage = async job => {
       // cleanOnFail records existing target-page IDs before the boundary. Preserve new nodes that are themselves preexisting or contain existing layers, such as figma.group results, to avoid deleting original content.
       // Covers only the target page; existing nodes moved from other pages into new nodes are absent from the protection list.
       const existing = job.cleanOnFail ? new Set(page.findAll().map(node => node.id)) : null;
+      // For non-page targets, synchronously record direct page children at low cost: create* without appendChild leaves new nodes at page root, outside the target change set. Page targets already cover them.
+      const rootChildren = (/** @type {PageNode} */ p) => p.children.map(({ id, name, type }) => ({ id, name, type })), rootBefore = target.type === 'PAGE' ? null : rootChildren(page);
       if (typeof figma.commitUndo !== 'function') throw Error('This environment does not support Undo boundaries; the script did not run');
       const commitUndo = figma.commitUndo.bind(figma);
       try { commitUndo(); undoBoundaries.before = 'committed'; }
       catch (error) { undoBoundaries.before = 'failed'; throw error; }
       watch = watchCreated(page, warnings);
       executionStarted = true;
-      let scriptFailure, boundaryFailure;
+      let boundaryFailure;
       try { output = await /** @type {Function} */ (program)(figma, target, job.data ?? null); }
       catch (error) { scriptFailure = { error }; }
       // Create history boundaries for success and partial failure alike; never trigger global Undo automatically.
       try { commitUndo(); undoBoundaries.after = 'committed'; }
       catch (error) {
         undoBoundaries.after = 'failed';
-        boundaryFailure = Error(`${scriptFailure ? `Script error: ${String(scriptFailure.error)}; ` : ''}Failed to commit the closing Undo boundary: ${String(error)}; verify the document, do not auto-undo or replay the script`);
+        boundaryFailure = Error(`${scriptFailure ? `Script error: ${describe(scriptFailure.error)}; ` : ''}Failed to commit the closing Undo boundary: ${String(error)}; verify the document, do not auto-undo or replay the script`);
       }
       if (scriptFailure) {
         // Default to reporting only. cleanOnFail deletes highest-level new nodes and commits another boundary, making cleanup a separate Undo step. Existing modifications remain, so execution is not atomic.
         // If the ending boundary fails, cleanup cannot be a separate step, so report without deletion. Preserve new nodes that are or contain preexisting nodes, recording cleanFailed.
-        // Evidence/cleanup errors only warn; keep the original script error. Read names and types before deletion because removed-node properties are inaccessible.
+        // Evidence/cleanup errors only warn; report the original script error. Read names/types before deletion because removed-node properties are inaccessible. Parent and owned-subtree size (excluding instance internals; leaves lack findAll) support deferred clean, matching src/clean.mjs.
         try {
           const nodes = await watch.created();
           if (nodes) {
-            const created = nodes.map(node => ({ id: node.id, name: node.name, type: node.type }));
+            const created = nodes.map(node => ({ id: node.id, name: node.name, type: node.type, parentId: node.parent?.id ?? null, size: 'findAll' in node ? node.findAll(child => !child.id.startsWith('I')).length : 0 }));
             leftovers.created = created;
             if (existing && boundaryFailure) warnings.push('Closing Undo boundary failed to commit; created nodes were not deleted');
             else if (existing) {
@@ -703,11 +709,17 @@ figma.ui.onmessage = async job => {
       // An over-budget after snapshot only makes the change set unavailable; it does not invalidate successful execution or output.
       let after, afterError;
       try { after = target.removed ? null : snapshot(); } catch (error) { afterError = String(error); }
+      // Compare page-root changes only after success. List at most 50 additions/removals each, matching src/record.mjs LIST_LIMIT without importing it, and count overflow. Omit empty results or unavailable roots, such as a deleted page.
+      const pageRoot = /** @type {Record<string, unknown>} */ ({});
+      if (rootBefore) try {
+        const rootAfter = rootChildren(page), had = new Set(rootBefore.map(n => n.id)), has = new Set(rootAfter.map(n => n.id)), diff = { created: rootAfter.filter(n => !had.has(n.id)), deleted: rootBefore.filter(n => !has.has(n.id)) };
+        if (diff.created.length || diff.deleted.length) for (const [key, list] of Object.entries(diff)) { pageRoot[key] = list.slice(0, 50); if (list.length > 50) pageRoot[key + 'Omitted'] = list.length - 50; }
+      } catch (_) {}
       let serialized;
       try { serialized = serializeOutput(output, budget); }
-      catch (error) { throw String(error).includes('do not replay the script') ? error : Error('Return value cannot be converted to JSON; the script ran, check the document, do not replay the script'); }
+      catch (error) { throw describe(error).includes('do not replay the script') ? error : Error('Return value cannot be converted to JSON; the script ran, check the document, do not replay the script'); }
       send({ id: job.id, ok: true, output: serialized.output, ...(serialized.binaries.length ? { binaries: serialized.binaries } : {}), ...(renders ? { renders } : {}),
-        before, ...(afterError ? { afterError } : { after }), bindingVerified: { fileKey: figma.fileKey, pageId: page.id, nodeId: before.id }, undoBoundaries });
+        before, ...(afterError ? { afterError } : { after }), ...('created' in pageRoot ? { pageRoot } : {}), bindingVerified: { fileKey: figma.fileKey, pageId: page.id, nodeId: before.id }, undoBoundaries });
       return;
     } else throw Error('Unknown operation');
     const serialized = serializeOutput(output, budget);
@@ -715,9 +727,11 @@ figma.ui.onmessage = async job => {
     send({ id: job.id, ok: true, output: serialized.output, ...(serialized.binaries.length ? { binaries: serialized.binaries } : {}), ...(ancestors ? { ancestors } : {}),
       bindingVerified: { fileKey: figma.fileKey, pageId: page.id, nodeId: before.id } });
   } catch (e) {
-    let after;
+    let after, stack;
     if (executionStarted) { try { after = /** @type {SceneNode | PageNode} */ (target).removed ? null : snapshot(); } catch (_) {} }
-    send({ id: job.id, ok: false, error: String(e), executionStarted, ...(after !== undefined ? { before, after } : {}), ...(ancestors ? { ancestors } : {}),
+    // Return stacks only from script-thrown values, including those wrapped by an ending-boundary failure. This module's own errors have no script location to map; even reading stack may throw.
+    if (scriptFailure) try { const raw = /** @type {any} */ (scriptFailure.error)?.stack; if (typeof raw === 'string') stack = raw.slice(0, 4000); } catch (_) {}
+    send({ id: job.id, ok: false, error: describe(e), ...(stack ? { stack } : {}), executionStarted, ...(after !== undefined ? { before, after } : {}), ...(ancestors ? { ancestors } : {}),
       recovery: executionStarted ? 'The script started running; keep the current state, verify with inspect first, do not replay the script' : 'The script did not run; fix it and resubmit', ...(run ? { undoBoundaries } : {}),
       ...leftovers, ...(warnings.length ? { warnings } : {}) });
   } finally {

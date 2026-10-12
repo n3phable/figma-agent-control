@@ -13,7 +13,7 @@ import { json, root, save, hash, isJobId, isNodeId, readBinding } from './projec
 import { createConnection } from './connection.mjs';
 import { unfinishedOperations, acquireLock, NOT_DELIVERED, ABANDONED } from './session.mjs';
 import { pngSize, imageStats, diffPng } from './png.mjs';
-import { changeSet } from './record.mjs';
+import { changeSet, scriptTrace } from './record.mjs';
 
 export const DEFAULT_PORT = 32523;
 const assets = fileURLToPath(new URL('../plugin/', import.meta.url));
@@ -215,6 +215,8 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
         catch (error) { data.changes = { unavailable: error.message }; }
       } else if (job.operation === 'run' && data.ok === true && typeof data.afterError === 'string') data.changes = { unavailable: `After-snapshot unavailable (${data.afterError.slice(0, 300)}); verify with preview or inspect --node` };
       delete data.afterError;
+      // Map script stacks back to library/body lines. Mapping failures must not block persistence: repeated /complete rejection makes the plugin replace evidence with a reduced failure. Always retain the raw stack.
+      if (job.operation === 'run' && typeof data.stack === 'string') try { const trace = scriptTrace(job, data.stack, data.executionStarted); if (trace.length) data.trace = trace; } catch (_) {}
       // before already lives in the write-ahead before.json; retain after only for failures after execution, documenting partial writes.
       if (!(data.ok === false && data.executionStarted === true)) delete data.after;
       delete data.before;

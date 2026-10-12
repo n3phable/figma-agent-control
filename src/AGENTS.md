@@ -8,6 +8,7 @@ Host-side command, bridge and evidence modules.
 
 - `args.mjs`: Command definitions and argument validation.
 - `bridge.mjs`: Loopback HTTP relay with role credentials, serialized jobs and persistent evidence.
+- `clean.mjs`: Build a guarded cleanup run from failed-job creation evidence.
 - `client.mjs`: CLI-side HTTP requests and bridge lifecycle calls.
 - `connection.mjs`: Plugin instance lease state.
 - `doctor.mjs`: Read-only diagnosis of local setup and connection state.

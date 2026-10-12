@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:child_process, node:fs, node:os, node:path, node:url.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for contract samples.mjs; tests use local synthetic inputs and isolated state.
+ * [INPUT]: ExtractResult from src/html/extract-contract.d.ts; local typescript installed by npm ci; a read-only runs/ directory of real-device evidence; node:child_process spawnSync runs local tsc with the current Node executable.
+ * [OUTPUT]: No exports; exits 0 when all extract result.json files in runs/ satisfy the contract, or prints tsc diagnostics and exits 1 otherwise.
+ * [POS]: Manual contract check against real-device evidence when the contract changes; excluded from npm test and npm run check because the corpus is not in the repository. Checks the read-side shape; main.js type annotations enforce plugin-required renderBounds and stats.postScriptMissing, allowing older evidence to omit them here.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { spawnSync } from 'node:child_process';

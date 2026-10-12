@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:assert/strict, node:crypto, node:vm, ./doc.mjs, ./harness.mjs, ../../src/html/generate.mjs, ../../src/png.mjs.
- * [OUTPUT]: Exports extracted, KANIT, run.
- * [POS]: Isolated test fixtures shared by the surrounding contract and integration suites.
+ * [INPUT]: tests/helpers/doc extractDoc; tests/helpers/harness fakeFigma/pluginSource; src/html/generate generate/fontRequests; src/png pngSize; node:vm runs the real plugin/main.js.
+ * [OUTPUT]: Exports extracted(id, job?) returning an independent { output, bytes } copy, run(output, options?) returning generate results, and handwritten KANIT metrics.
+ * [POS]: Generator fixture shared by generation, attribution, suggestions, layout, rendering, command-layer suites, and local whole-output comparisons. Extracts the mock document in the real VM plugin, converts binary placeholders to file descriptors, and passes them to generate; handwritten metrics make results machine-independent.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import assert from 'node:assert/strict';

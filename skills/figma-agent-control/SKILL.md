@@ -55,6 +55,8 @@ This skill defines the working order and recovery rules. Read the [agent guide](
 
 Keep stdout JSON separate from stderr receipts. Use the actual job ID from `id`, the receipt, or an explicit new `--request-id`; never find the latest job by directory timestamps.
 
+Read `instruction`, then `ok`, `error`, `executionStarted`, `changes`, `verify`, `pageRoot`, `trace`, and cleanup fields. A summary can omit output above 16 KiB; read `resultFile`. Raw result output is `.output`; `--full` record output is `.result.output`.
+
 - Exit `0`: success under the configured checks.
 
 - Exit `1` with `executionStarted:false`: the script did not start; fix the cause before resubmitting.

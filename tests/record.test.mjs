@@ -13,7 +13,7 @@ import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { init, json, save } from '../src/project.mjs';
 import { start } from '../src/bridge.mjs';
-import { changeSet, localResult, summarizeRecord, exitCode, waitForResult } from '../src/record.mjs';
+import { changeSet, scriptTrace, localResult, summarizeRecord, exitCode, waitForResult } from '../src/record.mjs';
 import { report } from '../src/report.mjs';
 
 // -- Fixtures -------------------------------------------------------------
@@ -161,6 +161,100 @@ test('Change lists cap at 50 with omitted counts; declared depth adds a limitati
   assert.match(unknown.unavailable, /truncated.*target a shallower node that still covers all writes, or declare --depth/);
 });
 
+// -- Script error locations -----------------------------------------------
+// Real Figma Desktop QuickJS samples: two probe scripts each use one --lib. Stacks and source, including trailing newlines, are preserved exactly from submission/readback.
+const PROBE = { label: 'probe-stack.js', libs: [{ name: 'probe-lib.js', code: [
+  "// \u63a2\u9488 lib\uff1a\u7b2c 3 \u884c\u629b\u9519",
+  "function libThrow() {",
+  "  throw new Error('probe-lib.js:3');",
+  "}",
+  ""].join('\n') }], code: [
+  "const here = new Error('probe-stack.js:1').stack;",
+  "const grab = f => { try { f(); return null; } catch (e) { return { text: String(e), stack: typeof e?.stack === 'string' ? e.stack : `(${typeof e?.stack})` }; } };",
+  "const out = { here };",
+  "out.lib = grab(() => libThrow());",
+  "out.host = grab(() => figma.getNodeById(target.id));",
+  "out.fn = grab(() => new Function('a', 'b', '\\n\\nthrow Error(\"fn:3\")')(1, 2));",
+  "out.sourceURL = grab(() => new Function('throw Error(\"s\")\\n//# sourceURL=fac-probe.js')());",
+  "out.syntax = grab(() => new Function('\\n\\nlet x = ;'));",
+  "function inner() { throw Error('probe-stack.js:9'); }",
+  "function outer() { [0].forEach(() => inner()); }",
+  "out.chain = grab(outer);",
+  "await new Promise(resolve => setTimeout(resolve, 0));",
+  "out.afterAwait = grab(() => { throw Error('probe-stack.js:13'); });",
+  "try { await figma.loadFontAsync({ family: 'FAC-Probe-NoSuchFont', style: 'Regular' }); } catch (e) { out.asyncHost = { text: String(e), stack: typeof e?.stack === 'string' ? e.stack : `(${typeof e?.stack})` }; }",
+  "const f = figma.createFrame();",
+  "try { f.layoutMode = 'HORIZONTAL'; out.setter = grab(() => { f.counterAxisAlignItems = 'END'; }); } finally { f.remove(); }",
+  "out.engine = { captureStackTrace: typeof Error.captureStackTrace, prepareStackTrace: typeof Error.prepareStackTrace, intl: typeof Intl };",
+  "return out;",
+  ""].join('\n') };
+const PROBE2 = { label: 'probe2.js', libs: [{ name: 'probe2-lib.js', code: [
+  "function parseIt(s) {",
+  "  return JSON.parse(s);",
+  "}",
+  "function setIt(inst, props) {",
+  "  inst.setProperties(props);",
+  "}",
+  ""].join('\n') }], code: [
+  "const grab = f => { try { f(); return null; } catch (e) { return { text: String(e), stack: typeof e?.stack === 'string' ? e.stack : `(${typeof e?.stack})` }; } };",
+  "const out = {};",
+  "out.json = grab(() => parseIt('{\\n\"a\":'));",
+  "const a = figma.createComponent(); a.name = 'K=a';",
+  "const b = figma.createComponent(); b.name = 'K=b';",
+  "const set = figma.combineAsVariants([a, b], figma.currentPage);",
+  "const inst = a.createInstance();",
+  "try { out.props = grab(() => setIt(inst, { K: 'zzz' })); } finally { inst.remove(); set.remove(); }",
+  "return out;",
+  ""].join('\n') };
+const STACKS = {
+  lib: "    at libThrow (<input>:6:18)\n    at <anonymous> (<input>:13:30)\n    at grab (<input>:11:28)\n    at <anonymous> (<input>:13:15)\n    at <anonymous> (<input>:29:3)\n    at anonymous (<input>:3:1)\n    at <anonymous> (PLUGIN_11_SOURCE:661:61)\n",
+  setter: "    at <anonymous> (<input>:25:63)\n    at grab (<input>:11:28)\n    at <anonymous> (<input>:25:53)\n",
+  syntax: "    at <input>:5:9\n    at Function (native)\n    at <anonymous> (<input>:17:37)\n    at grab (<input>:11:28)\n    at <anonymous> (<input>:17:18)\n    at <anonymous> (<input>:29:3)\n    at anonymous (<input>:3:1)\n    at <anonymous> (PLUGIN_11_SOURCE:661:61)\n",
+  fn: "    at anonymous (<input>:5:12)\n    at <anonymous> (<input>:15:70)\n    at grab (<input>:11:28)\n    at <anonymous> (<input>:15:14)\n    at <anonymous> (<input>:29:3)\n    at anonymous (<input>:3:1)\n    at <anonymous> (PLUGIN_11_SOURCE:661:61)\n",
+  afterAwait: "    at <anonymous> (<input>:22:42)\n    at grab (<input>:11:28)\n    at <anonymous> (<input>:22:22)\n",
+  json: "    at <input>:2:5\n    at parse (native)\n    at parseIt (<input>:5:3)\n    at <anonymous> (<input>:14:30)\n    at grab (<input>:12:28)\n    at <anonymous> (<input>:14:16)\n    at <anonymous> (<input>:22:3)\n    at anonymous (<input>:3:1)\n    at <anonymous> (PLUGIN_11_SOURCE:661:61)\n",
+  props: "    at setIt (<input>:8:21)\n    at <anonymous> (<input>:19:35)\n    at grab (<input>:12:28)\n    at <anonymous> (<input>:19:23)\n    at <anonymous> (<input>:22:3)\n    at anonymous (<input>:3:1)\n    at <anonymous> (PLUGIN_11_SOURCE:661:61)\n"
+};
+const where = trace => trace.map(({ file, line }) => `${file}:${line}`);
+
+test('scriptTrace maps real Figma stacks to library/body lines, skips anonymous runtime frames, and stops at the outer wrapper', () => {
+  const lib = scriptTrace(PROBE, STACKS.lib, true);
+  assert.deepEqual(where(lib), ['probe-lib.js:3', 'probe-stack.js:4', 'probe-stack.js:2', 'probe-stack.js:4']);
+  assert.deepEqual(lib[0], { file: 'probe-lib.js', line: 3, column: 18, source: "throw new Error('probe-lib.js:3');" });
+  // Synchronous host API validation errors preserve script frames; after await, only frames inside the async boundary remain.
+  assert.deepEqual(where(scriptTrace(PROBE, STACKS.setter, true)), ['probe-stack.js:16', 'probe-stack.js:2', 'probe-stack.js:16']);
+  assert.deepEqual(where(scriptTrace(PROBE, STACKS.afterAwait, true)), ['probe-stack.js:13', 'probe-stack.js:2', 'probe-stack.js:13']);
+  // Nested script-created Function syntax and anonymous body frames do not belong to the submitted source segments.
+  assert.equal(where(scriptTrace(PROBE, STACKS.syntax, true))[0], 'probe-stack.js:8');
+  assert.equal(where(scriptTrace(PROBE, STACKS.fn, true))[0], 'probe-stack.js:6');
+  // JSON.parse anonymous locations refer to JSON text; host setProperties errors still preserve the caller chain.
+  assert.deepEqual(where(scriptTrace(PROBE2, STACKS.json, true)), ['probe2-lib.js:2', 'probe2.js:3', 'probe2.js:1', 'probe2.js:3']);
+  assert.deepEqual(where(scriptTrace(PROBE2, STACKS.props, true)), ['probe2-lib.js:5', 'probe2.js:8', 'probe2.js:1', 'probe2.js:8']);
+});
+
+test('scriptTrace trusts unnamed frames only before execution, returns empty for missing/unknown stacks, accepts only V8 eval-at-compile frames, caps at 10, and defaults the body label to script', () => {
+  // Match real stack shapes: an unnamed syntax-error frame precedes Function (native) and plugin frames.
+  const compileError = '    at <input>:5:9\n    at Function (native)\n    at <anonymous> (PLUGIN_11_SOURCE:509:10)\n', bad = { label: 'bad.js', code: 'const a = 1;\nlet x = ;\n' };
+  assert.deepEqual(scriptTrace(bad, compileError, false), [{ file: 'bad.js', line: 2, column: 9, source: 'let x = ;' }]);
+  assert.deepEqual(scriptTrace(bad, compileError, true), []);
+  for (const stack of [undefined, null, 42, '', 'Error: x', 'Error: x\n    at f (other.js:1:1)\n    at g (native)', '    at <anonymous> (PLUGIN_11_SOURCE:661:61)']) assert.deepEqual(scriptTrace(bad, stack, true), [], String(stack));
+  // In V8 node:vm, nested new Function frames add another eval at level and main.js frames use evalmachine; trust neither.
+  const v8 = 'Error: x\n    at eval (eval at <anonymous> (eval at compile (evalmachine.<anonymous>:506:10)), <anonymous>:5:7)\n'
+    + '    at a (eval at compile (evalmachine.<anonymous>:506:10), <anonymous>:5:9)\n    at globalThis.go (evalmachine.<anonymous>:5:56)\n';
+  assert.deepEqual(scriptTrace({ code: 'f();\nthrow Error("x");\n' }, v8, true), [{ file: 'script', line: 2, column: 9, source: 'throw Error("x");' }]);
+  assert.equal(scriptTrace({ code: 'f();\n' }, '    at f (<input>:4:1)\n'.repeat(12), true).length, 10);
+});
+
+test('Failure summaries expose trace or fall back to the first 500 stack characters', async t => {
+  const trace = [{ file: 'lib.js', line: 2, column: 3, source: 'boom();' }], base = { id: ID, ok: false, error: 'Error: x', executionStarted: true };
+  const { write, read } = await evidence(t, { 'result.json': { ...base, stack: '    at boom (<input>:5:3)\n', trace } });
+  const traced = summarizeRecord(await read());
+  assert.deepEqual([traced.trace, 'stack' in traced], [trace, false]);
+  await write({ 'result.json': { ...base, stack: 'x'.repeat(600) } });
+  const raw = summarizeRecord(await read());
+  assert.deepEqual(['trace' in raw, raw.stack.length, raw.stack.slice(-4)], [false, 500, 'x...']);
+});
+
 // -- Readback -------------------------------------------------------------
 
 test('localResult treats result.json as the sole completion commit regardless of job.state backfill and exposes before.json as checkpointFile', async t => {
@@ -244,10 +338,10 @@ test('Failure summaries explain created-node outcomes, cap lists at 50, expose d
   await write({ 'job.json': failed, 'result.json': { ...base, created: nodes(60) } });
   const left = summarizeRecord(await read());
   assert.deepEqual([left.created.length, left.createdOmitted, left.created[0]], [50, 10, nodes(1)[0]]);
-  assert.match(left.instruction, /at failure it had created 60 node\(s\) \(see created\), which may contain existing layers: inspect their subtrees, then delete them, or add --clean-on-fail next time; keep the evidence; verify the current state with inspect first; do not replay the script/);
+  assert.match(left.instruction, new RegExp(`at failure it had created 60 node\\(s\\) \\(see created\\), which may contain existing layers: inspect their subtrees, then run figma-agent-control clean ${ID}, or add --clean-on-fail next time; keep the evidence; verify the current state with inspect first; do not replay the script`));
   // When --clean-on-fail was supplied but only created is available because the closing boundary failed, do not suggest adding it next time.
   await write({ 'job.json': { ...failed, cleanOnFail: true } });
-  assert.match(summarizeRecord(await read()).instruction, /inspect their subtrees, then delete them; keep the evidence/);
+  assert.match(summarizeRecord(await read()).instruction, new RegExp(`inspect their subtrees, then run figma-agent-control clean ${ID}; keep the evidence`));
   await write({ 'job.json': failed });
 
   await write({ 'result.json': { ...base, created: nodes(3), cleaned: nodes(2), cleanFailed: [{ ...nodes(3)[2], reason: '\u8282\u70b9\u5df2\u9501\u5b9a' }] } });
@@ -299,6 +393,23 @@ test('Unavailable visual verification asks for inspection instead of claiming no
   assert.match(summary.instruction, /Visual check unavailable: Target was deleted by the script.*preview or inspect.*do not replay/);
   assert.doesNotMatch(summary.instruction, /diff image|fix it with a new script/);
   assert.equal(exitCode(record), 1);
+});
+
+test('Summaries preserve pageRoot and append appendChild guidance for new root nodes, including omitted counts and failed/unavailable verification, without changing exit codes; removals alone need no hint', () => {
+  const record = (pageRoot, verify) => ({ evidence: '/tmp/e', job: { id: ID, operation: 'run' }, recordedState: 'done', journalComplete: true, instruction: 'Result read from saved evidence',
+    result: { id: ID, ok: true, output: null, pageRoot, verify } });
+  const stray = record({ created: [{ id: '10:1', name: '\u692d\u5706', type: 'ELLIPSE' }], deleted: [], createdOmitted: 3 });
+  const summary = summarizeRecord(stray);
+  assert.deepEqual(summary.pageRoot, stray.result.pageRoot);
+  const hint = '; 4 new node(s) appeared on the page root (see pageRoot), usually from a missing appendChild after create*; this is a before/after comparison that also includes nodes created by collaborators meanwhile and nodes swapped out by flatten or detachInstance (old IDs are in deleted): inspect to confirm they came from this script before deleting or re-parenting them';
+  assert.equal(summary.instruction, 'Result read from saved evidence' + hint);
+  // Missing appendChild leaves the frame unchanged and fails --expect changed; that verification branch must not swallow the guidance.
+  for (const verify of [{ expect: 'changed', pass: false }, { error: 'Visual check unavailable' }]) {
+    const failed = record(stray.result.pageRoot, verify);
+    assert.deepEqual([summarizeRecord(failed).instruction.endsWith(hint), exitCode(failed)], [true, 1], JSON.stringify(verify));
+  }
+  const removed = record({ created: [], deleted: [{ id: '1:9', name: '\u65e7\u753b\u6846', type: 'FRAME' }] });
+  assert.deepEqual([summarizeRecord(removed).pageRoot, summarizeRecord(removed).instruction, exitCode(stray), exitCode(removed)], [removed.result.pageRoot, 'Result read from saved evidence', 0, 0]);
 });
 
 test('Commands for omitted summary output remain executable with apostrophes in evidence paths', () => {

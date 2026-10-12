@@ -19,7 +19,7 @@ const URL_ = 'https://www.figma.com/design/k/n?node-id=1-2';
 // Valid positional arguments from the documented usage; resolve also needs two required flags. Independent of COMMANDS to verify the command table itself.
 const POSITIONALS = {
   help: [], init: [URL_], connect: [], stop: [], status: [], doctor: [],
-  run: ['a.js'], inspect: [], preview: [], variables: [], extract: [], result: [ID], wait: [ID],
+  run: ['a.js'], inspect: [], preview: [], variables: [], extract: [], clean: [ID], result: [ID], wait: [ID],
   resolve: [ID], 'image-diff': ['a.png', 'b.png'], report: [], html: [], 'html-check': ['a.html'],
 };
 const FLAGS = { resolve: ['--inspect', ID2, '--previous-plugin-stopped'], html: ['--node', '1:2', '--out', 'd'] };
@@ -56,7 +56,15 @@ test('Unknown commands point to help; unknown, disallowed, or valueless options 
     ['preview', '--depth', '1'], ['run', 'a.js', '--threshold', '3'], ['image-diff', 'a.png', 'b.png', '--tolerance', '3'],
     ['wait', ID, '--no-wait'], ['run', 'a.js', '--high-risk'], ['run', 'a.js', '--high-risk', '--node', '1:2'], ['inspect', '--node'],
     ['inspect', '--clean-on-fail'], ['extract', '--clean-on-fail'], ['run', 'a.js', '--clean-on-fail=yes'],
+    ['clean', ID, '--node', '1:2'], ['clean', ID, '--clean-on-fail'], ['clean', ID, '--data', 'd.json'],
   ]) assert.throws(() => parse([cmd, ...rest]), ({ message }) => message.startsWith('Invalid arguments') && message.endsWith('; usage: ' + COMMANDS[cmd].usage), rest.join(' '));
+});
+
+test('clean accepts only wait options; task IDs are validated when reading evidence', () => {
+  assert.equal(COMMANDS.clean.submit, true);
+  assert.deepEqual(parse(['clean', ID, '--timeout', '60', '--full']), { command: 'clean', positionals: [ID], options: { timeoutSeconds: 60, full: true } });
+  assert.deepEqual(opts('clean', ID, '--no-wait'), { noWait: true });
+  assert.throws(() => parse(['clean', ID, '--no-wait', '--full']), /--no-wait cannot be combined with --full or --timeout/);
 });
 
 test('Commands named after Object prototype properties are still unknown commands', () => {

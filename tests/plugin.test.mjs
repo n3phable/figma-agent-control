@@ -395,6 +395,19 @@ test('Large output crosses the host boundary as one string and unwraps completel
   assert.equal(wide.output, '\u4e2d'.repeat(30000));
 });
 
+// -- Page-root additions and removals --------------------------------------
+test('Successful non-page targets report pageRoot additions/removals capped at 50 each with omitted counts; nodes moved into the target, failed scripts, and page targets omit them', async () => {
+  const f = plugin(), old = f.doc.create('FRAME', f.doc.page);
+  const moved = await f.send({ code: `figma.createRectangle(); (await figma.getNodeByIdAsync("${old.id}")).remove();` });
+  assert.deepEqual(moved.pageRoot, { created: [{ id: '10:2', name: 'RECTANGLE-2', type: 'RECTANGLE' }], deleted: [{ id: old.id, name: 'FRAME-1', type: 'FRAME' }] });
+  const many = await f.send({ code: 'for (let i = 0; i < 51; i++) figma.createRectangle();' });
+  assert.deepEqual([many.pageRoot.created.length, many.pageRoot.created[0].id, many.pageRoot.createdOmitted, many.pageRoot.deleted, 'deletedOmitted' in many.pageRoot], [50, '10:3', 1, [], false]);
+  const inside = await f.send({ code: 'target.appendChild(figma.createRectangle());' });
+  const failed = await f.send({ code: 'figma.createRectangle(); throw Error("\u4e2d\u9014\u5931\u8d25");' });
+  const page = await f.send({ binding: PAGE_BINDING, code: 'figma.createRectangle();' });
+  assert.deepEqual([inside, failed, page].map(r => [r.ok, 'pageRoot' in r]), [[true, false], [false, false], [true, false]]);
+});
+
 // -- Read-only tasks ------------------------------------------------------
 test('inspect returns the target-to-page display chain in top-down order excluding the page, without checkpointing', async () => {
   const f = plugin(), { doc } = f;

@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:vm, ./harness.mjs.
- * [OUTPUT]: Exports BINDING, plugin.
- * [POS]: Isolated test fixtures shared by the surrounding contract and integration suites.
+ * [INPUT]: tests/helpers/harness createDoc/fakeFigma/pluginSource; node:vm runs the real plugin/main.js.
+ * [OUTPUT]: Exports plugin(options) with doc, figma, events, checkpoints, approvals, results, infos, start, and send; also exports the default task BINDING.
+ * [POS]: Plugin unit-test fixture shared by plugin.test.mjs, plugin-failure.test.mjs, and clean.test.mjs. Runs real main.js against a mock document and responds to checkpoints/high-risk approvals by scenario. harness.mjs provides the real-bridge end-to-end fixture.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import vm from 'node:vm';

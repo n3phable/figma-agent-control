@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:assert/strict, node:fs/promises, node:os, node:path, ../../src/bridge.mjs, ../../src/project.mjs, ../../src/session.mjs.
- * [OUTPUT]: Exports FIGMA_URL, OPTIONS, uuid, verified, RUN, exists, send, fixture.
- * [POS]: Isolated test fixtures shared by the surrounding contract and integration suites.
+ * [INPUT]: src/bridge start for a real bridge with random ports and an injectable clock; src/project init/root/json; src/session pairingToken.
+ * [OUTPUT]: Exports fixture(t) with boot/restart and CLI/plugin/poll/status/submit/deliver/finish requests, send(port, route, options), FIGMA_URL, OPTIONS, RUN, uuid, verified, and exists.
+ * [POS]: Shared bridge contract fixture for bridge.test.mjs and bridge-session.test.mjs. Fetch acts as CLI with session.json credentials or plugin with global pairing.json credentials, the reported version, and current file; no plugin code runs.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import assert from 'node:assert/strict';

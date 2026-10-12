@@ -49,6 +49,7 @@ iframe 在接受确认或结果前，逐条核对任务 ID 和随机 nonce。
 | [connection](../../src/connection.mjs) | 租约不需要文件或 HTTP，注入时钟让过期测试确定 |
 | [session](../../src/session.mjs) | 配对、锁接管和启动修复跨越进程生命周期，不属于瞬时桥接状态 |
 | [record](../../src/record.mjs) | 所有读取方共用证据、摘要、退出码和下一步解释，等待从不重提 |
+| [clean](../../src/clean.mjs) | 把已有失败证据变成普通 run，复用写入保障，不新增操作 |
 | [doctor](../../src/doctor.mjs) | 桥接不可达时仍可只读诊断绑定、锁和安装问题 |
 | [report](../../src/report.mjs) | 只聚合完成证据，不改会话或任务状态 |
 

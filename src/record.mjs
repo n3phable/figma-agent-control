@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Imports node:fs/promises, node:path, node:util, node:timers/promises, node:perf_hooks, ./project.mjs.
- * [OUTPUT]: Exports changeSet, localResult, summarizeRecord, exitCode, waitForResult.
+ * [OUTPUT]: Exports changeSet, scriptTrace, localResult, summarizeRecord, exitCode, waitForResult.
  * [POS]: Interprets persisted jobs and snapshots into outcomes, changes and wait results.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -85,6 +85,35 @@ export function changeSet(before, after, depth) {
     ...(depth ? { limitation: `Compares only ${depth} level(s) below the target; deeper changes are not visible` } : {}) };
 }
 
+// -- Script error locations ---------------------------------------------
+// plugin/main.js compile nests each library and body inside new Function. The first segment starts at engine line 4, and each segment adds one wrapper line;
+// segment k therefore starts at 4 + sum(n_j + 1), where n_j counts preceding lines split by \n. Wrappers add no leading characters, preserving columns.
+// Figma QuickJS stacks have no message line and use "at name (<input>:line:column)"; V8 in node:vm uses "at name (eval at compile (...), <anonymous>:line:column)".
+// Frames named anonymous belong to new Function bodies (outer wrappers or functions created by the script), outside these segments, so skip them. Named functions created inside those bodies still use body-local lines and can map to unrelated source lines.
+// Unnamed frames refer to this source only during compilation (executionStarted false); at runtime they may point into JSON.parse text or a nested new Function syntax error.
+// Skip out-of-segment frames until the first mapped frame; later ones belong to outer wrappers, so stop there.
+const FRAME = /^\s*at (?:(.+?) \()?(?:<input>|eval at compile \([^()]*\), <anonymous>):(\d+):(\d+)\)?$/, TRACE_LIMIT = 10;
+/** @param {{ code: string, libs?: { name: string, code: string }[], label?: string }} job @param {unknown} stack @param {unknown} executionStarted */
+export function scriptTrace(job, stack, executionStarted) {
+  const trace = /** @type {{ file: string, line: number, column: number, source: string }[]} */ ([]);
+  if (typeof stack !== 'string') return trace;
+  let next = 4;
+  const segments = [...(job.libs ?? []), { name: job.label ?? 'script', code: job.code }].map(({ name, code }) => {
+    const lines = code.split('\n'), first = next;
+    next += lines.length + 1;
+    return { name, lines, first };
+  });
+  for (const text of stack.split('\n')) {
+    const frame = FRAME.exec(text);
+    if (!frame || frame[1] === 'anonymous' || (frame[1] === undefined && executionStarted !== false)) continue;
+    const line = Number(frame[2]), segment = segments.find(({ lines, first }) => line >= first && line < first + lines.length);
+    if (!segment) { if (trace.length) break; continue; }
+    trace.push({ file: segment.name, line: line - segment.first + 1, column: Number(frame[3]), source: segment.lines[line - segment.first].trim().slice(0, 200) });
+    if (trace.length === TRACE_LIMIT) break;
+  }
+  return trace;
+}
+
 // -- Reading evidence ---------------------------------------------------
 // result.json is the sole commit point: its presence means completion. job.json status is derived and repaired on restart after a crash between writes.
 /** @param {string} file */
@@ -133,6 +162,9 @@ function boundedOutput(output, resultFile, limit = OUTPUT_LIMIT) {
 const extractOk = (/** @type {RunRecord} */ { job, result }) => job?.operation === 'extract' && result?.ok === true;
 const skippedIslands = (/** @type {RunRecord} */ record) => extractOk(record) && Array.isArray(record.result.output?.islandsSkipped) && record.result.output.islandsSkipped.length > 0;
 const lostBinaries = (/** @type {RunRecord} */ record) => extractOk(record) && Array.isArray(record.result.binaryErrors) && record.result.binaryErrors.length > 0;
+// clean is an ordinary CLI-assembled run (src/clean.mjs), recognized by label and data.task without importing clean and creating a cycle. Submission waiting, wait and result share the same verdict.
+const cleanOutput = (/** @type {RunRecord} */ { job, result }) => job?.operation === 'run' && result?.ok === true && isJobId(job.data?.task) && job.label === `clean ${job.data.task}` ? result.output : null;
+const cleanSkipped = (/** @type {RunRecord} */ record) => Array.isArray(cleanOutput(record)?.skipped) && cleanOutput(record).skipped.length > 0;
 /** @param {RunRecord} record */
 function instruction(record) {
   const { result } = record;
@@ -145,14 +177,24 @@ function instruction(record) {
     if (!count('cleaned') && count('cleanFailed')) return `The script started running; the document may have been modified; created nodes were not deleted: ${count('cleanFailed')} node(s) kept or failed to delete (reasons in cleanFailed); ${review}`;
     if (count('cleaned')) return `The script started running; deleted ${count('cleaned')} node(s) created by this job${count('cleanFailed') ? `, ${count('cleanFailed')} not deleted (reasons in cleanFailed)` : ''}; modified existing nodes were not rolled back; `
       + (result.deletedExisting > 0 ? `${result.deletedExisting} node(s) that existed before the run were deleted during it (by the script, or replaced with new IDs by detachInstance, flatten or createComponentFromNode), so the cleaned nodes may include their replacements; inspect first, and if needed undo once in Figma to restore what the cleanup deleted; ` : '') + review;
-    if (count('created')) return `The script started running; the document may have been modified; at failure it had created ${count('created')} node(s) (see created), which may contain existing layers: inspect their subtrees, then delete them${record.job?.cleanOnFail ? '' : ', or add --clean-on-fail next time'}; ${review}`;
+    if (count('created')) return `The script started running; the document may have been modified; at failure it had created ${count('created')} node(s) (see created), which may contain existing layers: inspect their subtrees, then run figma-agent-control clean ${record.job.id}${record.job?.cleanOnFail ? '' : ', or add --clean-on-fail next time'}; ${review}`;
     return 'The script started running; the document may have been modified; ' + review;
   }
-  if (result?.verify?.error) return `The script ran, but the visual check did not run (${result.verify.error}); check the rendering with preview or inspect first; do not replay the script`;
-  if (result?.verify && result.verify.pass !== true) return `The script ran, but the visual check failed (expect ${result.verify.expect}); review the diff image in verify; do not replay the script; fix it with a new script`;
+  // For non-page targets, pageRoot records added/removed page children outside the target change set. Keep the exit code unchanged but mention new nodes in guidance, including failed verdicts: missing appendChild often explains unchanged frames. Before/after comparison cannot identify provenance, so require inspection before deletion.
+  const strays = Array.isArray(result?.pageRoot?.created) ? result.pageRoot.created.length + (result.pageRoot.createdOmitted ?? 0) : 0, stray = strays ? `; ${strays} new node(s) appeared on the page root (see pageRoot), usually from a missing appendChild after create*; this is a before/after comparison that also includes nodes created by collaborators meanwhile and nodes swapped out by flatten or detachInstance (old IDs are in deleted): inspect to confirm they came from this script before deleting or re-parenting them` : '';
+  if (result?.verify?.error) return `The script ran, but the visual check did not run (${result.verify.error}); check the rendering with preview or inspect first; do not replay the script${stray}`;
+  if (result?.verify && result.verify.pass !== true) return `The script ran, but the visual check failed (expect ${result.verify.expect}); review the diff image in verify; do not replay the script; fix it with a new script${stray}`;
+  // Deferred clean never compares candidates with the original pre-run nodes (protected originals never enter its list), so it cannot recognize existing layers moved into new nodes. Suggest review and Undo.
+  const clean = cleanOutput(record);
+  if (clean) {
+    const n = (/** @type {string} */ key) => Array.isArray(clean[key]) ? clean[key].length : 0;
+    return `Cleaned up nodes left by job ${record.job.data.task}: ${n('cleaned')} deleted, ${n('gone')} already gone, ${n('skipped')} skipped${n('skipped') ? ' (reasons in output.skipped; inspect, then handle them manually)' : ''}; `
+      + (n('cleaned') ? 'the deletion is a single Undo step; before deleting, only name, type, parent and subtree node count were checked, so existing layers moved into created nodes are not recognized: verify with inspect, and undo once in Figma to restore anything deleted by mistake; ' : '')
+      + 'existing nodes modified by the original job are not rolled back; clean can run again, re-checks before every deletion, and records already-deleted nodes in gone';
+  }
   if (lostBinaries(record)) return 'Binary files were not fully saved (see binaryErrors); the document was not modified; resubmit extract';
   if (skippedIslands(record)) return `${result.output.islandsSkipped.length} explicit island(s) have no result (outside the target's visible subtree, nothing drawn, or export failed; reasons in extract.warnings); the rest of the output is complete; check the node IDs and resubmit`;
-  return record.instruction;
+  return record.instruction + stray;
 }
 /** @param {RunRecord} record */
 export function summarizeRecord(record) {
@@ -162,6 +204,9 @@ export function summarizeRecord(record) {
     state: record.recordedState, journalComplete: record.journalComplete, ok: result?.ok ?? null };
   if (result?.ok === false) {
     if (result.error !== undefined) summary.error = clip(String(result.error), 500);
+    // Prefer bridge-mapped trace locations for script errors; fall back to the raw stack prefix.
+    if (Array.isArray(result.trace)) summary.trace = result.trace;
+    else if (typeof result.stack === 'string') summary.stack = clip(result.stack, 500);
     for (const key of ['executionStarted', 'targetMissing', 'missingNodeId', 'fileVerified', 'deletedExisting']) if (result[key] !== undefined) summary[key] = result[key];
     if (result.recovery !== undefined) summary.recoveryHint = result.recovery;
     if (record.checkpointFile) summary.checkpointFile = record.checkpointFile;
@@ -177,7 +222,7 @@ export function summarizeRecord(record) {
   // Extracted trees are not useful in terminal summaries: output always gives shape and a jq command; expose statistics, up to 50 skipped islands and up to 20 warnings separately.
   const extract = job.operation === 'extract';
   if (result && 'output' in result) summary.output = boundedOutput(result.output, resultFile, extract ? 0 : OUTPUT_LIMIT);
-  for (const key of ['ancestors', 'changes', 'verify', 'binaryErrors']) if (result?.[key] !== undefined) summary[key] = result[key];
+  for (const key of ['ancestors', 'changes', 'pageRoot', 'verify', 'binaryErrors']) if (result?.[key] !== undefined) summary[key] = result[key];
   if (extract && result?.ok === true && result.output) {
     const { stats, islandsSkipped = [], warnings = [] } = /** @type {LandedExtractOutput} */ (result.output);
     summary.extract = { stats, islandsSkipped: islandsSkipped.slice(0, 50), ...(islandsSkipped.length > 50 ? { islandsSkippedOmitted: islandsSkipped.length - 50 } : {}),
@@ -189,9 +234,9 @@ export function summarizeRecord(record) {
   if (record.resolution) summary.resolution = record.resolution.status;
   return { ...summary, evidence: record.evidence, ...(result ? { resultFile } : {}), instruction: instruction(record) };
 }
-// Exit 0: success; 1: execution/visual failure, missing explicit extract islands, binary persistence errors, or reviewed-but-unknown results where waiting cannot help; 2: pending, including wait expiry or required review.
+// Exit 0: success. Exit 1: execution/visual failure, skipped clean nodes, missing explicit islands, extract binary errors, or resolved-but-unknown results where waiting cannot help. Exit 2: still pending, including wait expiry or required verification.
 export const exitCode = (/** @type {RunRecord} */ record) => record.result
-  ? (record.result.ok === false || (record.result.verify && record.result.verify.pass !== true) || skippedIslands(record) || lostBinaries(record) ? 1 : 0)
+  ? (record.result.ok === false || (record.result.verify && record.result.verify.pass !== true) || skippedIslands(record) || lostBinaries(record) || cleanSkipped(record) ? 1 : 0)
   : record.resolution ? 1 : 2;
 
 // -- Waiting ------------------------------------------------------------

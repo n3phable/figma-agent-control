@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * [INPUT]: Imports node:fs/promises, node:path, ../src/project.mjs, ../src/bridge.mjs, ../src/session.mjs, ../src/args.mjs, ../src/client.mjs, ../src/doctor.mjs, ../src/record.mjs, ../src/image-diff.mjs, ../src/report.mjs, ../src/html/command.mjs.
+ * [INPUT]: Imports node:fs/promises, node:path, ../src/project.mjs, ../src/bridge.mjs, ../src/session.mjs, ../src/args.mjs, ../src/client.mjs, ../src/doctor.mjs, ../src/record.mjs, ../src/clean.mjs, ../src/image-diff.mjs, ../src/report.mjs, ../src/html/command.mjs.
  * [OUTPUT]: Plugin task handling and serialized results.
  * [POS]: CLI shell: validate arguments, dispatch a command, and emit its JSON result and exit status.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -14,6 +14,7 @@ import { COMMANDS, parse } from '../src/args.mjs';
 import { call, stop } from '../src/client.mjs';
 import { doctor } from '../src/doctor.mjs';
 import { localResult, summarizeRecord, exitCode, waitForResult } from '../src/record.mjs';
+import { cleanJob } from '../src/clean.mjs';
 import { imageDiff } from '../src/image-diff.mjs';
 import { report } from '../src/report.mjs';
 import { html, htmlCheck } from '../src/html/command.mjs';
@@ -23,20 +24,22 @@ const cwd = process.cwd();
 const out = value => process.stdout.write(JSON.stringify(value, null, 2) + '\n');
 const HELP = {
   commands: Object.values(COMMANDS).map(c => c.usage),
-  script: 'run executes a trusted JavaScript function body with figma, target (the --node node, or the bound node by default), and data (JSON from --data). Use return for output; exportAsync bytes returned directly are saved as files. Mark nodes with setSharedPluginData("figmaagentcontrol", key, value); setPluginData is unavailable because the manifest has no Figma-assigned plugin ID. Under documentAccess: dynamic-page, synchronous APIs such as mainComponent and figma.getNodeById throw; use getMainComponentAsync/getNodeByIdAsync. See dynamic-page constraints in docs/agent-guide.md',
+  script: 'The run script is a trusted JavaScript function body with access to figma, target (the --node node, default the bound node) and data (the --data JSON); return the result with return. Bytes anywhere in the return value (exportAsync results, also nested in arrays or objects) are saved as files and replaced in output by file descriptors, at most 200 per job and 48 MB in total. Mark nodes with setSharedPluginData("figmaagentcontrol", key, value); setPluginData is unavailable (the manifest has no Figma-assigned plugin ID). The plugin runs with documentAccess: dynamic-page, so reading mainComponent or calling sync APIs such as figma.getNodeById throws; use the async versions such as getMainComponentAsync and getNodeByIdAsync (mapping table in the dynamic-page constraints section of docs/agent-guide.md). Nodes made by create* are attached to the current page root; appendChild them into the target. When the target is not a page, pageRoot in the result lists the nodes added to or removed from the page root',
   lib: '--lib is repeatable: each library executes in a separate enclosing scope, and the body can call its functions directly; same-name declarations shadow outer scopes without conflicts',
   expect: '--expect changed|unchanged: export the target once before and once after the script and compare them to check whether the write changed the rendering; --tolerance sets the number of changed pixels allowed',
-  cleanOnFail: 'On script failure, created lists surviving nodes created on the target page. --clean-on-fail deletes them as a separate Undo step and reports cleaned/cleanFailed, preserving preexisting target-page nodes and containers holding them. detachInstance/flatten replace IDs, so their existing content can be mistaken for new and deleted; deletedExisting and warnings identify this, and one Undo restores cleanup. New components emit no creation event, do not enter created, and are not deleted. Existing edits are not rolled back; execution is not atomic',
-  output: 'stdout contains one JSON object. Submission commands wait by default and print a summary with id, output and resultFile; preview also includes images[].name and absolute images[].file. --full prints the complete record with the return value in .result.output and image paths relative to evidence. --no-wait only submits.'
+  cleanOnFail: 'When the script fails, the result lists the nodes it created on the target page that still exist (created); --clean-on-fail also deletes them (cleaned, cleanFailed) as a separate Undo step. Nodes that existed on the target page before the run, or created nodes containing such nodes, are not deleted. detachInstance and flatten give existing content new IDs, so it is deleted as created nodes; the result then also gives deletedExisting and a warning, and one Undo in Figma reverts the cleanup. Created components emit no creation event, are not in created and are never deleted. Modified existing nodes are not rolled back; execution is not atomic. Without --clean-on-fail, confirm the subtree with inspect, then run clean <job-id>: it re-checks each node\'s name, type, parent and subtree node count before deleting, skips mismatches (exit code 1), deletes as a separate Undo step, and is safe to re-run',
+  output: 'stdout carries exactly one JSON object: submitting commands wait for the result by default and print a summary (id, output, resultFile; preview also gives images[].name and absolute paths images[].file); --full prints the full record (return value in .result.output, image paths relative to evidence); --no-wait only submits. When the script throws, the summary includes trace (the failing lib or script file, line number and source; the first entry is where it threw). '
     + 'When waiting starts, a job ID receipt is written as one line to stderr so you can still wait if the command is killed externally; do not merge 2>&1 when parsing stdout. Fetch results by job ID (result, wait, or run with your own --request-id, a new UUID per submission), never by the timestamps of runs/ directories',
-  exitCodes: { 0: 'success', 1: 'failure, failed visual verification, skipped explicit islands or incomplete extract binaries, or a reviewed result that remains unknown; html also fails for frames below target, unchecked or errored frames, stale overrides, missing Figma-exported islands, or generated-output invariant violations',
+  exitCodes: { 0: 'success', 1: 'failure, visual check failed, clean skipped nodes, extract skipped explicit islands or saved binaries incompletely, or verified but still unresolved; html has frames that missed the target, were unchecked or errored, stale overrides entries, missing Figma-exported islands, or generated output that violates the output invariants',
     2: 'not finished yet (wait expired or verification pending; for stop: the bridge is still shutting down, confirm later with status; for html: needs a resumed run, see instruction)' }
 };
 
 /** @param {string} command @param {string[]} positionals @param {import('../src/args.mjs').Options} o */
 async function submit(command, [file], o) {
-  /** @type {Record<string, unknown>} */
-  const body = { operation: command, targetNodeId: o.targetNodeId, nodes: o.nodes, names: o.names, snapshotDepth: o.snapshotDepth, scale: o.scale, risk: o.risk, requestId: o.requestId, expect: o.expect, tolerance: o.tolerance, islands: o.islands, cleanOnFail: o.cleanOnFail };
+  // clean reads no script file: src/clean builds a normal run from the original task's evidence; nothing is submitted when there are no nodes to remove.
+  /** @type {Record<string, unknown> | null} */
+  const body = command === 'clean' ? await cleanJob(cwd, file) : { operation: command, targetNodeId: o.targetNodeId, nodes: o.nodes, names: o.names, snapshotDepth: o.snapshotDepth, scale: o.scale, risk: o.risk, requestId: o.requestId, expect: o.expect, tolerance: o.tolerance, islands: o.islands, cleanOnFail: o.cleanOnFail };
+  if (!body) { out({ task: file, instruction: 'Nothing to clean up: created of the original job is empty, or all its nodes were already deleted or kept by protection rules (see cleaned and cleanFailed of the original job); no job was submitted' }); return 0; }
   if (command === 'run') {
     body.code = await fs.readFile(path.resolve(file), 'utf8');
     body.label = path.basename(file);

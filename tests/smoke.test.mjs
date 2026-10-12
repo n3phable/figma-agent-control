@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:path, ./helpers/harness.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for smoke; tests use local synthetic inputs and isolated state.
+ * [INPUT]: ./helpers/harness.mjs harness/writeScript; node:test, node:assert, node:fs/promises, and node:path.
+ * [OUTPUT]: No exports; node:test smoke cases.
+ * [POS]: Shortest end-to-end path for libraries/data, nonexecuted syntax errors, visual verification, batch previews, and job.json without embedded results. Run first after changes.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

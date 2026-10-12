@@ -29,6 +29,8 @@ export const COMMANDS = {
   variables: { usage: 'variables [--node <ID>]: local variable catalog and binding counts within the target', positionals: [0, 0], submit: true, options: { ...node, ...wait } },
   extract: { usage: 'extract [--node <ID>] [--scale <0.1-4>] [--island <ID>]... [--timeout <seconds>] [--no-wait] [--full]: read-only extraction of pixel-replica data (node tree, reference PNG, bitmaps, SVG islands); --island adds islands, exit code 1 if any is skipped',
     positionals: [0, 0], submit: true, options: { ...node, scale: { type: 'string' }, island: { type: 'string', multiple: true }, ...wait } },
+  clean: { usage: 'clean <job-id> [--timeout <seconds>] [--no-wait] [--full]: delete the created nodes a failed run left behind that are not yet cleaned up (created); first re-checks each node\'s name, type, parent and subtree node count and skips mismatches (exit code 1); submits a run targeting the bound node, deletes as a separate Undo step, safe to re-run',
+    positionals: [1, 1], submit: true, options: { ...wait } },
   result: { usage: 'result <job-id> [--full]: read local evidence', positionals: [1, 1], options: { full: { type: 'boolean' } } },
   wait: { usage: 'wait <job-id> [--timeout <seconds>] [--full]: wait for the original result without resubmitting', positionals: [1, 1], options: { timeout: { type: 'string' }, full: { type: 'boolean' } } },
   resolve: { usage: 'resolve <original-job-id> --inspect <inspect-job-id> --previous-plugin-stopped: after verification, end the unresolved wait without replaying the script', positionals: [1, 1],

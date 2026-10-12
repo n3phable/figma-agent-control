@@ -12,6 +12,8 @@ Figma Agent Control (FAC) connects your local CLI to a Figma Desktop development
 
 - **Read and edit designs:** inspect node trees, inspect variables, export PNG previews, and execute Plugin API scripts with reusable libraries and JSON input.
 
+- **Keep evidence:** save before-snapshots, failure snapshots, change sets, exported files, execution traces, and optional visual checks. Resume waiting by job ID after a CLI timeout.
+
 - **Export static HTML:** generate nested DOM with embedded assets, compare it in Chrome, identify differences by node, and apply recorded overrides.
 
 ## Requirements

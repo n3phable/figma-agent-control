@@ -49,6 +49,7 @@ The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.m
 | [connection](../src/connection.mjs) | Lease transitions need no filesystem or HTTP; clock injection makes expiry deterministic in tests |
 | [session](../src/session.mjs) | Pairing, lock takeover, and startup repair span process lifetimes and belong outside transient bridge state |
 | [record](../src/record.mjs) | All readers share one interpretation of evidence, summary, exit code, and next action; waits never resubmit |
+| [clean](../src/clean.mjs) | Existing failure evidence becomes an ordinary run, reusing write guarantees without adding an operation |
 | [doctor](../src/doctor.mjs) | Read-only diagnosis can still explain binding, lock, or installation problems when the bridge is unreachable |
 | [report](../src/report.mjs) | Aggregation reads completed evidence without changing sessions or job state |
 

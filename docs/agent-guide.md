@@ -134,6 +134,8 @@ These notes summarize Figma Desktop behavior observed during development. Read b
 
 - **JavaScript:** the plugin uses QuickJS. `Intl` is unavailable in the observed runtime; locale formatting may not insert separators. Avoid assigning undeclared variables: run scripts share the plugin's global environment. `String(Object.create(null))` throws; use JSON serialization for such values.
 
+- **Errors:** QuickJS can lose callers across `await`, and host API rejections can be strings without a stack. Read the available stack and call-site evidence when diagnosing them.
+
 ## Reading results
 
 Read `instruction` first, then the evidence needed to choose the next action:
@@ -143,7 +145,11 @@ Read `instruction` first, then the evidence needed to choose the next action:
 | `ok`, `error`, `executionStarted` | Outcome and whether the script started |
 | `changes` | Observed target-subtree changes; binding-only and position-only changes are counted separately |
 | `verify` | Before/after visual check, when requested and the script succeeded |
+| `pageRoot` | Direct children added to or removed from the page root after a successful non-page-target run |
+| `trace` | Up to ten mapped error frames: `{file, line, column, source}`; first frame is the throw site |
 | `resultFile`, `evidence` | Paths to durable local evidence |
+
+`pageRoot` can reveal a missing `appendChild`, even when the target's change counts are zero. It is a before/after comparison, not attribution: concurrent collaborators and operations that replace IDs can also appear. Inspect before deleting anything.
 
 | Exit code | Meaning | Action |
 |---|---|---|
@@ -190,6 +196,10 @@ Store recurring sequences in a project script with parameters. `break` itself re
 ### Partial script failure
 
 When `executionStarted` is `true`, earlier writes may already exist. **Do not replay the script.** Inspect the current document and repair only what is necessary.
+
+- `created` lists surviving top-level nodes created on the target page: `{id, name, type, parentId, size}`. Descendants are handled with their parent. A new container can hold pre-existing content, so inspect its subtree first.
+
+- `clean <job-id>` turns eligible evidence into an ordinary run. It rechecks the original page, name, type, parent, and owned descendant count. Missing nodes become `output.gone`; mismatches become `output.skipped` and exit code `1`. It does not rewrite the original evidence. It is safe to repeat, but it cannot detect every existing layer moved into a new container.
 
 - `--clean-on-fail` attempts immediate cleanup after the script's closing Undo boundary, with a separate cleanup boundary. It protects nodes that existed on the target page before execution, including those inside new containers. Successful deletions are `cleaned`; protected nodes and failures are `cleanFailed`.
 
@@ -244,6 +254,8 @@ figma-agent-control html --node 12:34 --node 12:56 --out out
 Read `instruction` regardless of exit code. Its command covers the full batch: reusable extracts appear as `--from`, and frames needing a new extract appear as `--node`. Keep the original `--out` and options when resuming; `html.json` is rewritten as a complete manifest for that invocation.
 
 ### Reading HTML diagnostics
+
+Full results are in `<out>/html.json`; per-frame evidence is under `.figma-agent-control/check/<extract-job-id>/`. `block-<n>.png` stacks reference, rendered, and difference crops. Stdout is a compact summary of frames that need attention.
 
 | Field | Interpretation |
 |---|---|
@@ -329,7 +341,3 @@ Keep `.figma-agent-control/` out of version control. It includes credentials and
 ## Connection scope
 
 The bridge uses port 32523. Keep only one project bridge active on the machine. The globally installed plugin can reconnect after a bridge restart; stop the previous project before connecting another.
-
-## Failed-run cleanup
-
-A script-thrown failure reports surviving top-level nodes created on the target page. Inspect them before manual repair. --clean-on-fail can delete eligible new nodes as a separate Undo step; existing edits are not rolled back. Use inspection evidence to guide any remaining repair.
