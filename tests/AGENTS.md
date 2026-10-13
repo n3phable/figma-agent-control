@@ -7,7 +7,9 @@ Behavioral tests for the implementation in this revision.
 ## Members
 
 - `args.test.mjs`: Tests for args behavior in this revision.
+- `bridge-session.test.mjs`: Tests for bridge session behavior in this revision.
 - `bridge.test.mjs`: Tests for bridge behavior in this revision.
+- `clean.test.mjs`: Tests for clean behavior in this revision.
 - `cli.test.mjs`: Tests for cli behavior in this revision.
 - `contract-samples.mjs`: Check explicitly provided extraction evidence against its types.
 - `extract.test.mjs`: Tests for extract behavior in this revision.
@@ -22,6 +24,7 @@ Behavioral tests for the implementation in this revision.
 - `html-suggest.test.mjs`: Tests for html suggest behavior in this revision.
 - `html-summary.test.mjs`: Tests for html summary behavior in this revision.
 - `html-zoom.test.mjs`: Tests for html zoom behavior in this revision.
+- `plugin-failure.test.mjs`: Tests for plugin failure behavior in this revision.
 - `plugin.test.mjs`: Tests for plugin behavior in this revision.
 - `png.test.mjs`: Tests for png behavior in this revision.
 - `project-session.test.mjs`: Tests for project session behavior in this revision.

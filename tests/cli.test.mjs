@@ -76,7 +76,7 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     assert.equal(run.code, 0, JSON.stringify(run.json));
     const s = run.json;
     assert.deepEqual([s.operation, s.label, s.waitStatus, s.journalComplete, s.ok, s.target], ['run', 'retitle.js', 'completed', true, true, '1:3']);
-    // result.json is the sole commit point; job.json state is updated later. Either running or done is valid during summary reads; see the record wait tests.
+    // result.json is the sole commit point; job.json state is backfilled later, so a summary may correctly see running or done. record.test.mjs covers this wait race.
     assert.ok(['running', 'done'].includes(s.state), s.state);
     assert.deepEqual(s.output, { now: '\u65b0\u6807\u9898' });
     assert.deepEqual(s.changes.nodes, [{ id: '1:3', name: '\u6807\u9898', change: 'updated', keys: ['characters'] }]);
@@ -108,6 +108,21 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     assert.deepEqual([run.json.ok, run.json.output], [true, 2102]);
     assert.match(run.json.changes.unavailable, /After-snapshot unavailable/);
     assert.equal((await json(run.json.resultFile)).afterError, undefined);
+  });
+
+  test('Frame-targeted runs expose stray page-root additions/removals in result and summary with appendChild guidance and exit 0; no changes or page targets omit pageRoot', async t => {
+    const h = await harness(t);
+    const stray = await h.run('run', await writeScript(h.cwd, 'stray.js', 'figma.createRectangle();'), '--node', '1:2');
+    assert.equal(stray.code, 0, JSON.stringify(stray.json));
+    const pageRoot = { created: [{ id: '10:1', name: 'RECTANGLE-1', type: 'RECTANGLE' }], deleted: [] };
+    assert.deepEqual([(await json(stray.json.resultFile)).pageRoot, stray.json.pageRoot, stray.json.changes.nodes], [pageRoot, pageRoot, []]);
+    assert.match(stray.json.instruction, /; 1 new node\(s\) appeared on the page root \(see pageRoot\), usually from a missing appendChild after create\*; this is a before\/after comparison.*: inspect to confirm they came from this script before deleting or re-parenting them$/);
+    const quiet = await h.run('run', await writeScript(h.cwd, 'quiet.js', 'return 1;'), '--node', '1:2');
+    assert.deepEqual([quiet.code, 'pageRoot' in quiet.json, 'pageRoot' in await json(quiet.json.resultFile), quiet.json.instruction], [0, false, false, 'Result read from saved evidence']);
+    // For page targets, root-level additions already belong to the change set.
+    const p = await harness(t, { url: 'https://www.figma.com/design/example/Test?node-id=1-1' });
+    const onPage = await p.run('run', await writeScript(p.cwd, 'stray.js', 'figma.createRectangle();'));
+    assert.deepEqual([onPage.code, 'pageRoot' in onPage.json, 'pageRoot' in await json(onPage.json.resultFile), onPage.json.changes.counts.created], [0, false, false, 1]);
   });
 
   test('The 16 KiB output limit counts bytes and also omits long CJK text', async t => {

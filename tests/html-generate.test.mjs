@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, ./helpers/generate.mjs, ../src/html/generate.mjs, ../src/html/css.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for html generate; tests use local synthetic inputs and isolated state.
+ * [INPUT]: helpers/generate extracted/run/KANIT; src/html/generate fontRequests/embed/dataUri/GENERATOR; pure src/html/css functions.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Browser-free generator contracts. Real VM plugin extraction of mock frames 1:2 and 1:3 becomes file descriptors before generation through helpers/generate. Focused assertions protect each rule; handwritten font metrics make results machine-independent.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

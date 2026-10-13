@@ -134,6 +134,8 @@ for (const node of target.findAllWithCriteria({ types: ['INSTANCE'] })) {
 
 - **JavaScript：** 插件使用 QuickJS。观察到的运行时没有 `Intl`，本地化格式化未必添加分隔符。不要给未声明变量赋值，run 与插件共享全局环境。`String(Object.create(null))` 会抛错，这类值用 JSON 序列化。
 
+- **错误：** QuickJS 可能丢失 `await` 之前的调用方；宿主 API 拒绝也可能只是无 stack 的字符串。诊断时结合现有堆栈和调用点证据。
+
 ## 读结果
 
 先读 `instruction`，再按下一步所需查看证据：
@@ -143,7 +145,11 @@ for (const node of target.findAllWithCriteria({ types: ['INSTANCE'] })) {
 | `ok`、`error`、`executionStarted` | 结果与脚本是否已开始 |
 | `changes` | 目标子树的实际变化；仅绑定和仅位置变化分别计数 |
 | `verify` | 请求过且脚本成功时的前后画面判定 |
+| `pageRoot` | 非页面目标的成功 run 执行后，页面根直接子节点的增减 |
+| `trace` | 最多十个映射后的错误帧 `{file, line, column, source}`；第一项为抛错处 |
 | `resultFile`、`evidence` | 持久化本机证据路径 |
+
+即使目标变更计数为零，`pageRoot` 也可能暴露遗漏的 `appendChild`。它比较前后状态，不判断改动来源：同期协作者或替换 ID 的操作也会出现。删除前先 inspect。
 
 | 退出码 | 含义 | 行动 |
 |---|---|---|
@@ -190,6 +196,10 @@ done
 ### 脚本中途失败
 
 `executionStarted:true` 表示此前写入可能已生效。**禁止重放脚本。** 先 inspect 当前文档，只修正仍需要处理的部分。
+
+- `created` 列出目标页上新建、仍存在的最高层节点 `{id,name,type,parentId,size}`；后代随父节点处理。新容器可能装有已有内容，先检查其子树。
+
+- `clean <job-id>` 把符合条件的证据转换为普通 run。它复核原页面、名称、类型、父节点和自有后代数。不存在的记 `output.gone`，不匹配的记 `output.skipped` 并退出 `1`。原证据不改写；可以重复执行，但不能识别所有被移进新容器的已有图层。
 
 - `--clean-on-fail` 在脚本的结束 Undo 边界成功后立即尝试清理，并为清理单独提交边界。执行前已在目标页的节点及包含它们的新容器受保护。删除成功记 `cleaned`，受保护或失败记 `cleanFailed`。
 
@@ -331,7 +341,3 @@ figma-agent-control resolve <original-job-id> --inspect <inspect-job-id> --previ
 ## 连接范围
 
 桥接使用端口 32523，同一台机器只保留一个项目桥接运行。全局插件可在桥接重启后重连；连接另一个项目前先停止原项目。
-
-## 失败任务清理
-
-脚本自身抛错后报告目标页上新建且仍存在的最高层节点。人工修复前先 inspect。--clean-on-fail 可把符合条件的新节点作为单独 Undo 步骤删除，已有改动不回滚。其余修复依据 inspect 证据执行。

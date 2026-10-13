@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports ../../src/png.mjs.
- * [OUTPUT]: Exports MIXED, T, extractDoc.
- * [POS]: Isolated test fixtures shared by the surrounding contract and integration suites.
+ * [INPUT]: src/png encodePng.
+ * [OUTPUT]: Exports extractDoc() with page, frame, all, exports, globals, emit, and listeners; MIXED; and the 2x3 matrix constructor T.
+ * [POS]: Mock Plugin API document shared by extract and generator tests; run/preview use harness createDoc instead. Page 1:1 contains independent 160x160 frames 1:2 and 1:3 at (100,200). Real VM extraction of 1:2 anchors the extract contract, while generator tests extract both frames so contract drift fails both layers. Frame 1:3 covers nested masks, rotated islands, gradient/image modes, and typography without changing frame 1:2 expectations. globals supplements fakeFigma; exports records export arguments and emit sends nodechange.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { encodePng } from '../../src/png.mjs';

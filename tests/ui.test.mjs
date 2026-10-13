@@ -274,17 +274,17 @@ test('A 413 response switches the next attempt to reduced failure evidence prese
   assert.equal(f.toMain.length, 1);
 });
 
-test('Reduced run-failure evidence retains created/cleaned node lists and deleted-existing counts', async () => {
+test('Reduced failed-run evidence preserves created/cleaned node lists, deleted-existing count, and script stack', async () => {
   const f = plugin();
   const channelNonce = await claim(f, { id: 'job-1', operation: 'run' });
-  const leftovers = { created: [{ id: '9:1', name: '\u534a\u6210\u54c1', type: 'FRAME' }], cleaned: [{ id: '9:1', name: '\u534a\u6210\u54c1', type: 'FRAME' }], cleanFailed: [], deletedExisting: 1, warnings: ['Sample warning'] };
+  const leftovers = { created: [{ id: '9:1', name: '\u534a\u6210\u54c1', type: 'FRAME' }], cleaned: [{ id: '9:1', name: '\u534a\u6210\u54c1', type: 'FRAME' }], cleanFailed: [], deletedExisting: 1, warnings: ['Sample warning'], stack: '    at f (<input>:4:1)\n' };
   const result = { id: 'job-1', ok: false, error: 'boom', executionStarted: true, after: { id: '1:2' }, undoBoundaries: { before: 'committed', after: 'committed', clean: 'committed' }, ...leftovers };
   f.reply('/complete', { status: 413, body: { error: 'Request too large' } });
   await f.fromMain({ ...result, channelNonce });
   await f.tick();
   const compact = f.bodies('/complete')[1];
   assert.equal(compact.after, undefined);
-  assert.deepEqual({ created: compact.created, cleaned: compact.cleaned, cleanFailed: compact.cleanFailed, deletedExisting: compact.deletedExisting, warnings: compact.warnings }, leftovers);
+  assert.deepEqual({ created: compact.created, cleaned: compact.cleaned, cleanFailed: compact.cleanFailed, deletedExisting: compact.deletedExisting, warnings: compact.warnings, stack: compact.stack }, leftovers);
   assert.equal(compact.undoBoundaries.clean, 'committed');
 });
 

@@ -69,6 +69,7 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 | `risk` | Run | `{level:"high", reason}` 要求在插件面板确认 |
 | `cleanOnFail` | Run | 布尔值；对应 CLI 的 `--clean-on-fail` |
 | `requestId` | 全部 | 用作任务 ID 的小写 UUID；CLI 在 `run` 上开放该参数 |
+| `label` | 全部 | 报告中的来源名；CLI 使用脚本文件名，或 `clean <original-id>` |
 
 重复的 request ID 以 HTTP `200` 和 `reused:true` 返回原任务。绑定、操作、源码、库、目标、深度、nodes、倍率、data、实际生效的高风险原因、expect、tolerance、islands、cleanup 和 names 必须完全相同，否则返回 `400`。省略 cleanup 与显式 `false` 等价；省略目标与显式传入绑定节点不等价。`label` 不参与比较。该身份检查先于临时拒绝条件，因此即使断连或繁忙，重复请求仍可取回原任务。
 
@@ -167,10 +168,12 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 |---|---|
 | `ok`, `output` | 执行/读取结果，以及二进制已替换为落盘描述的返回数据 |
 | `changes` | Run 变更集 |
+| `pageRoot` | 成功且目标不是页面的 run 所观察到的页面直接子节点变化：`created`/`deleted` 条目为 `{id,name,type}`，各最多 50 个，并给出省略数量。通过 inspect 确认这些前后差异的来源 |
 | `verify` | `ok:true` 时请求的画面核验 |
 | `images` | Preview 描述 `{nodeId,name,file,bytes,sha256,width,height,pixels}`，文件在 `images/<index>-<node>.png` |
 | `ancestors` | Inspect 朝向页面的显示链，最多二十层，包含不透明度、蒙版、填充和裁切 |
 | `error`, `executionStarted`, `recovery` | 错误、脚本是否开始执行、恢复指引 |
+| `stack`, `trace` | 原始和映射后的脚本错误位置 |
 | `targetMissing`, `missingNodeId`, `fileVerified` | 目标不存在的 inspect 确实查询了绑定文件的证据 |
 | `after` | 部分写入快照，仅在已开始执行后失败时保留 |
 | `bindingVerified` | 实际核验的文件、页面和节点 |
@@ -180,9 +183,21 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 | `warnings`, `binaryErrors` | 取证/清理限制与二进制传输问题 |
 | `pluginMs`, `approvalMs`, `finishedAt` | 不含确认的执行耗时、确认耗时和结果落盘时间 |
 
+### 错误堆栈与 trace
+
+只有脚本编译或执行抛出的值带字符串 stack 时，结果才包含 `stack`，最多 4,000 字符。内部校验、快照与序列化错误不带脚本 stack。抛出的值即使无法转成字符串，也会以说明性错误结束任务。
+
+编译把库与正文逐层嵌入 `new Function`。引擎函数头占两行，最外层包装占一行，因此第一段从引擎第 4 行开始。第 `k` 段起于 `4 + sum(previous segment line counts + 1)`。段内行号为引擎行号减该段起始行再加一；列号不变。
+
+[record.mjs](../../src/record.mjs) 的 `scriptTrace` 识别 QuickJS 的 `<input>` 与 V8 的 eval 帧。它跳过 `anonymous` 包装，只在编译阶段信任无名帧。在找到第一帧之前跳过分段之外的帧，找到之后遇到外层包装即停止。最多返回十个 `{file,line,column,source}`，source 截到 200 字符。内置库使用 `lib:<name>`。映射失败不会阻止结果落盘。
+
+嵌套 `eval` 或 `new Function` 代码可能产生误导位置，仍以原始 stack 为准。QuickJS 可能在跨越 `await` 时丢失调用方，宿主异步拒绝也可能没有 stack。内置异步库包装会尽可能保存入口调用栈。CLI 输出映射后的 trace；没有映射时输出原始 stack 的前 500 字符。
+
 ### 失败脚本的新建节点跟踪
 
 插件在执行期间监听目标页 `nodechange` 的 CREATE/DELETE 事件，排除 `origin: REMOTE`。嵌套的新建/删除只报告最高层父节点。监听注册失败只追加警告，不阻止执行。
+
+脚本抛错并尝试提交结束边界后，至少等待事件沉降 200 ms，再等到连续 120 ms 无新事件；每 40 ms 检查一次，墙钟上限一秒。计时器节流可能额外增加一个间隔。随后读取仍存在的新建节点，去掉其他新建节点的后代。每条为 `{id,name,type,parentId,size}`；`size` 统计自有后代，排除以 `I` 开头的实例内部 ID。旧证据可能缺少最后两个字段。
 
 `cleanOnFail` 只在结束边界成功后清理。执行前已在目标页上的节点，以及包含这些已有节点的新节点，均受到保护。删除成功的放入 `cleaned`；因保护或删除失败而保留的放入 `cleanFailed`，并附原因。至少删除一个节点时，再提交一次 Undo 边界，记录在 `undoBoundaries.clean`。清理边界失败会警告：这些删除可能并入下一步 Undo。
 
@@ -190,11 +205,23 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 
 新建跟踪不覆盖其他页面，也不覆盖脚本正文已经成功完成后的失败，例如序列化失败。新建组件可能不发出 CREATE。执行期间本地用户的编辑无法与脚本编辑区分。清理保护也不覆盖从其他页面移入的已有内容。取证或清理错误只追加警告，保留原始脚本错误。
 
+### 延后清理：`clean`
+
+`clean <job-id>` 构造普通 run，因此写前检查点、Undo、未知写入核验和普通证据规则全部适用。插件没有专用的清理操作。
+
+原任务必须是已完成的失败 run，带 `executionStarted:true` 和 `created` 列表。目标页来自 `before.json.bindingVerified.pageId`。缺失或无效的证据在提交前即被拒绝。候选集合为 `created` 减去 `cleaned` 与 `cleanFailed`；有意保护的节点继续排除。候选为空时返回 `{task,instruction}`，退出码 `0`，不提交新任务。
+
+清理任务使用固定脚本、标签 `clean <original-id>`、深度 `1`，以及数据 `{task,pageId,nodes}`。它以绑定节点而非原目标为目标，没有 request ID、高风险标记或递归清理。data 超过 1 MiB，或绑定节点的直接子节点候选达到 2,000 个时，在提交前拒绝。其他已有子节点仍可能让修改前快照超出预算。
+
+逐节点复核时，已不存在的记为 `gone`；页面、名称、类型、父节点、自有后代数量发生变化，或原证据缺少父节点信息时，记为 `skipped`。其余节点被删除，删除错误也记为 skipped。输出为 `{task,cleaned,gone,skipped}`，skipped 条目带原因。原证据不会重写。任一 skipped 条目使退出码为 `1`；支持重复清理。这项复核无法识别所有被移入新容器的已有图层，因此调用前仍需检查候选节点。
+
 ### 变更集
 
 修改前后快照生成 `counts.created`、`deleted`、`moved`、`updated`、`bindingOnly` 和 `positionOnly`。最后三项互斥，分别表示取值变化、仅绑定变化、仅布局导致的位置变化。
 
 节点换父级，或不在前后兄弟节点的最长共同保序子序列中时，记为移动。插入/删除一个兄弟节点不会把其他所有兄弟都记为移动；交换两个兄弟只记一个。updated、created、deleted、moved 各最多展开五十个节点，其余通过 `omitted` 计数。逐节点 `keys` 不包含位置字段。
+
+比较只覆盖目标子树。通过 `figma` 对目标之外的写入不会被直接观察；页面根直接子节点的增删另由 `pageRoot` 比较记录。
 
 ### 画面核验
 
@@ -253,6 +280,8 @@ pass = expect === "changed" ? changed : !changed
 ## 插件消息
 
 iframe 与执行代码使用 postMessage。每个任务都有随机 `channelNonce`；ID 或 nonce 不匹配的消息会忽略。
+
+包括快照和 base64 在内，超过 65,536 个 JavaScript 字符串字符的任务消息使用 `serialized-result` 封装。结构化部分超过约 16 MB、桥接返回 `413`，或同一完成回传累计收到三次 `400` 时，iframe 改用精简失败证据。其他失败不重置拒收计数，`409 FOREIGN_JOB` 永不触发降级。精简结果保留执行状态、核验后的绑定、脚本失败清理列表、新建资源、警告和 stack。
 
 有待回传结果时，iframe 发送 `/complete` 而非心跳。轮询超时为 15 秒；结果回传为三秒加上每 10 MB 载荷一秒；其他请求为三秒。
 
@@ -466,7 +495,3 @@ HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内
 ## 准备阶段顺序
 
 当前目标复核发生在前图导出及后续准备读取之前。准备期间保持目标不变。
-
-## 失败任务清理
-
-脚本自身抛错后报告目标页上新建且仍存在的最高层节点。人工修复前先 inspect。--clean-on-fail 可把符合条件的新节点作为单独 Undo 步骤删除，已有改动不回滚。其余修复依据 inspect 证据执行。

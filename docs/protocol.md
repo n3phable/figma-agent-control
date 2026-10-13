@@ -69,6 +69,7 @@ The caller must use the CLI role.
 | `risk` | Run | `{level:"high", reason}` requires plugin-panel approval |
 | `cleanOnFail` | Run | Boolean; maps to CLI `--clean-on-fail` |
 | `requestId` | All | Lowercase UUID used as the job ID; the CLI exposes it on `run` |
+| `label` | All | Source name for reports; CLI uses the script basename, or `clean <original-id>` |
 
 A repeated request ID returns the original job with HTTP `200` and `reused:true`. Binding, operation, source, libraries, target, depth, nodes, scale, data, effective high-risk reason, expectation, tolerance, islands, cleanup, and names must remain identical or submission returns `400`. Omitted cleanup and `false` are equivalent; an omitted target and an explicitly supplied bound node are not. `label` is not compared. This identity check precedes transient rejection conditions, so a repeated request can still retrieve its original job while disconnected or busy.
 
@@ -167,10 +168,12 @@ Atomic creation of `runs/<job-id>/result.json` is the sole completion commit poi
 |---|---|
 | `ok`, `output` | Execution/read outcome and returned data with landed binary descriptors |
 | `changes` | Run change set |
+| `pageRoot` | For a successful non-page-target run, changed direct page children: `created`/`deleted` entries `{id,name,type}`, up to 50 each plus omitted counts. Inspect these before/after differences to identify their source |
 | `verify` | Requested visual verification when `ok:true` |
 | `images` | Preview descriptors `{nodeId,name,file,bytes,sha256,width,height,pixels}` under `images/<index>-<node>.png` |
 | `ancestors` | Inspect visibility chain toward the page, up to twenty levels, including opacity, masks, fills, and clipping |
 | `error`, `executionStarted`, `recovery` | Failure, whether the script started, and recovery guidance |
+| `stack`, `trace` | Raw and mapped script-error locations |
 | `targetMissing`, `missingNodeId`, `fileVerified` | Evidence that a missing-node inspect queried the bound file |
 | `after` | Partial-write snapshot, retained only after execution started and failed |
 | `bindingVerified` | Actually verified file, page, and node |
@@ -180,9 +183,21 @@ Atomic creation of `runs/<job-id>/result.json` is the sole completion commit poi
 | `warnings`, `binaryErrors` | Evidence/cleanup limitations and binary transport issues |
 | `pluginMs`, `approvalMs`, `finishedAt` | Execution timing excluding approval, approval timing, and landing time |
 
+### Error stacks and traces
+
+Only a value thrown by script compilation/execution with a string stack supplies `stack`, capped at 4,000 characters. Internal validation, snapshot, and serialization errors do not. An unstringifiable thrown value still ends the job with an explanatory error.
+
+Compilation nests libraries and body in `new Function`. With a two-line engine function header and one outer wrapper line, the first segment starts at engine line 4. Segment `k` starts at `4 + sum(previous segment line counts + 1)`. Its local line is the engine line minus that start plus one; columns are unchanged.
+
+`scriptTrace` in [record.mjs](../src/record.mjs) recognizes QuickJS `<input>` and V8 eval frames. It skips `anonymous` wrappers and trusts unnamed frames only during compilation. It skips out-of-segment frames until the first match, then stops at an outer wrapper. At most ten frames are returned as `{file,line,column,source}`; source is trimmed to 200 characters. Built-ins use `lib:<name>`. Mapping failure never prevents result persistence.
+
+Nested `eval` or `new Function` code can produce misleading locations; the raw stack remains authoritative. QuickJS can truncate callers across `await`; host async rejections can have no stack. Bundled async library wrappers preserve their entry stacks where possible. The CLI emits mapped trace or the first 500 raw stack characters.
+
 ### Failed-script node tracking
 
 The plugin listens to target-page `nodechange` CREATE/DELETE events during execution and excludes `origin: REMOTE`. Nested creation/deletion is reported at the highest parent. Registration failure adds a warning without preventing execution.
+
+After a script throws and the closing boundary is attempted, event settling waits at least 200 ms, then until 120 ms of quiet, bounded by one second of wall time with 40 ms checks. Throttling can add a timer interval. Surviving created nodes are fetched and descendants of other created nodes removed from the list. Each entry is `{id,name,type,parentId,size}`; `size` counts owned descendants, excluding instance-internal IDs beginning with `I`. Older records may lack the last two fields.
 
 With `cleanOnFail`, cleanup runs only after a successful closing boundary. It protects a node that existed on the target page before execution, or contains such a node. Successful deletions go to `cleaned`; protection/deletion failures go to `cleanFailed` with a reason. At least one deletion causes another Undo boundary, recorded in `undoBoundaries.clean`; a failed cleanup boundary warns that its deletions may merge into the next Undo step.
 
@@ -190,11 +205,23 @@ If cleanup deleted nodes and original target-page nodes disappeared during execu
 
 Creation tracking excludes other pages and failures after the script body completed, such as serialization failure. New components may not emit CREATE events. Local user edits during execution are indistinguishable from script edits. Existing content moved in from another page is not covered by cleanup protection. Evidence/cleanup errors add warnings while preserving the original script error.
 
+### Deferred cleanup: `clean`
+
+`clean <job-id>` constructs an ordinary run, so checkpoint, Undo, unknown-write review, and normal evidence all apply. There is no special plugin operation.
+
+The original must be a completed failed run with `executionStarted:true` and a `created` list. Its target page comes from `before.json.bindingVerified.pageId`. Invalid or missing evidence is rejected before submission. The candidate set is `created` minus `cleaned` and `cleanFailed`; deliberately protected nodes remain excluded. An empty set returns `{task,instruction}` with exit `0` and no new job.
+
+The cleanup job has the fixed script, label `clean <original-id>`, depth `1`, and data `{task,pageId,nodes}`. It targets the bound node, not the original target. It has no request ID, high-risk flag, or recursive cleanup. Data above 1 MiB, or at least 2,000 candidate children directly under the bound node, is rejected before submission. Other existing children can still make the before snapshot exceed budget.
+
+Per-node checks classify already absent nodes as `gone`; a changed page, name, type, parent, owned descendant count, or missing original parent evidence becomes `skipped`. Remaining nodes are deleted; deletion errors also become skipped. Output is `{task,cleaned,gone,skipped}`, with reasons on skipped entries. The original evidence is not rewritten. Any skipped entry gives exit `1`; repeated cleanup is supported. This check cannot identify every existing layer moved into a new container, so inspect candidates before invoking it.
+
 ### Change sets
 
 Before/after snapshots produce `counts.created`, `deleted`, `moved`, `updated`, `bindingOnly`, and `positionOnly`. The last three are mutually exclusive: changed values, bindings only, or layout-induced position changes only.
 
 A move changes parent or falls outside the longest common ordered sibling subsequence. Inserting/deleting a sibling does not mark every other sibling as moved; swapping two siblings marks one. Up to fifty changed/created/deleted/moved nodes are expanded, with `omitted` for the remainder. Position keys are omitted from per-node `keys`.
+
+Only the target subtree is compared. Out-of-target writes through `figma` are not directly observed; direct page-root additions/deletions have the separate `pageRoot` comparison.
 
 ### Visual verification
 
@@ -249,6 +276,8 @@ Every request supplies `X-Session-Token`. Plugin routes additionally require `X-
 ## Plugin messages
 
 The iframe and execution code use postMessage. Each job has a random `channelNonce`; mismatched IDs or nonces are ignored.
+
+Job messages above 65,536 JavaScript string characters, including snapshots and base64, use a `serialized-result` envelope. The iframe falls back to compact failure evidence when the structured portion exceeds about 16 MB, the bridge returns `413`, or the same completion receives three cumulative `400` responses. Other failures do not reset the rejection count. `409 FOREIGN_JOB` never triggers degradation. The compact result retains execution state, verified binding, script-failure cleanup lists, new assets, warnings, and stack.
 
 While a result is awaiting delivery, the iframe sends `/complete` rather than heartbeats. Request deadlines are 15 seconds for polling, three seconds plus one second per 10 MB of completion payload, and three seconds for other requests.
 
@@ -462,7 +491,3 @@ The bridge uses port 32523. Keep only one project bridge active on the machine. 
 ## Preparation ordering
 
 Target revalidation currently precedes the before-render and later preparation reads. Keep the target unchanged throughout preparation.
-
-## Failed-run cleanup
-
-A script-thrown failure reports surviving top-level nodes created on the target page. Inspect them before manual repair. --clean-on-fail can delete eligible new nodes as a separate Undo step; existing edits are not rolled back. Use inspection evidence to guide any remaining repair.
