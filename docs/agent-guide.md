@@ -36,6 +36,8 @@ Start work when `connected` is `true`. The current working directory is the proj
 
 - One bridge executes one job at a time. Multiple agents should retrieve data sequentially, then analyze it independently offline.
 
+- Plugin-file changes can trigger Figma's development-plugin reload. If the panel reports an outdated plugin, rerun it. Its footer version should match `status.pluginVersion`.
+
 - Finish with `figma-agent-control stop` for a bridge you started and no longer need. It stops the local bridge. Check document synchronization in Figma. Exit code `2` means shutdown is still finishing; check `status` later.
 
 ## Writing scripts

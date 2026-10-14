@@ -21,6 +21,8 @@ Figma Agent Control 让 Agent 从本机 CLI 提交可信的 Plugin API 脚本，
 
 [bridge.mjs](../../src/bridge.mjs)按路由区分 CLI 和插件角色，各自只接受自己的凭证。CLI 凭证每次桥接启动重新生成，存在权限为 `0600` 的项目 session 文件中。插件凭证经 [session.mjs](../../src/session.mjs)独占创建，保存在全局 pairing 文件并注入 iframe。
 
+每个插件请求还带源码版本：拼接后的执行脚本与未注入配置的 UI 模板的 SHA-256 前十六个十六进制字符。版本不符返回 `PLUGIN_OUTDATED`，避免旧插件解释新协议。插件模板的所有字节，包括注释，都会影响版本。更新后可能要重新运行插件；页脚与 `status.pluginVersion` 可用于对照。
+
 iframe 在接受确认或结果前，逐条核对任务 ID 和随机 nonce。
 
 ### 本机存储

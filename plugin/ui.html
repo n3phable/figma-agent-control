@@ -6,44 +6,82 @@
 [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
 -->
 <style>
-:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;padding:16px;font:12px/1.6 system-ui;color:var(--figma-color-text,#242424);background:var(--figma-color-bg,#fff)}
-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}h1{font-size:14px;margin:0;font-weight:650}
-button{font:inherit;cursor:pointer;border:1px solid var(--figma-color-border,#ddd);border-radius:6px;background:var(--figma-color-bg,#fff);color:inherit;padding:6px 10px}button:focus-visible{outline:2px solid #3478f6;outline-offset:3px}
-.label{font-size:11px;color:var(--figma-color-text-secondary,#737373)}.name{font-weight:600;margin:2px 0 12px;overflow-wrap:anywhere}
-#state{font-size:14px;font-weight:600;margin:0}#state-detail{margin:4px 0 0;overflow-wrap:anywhere}
-#approval{border-top:1px solid var(--figma-color-border,#ddd);margin-top:16px;padding-top:12px}#approval-reason{margin:0 0 12px;overflow-wrap:anywhere}
-pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:160px;overflow:auto;font:11px/1.5 ui-monospace,monospace}summary{cursor:pointer;margin-bottom:8px}#approve{background:#1769e0;color:#fff;border-color:#1769e0}
-#plugin-version{position:fixed;right:8px;bottom:4px;padding:0 2px;font:10px/1.2 ui-monospace,monospace;color:var(--figma-color-text-secondary,#737373);background:var(--figma-color-bg,#fff);pointer-events:none}/* Fix the version label at bottom-right with a background and no pointer capture. It covers only a small part of long text; body bottom padding leaves room when scrolled to the end. */
+/* Use Figma themeColors with fallbacks only for previews outside Figma. color-mix derives subtle status backgrounds from icon colors in both light and dark themes. */
+:root{color-scheme:light dark;--bg:var(--figma-color-bg,#fff);--bg2:var(--figma-color-bg-secondary,#f5f5f5);--hover:var(--figma-color-bg-hover,#f0f0f0);
+  --text:var(--figma-color-text,#1e1e1e);--text2:var(--figma-color-text-secondary,#757575);--text3:var(--figma-color-text-tertiary,#b3b3b3);--border:var(--figma-color-border,#e6e6e6);
+  --brand:var(--figma-color-bg-brand,#0d99ff);--onbrand:var(--figma-color-text-onbrand,#fff);--danger-text:var(--figma-color-text-danger,#dc3412);
+  --ok:var(--figma-color-icon-success,#14ae5c);--busy:var(--figma-color-icon-brand,#0d99ff);--warn:var(--figma-color-icon-warning,#f7b500);--danger:var(--figma-color-icon-danger,#f24822);
+  --mono:10px/16px ui-monospace,SFMono-Regular,Menlo,monospace}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;padding:12px 16px 8px;font:11px/16px Inter,system-ui,sans-serif;color:var(--text);background:var(--bg)}
+p{margin:0}ol{list-style:none;margin:0;padding:0}
+button{font:inherit;color:inherit;cursor:pointer;border:1px solid var(--border);border-radius:5px;background:transparent;padding:3px 8px}
+button:hover:not(:disabled){background:var(--hover)}button:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+.primary{background:var(--brand);border-color:transparent;color:var(--onbrand)}.primary:hover:not(:disabled){background:var(--brand);filter:brightness(1.1)}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.idle{--tone:var(--text3)}.ok{--tone:var(--ok)}.busy{--tone:var(--busy)}.warn{--tone:var(--warn)}.danger{--tone:var(--danger)}
+.status{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}.status::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--tone)}
+.busy.status::before,.running .mark{animation:pulse 1.2s ease-in-out infinite}@keyframes pulse{50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.busy.status::before,.running .mark{animation:none}}
+.notice{margin-bottom:12px;padding:8px 10px;border-radius:6px;background:color-mix(in srgb,var(--tone) 14%,transparent);overflow-wrap:anywhere}
+#approval{margin-bottom:12px;padding:10px;border:1px solid color-mix(in srgb,var(--warn) 55%,transparent);border-radius:6px;background:color-mix(in srgb,var(--warn) 8%,transparent)}
+#approval-reason{margin:2px 0 8px;font-weight:600;overflow-wrap:anywhere}summary{cursor:pointer;color:var(--text2)}details{margin-bottom:10px}
+pre{margin:6px 0 0;padding:8px;max-height:160px;overflow:auto;border-radius:4px;background:var(--bg2);white-space:pre-wrap;overflow-wrap:anywhere;font:var(--mono)}
+.actions{display:flex;justify-content:flex-end;gap:8px}
+section{padding:10px 0;border-top:1px solid var(--border)}
+h2{display:flex;align-items:center;justify-content:space-between;margin:0 0 4px;font-size:11px;font-weight:500;color:var(--text2)}
+#project{max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 6px;border-radius:4px;background:var(--bg2)}
+#target-name{display:flex;align-items:baseline;justify-content:space-between;gap:8px;width:calc(100% + 12px);margin:0 -6px;padding:2px 6px;border:0;text-align:left;font-size:13px;font-weight:600;overflow-wrap:anywhere}
+#target-name::after{content:'Locate';flex:none;font-size:11px;font-weight:400;color:var(--text3)}#target-name:hover::after{color:var(--text2)}
+#target-name:disabled{cursor:default}#target-name:disabled::after{content:none}
+.meta{color:var(--text2);overflow-wrap:anywhere}
+/* Task rows align marker, operation, title and duration, with errors/progress below. Truncate long titles and expose full text on hover. */
+.job{display:grid;grid-template-columns:12px auto minmax(0,1fr) auto;column-gap:6px;align-items:baseline;padding:3px 0}
+.mark{text-align:center;font-size:10px}.running .mark{color:var(--busy)}.done .mark{color:var(--ok)}.failed .mark{color:var(--danger)}
+.op{font:var(--mono);color:var(--text2)}.label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.time{color:var(--text2);font-variant-numeric:tabular-nums}
+.sub{grid-column:2/-1;color:var(--text2);overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.failed .sub{color:var(--danger-text)}
+footer{display:flex;justify-content:space-between;padding-top:8px;border-top:1px solid var(--border);color:var(--text3)}#plugin-version{font:var(--mono)}
 </style>
-<header><h1>Figma Agent Control</h1><button id="hide-panel">Hide</button></header>
-<div id="target-label" class="label">Bound target</div><div id="target-name" class="name">Checking...</div>
-<p id="state" role="status" aria-live="polite">Connecting</p><p id="state-detail">Connecting to the local bridge.</p>
-<section id="approval" hidden><p id="approval-reason"></p><details><summary>View scope and script</summary><pre id="approval-details"></pre></details><button id="approve">Allow changes</button> <button id="reject">Reject changes</button></section>
-<small id="plugin-version"></small>
+<header><p id="status" class="status idle"><span id="state" role="status" aria-live="polite">Connecting</span></p><button id="hide-panel" title="Hide the panel and keep the plugin running; closing the window disconnects the agent">Hide</button></header>
+<p id="state-detail" class="notice idle">Connecting to the local bridge.</p>
+<div id="approval" hidden><h2>Approval required</h2><p id="approval-reason"></p><details><summary>View scope and script</summary><pre id="approval-details"></pre></details>
+  <div class="actions"><button id="reject">Reject changes</button><button id="approve" class="primary">Allow changes</button></div></div>
+<section><h2>Target<span id="project" hidden></span></h2><button id="target-name" title="Locate and select on the canvas" disabled>Checking...</button><p id="target-meta" class="meta"></p></section>
+<section><h2>Tasks</h2>
+  <div id="job" class="job running" hidden><span class="mark">●</span><span id="job-op" class="op"></span><span id="job-label" class="label"></span><span id="job-time" class="time"></span><span id="job-phase" class="sub"></span></div>
+  <ol id="recent"></ol><p id="empty" class="meta">Waiting for an agent task</p></section>
+<footer><span>Plugin version</span><small id="plugin-version"></small></footer>
 <script>
 const config = SESSION_CONFIG;
 const client = Math.random().toString(36).slice(2) + Date.now();
 const headers = { 'Content-Type': 'application/json', 'X-Session-Token': config.token, 'X-Plugin-Version': config.version };
-let pending = null, busy = false, polling = false, again = false, activeId = null, activeOperation = null, channelNonce = null;
-let serverSessionId = null, lastFailure = null, targetIssue = null, completeRejects = 0;
-// main reports fileKey; null means it is not yet known, so do not poll. project is the current bridge project; activeProject owns the held job.
-let fileKey = null, project = '', activeProject = '';
+const $ = id => document.getElementById(id);
+let pending = null, polling = false, again = false, channelNonce = null;
+// active holds the current task's operation, title, local target, project and start time. After persistence, move it into recent (newest first, at most 5).
+let active = null, recent = [];
+let serverSessionId = null, targetIssue = null, targetFound = false, completeRejects = 0;
+// main supplies fileKey; null means unknown and prevents polling. project identifies the current bridge's project.
+let fileKey = null, project = '';
 let review = null, deciding = false;
-document.getElementById('hide-panel').onclick = () => parent.postMessage({ pluginMessage: { type: 'hide-ui' } }, '*');
+$('hide-panel').onclick = () => parent.postMessage({ pluginMessage: { type: 'hide-ui' } }, '*');
+$('target-name').onclick = () => parent.postMessage({ pluginMessage: { type: 'focus-target' } }, '*');
 // Inject the template hash as version without changing it. Always display it so PLUGIN_OUTDATED differences from status.pluginVersion are immediately visible.
-document.getElementById('plugin-version').textContent = config.version;
+$('plugin-version').textContent = config.version;
 
 // -- Panel state --------------------------------------------------------
-function showState(label, detail) {
-  document.getElementById('state').textContent = label;
-  document.getElementById('state-detail').textContent = detail;
+// The heading states connection status; show guidance only when user action is needed. tone controls the status dot and notice background.
+function showState(label, detail, tone) {
+  $('state').textContent = label;
+  $('status').className = 'status ' + tone;
+  $('state-detail').textContent = detail;
+  $('state-detail').className = 'notice ' + tone;
+  $('state-detail').hidden = !detail;
+  showJob();
 }
 function showCurrentState() {
-  if (review) showState("Review changes", 'Choose Allow or Reject below.');
-  else if (lastFailure) showState('Check the task', 'Return to the agent conversation to review the result.');
-  else if (busy) showState("Working", pending ? 'Saving the result; keep the plugin running.' : 'The agent is working on the current target.');
-  else if (targetIssue) showState("Target needs attention", targetIssue);
-  else showState("Connected", 'You can hide the panel and continue in the agent conversation.');
+  if (review) showState("Review changes", '', 'warn');
+  else if (active) showState("Working", '', 'busy');
+  else if (targetIssue) showState("Target needs attention", targetIssue, 'warn');
+  else showState("Connected", '', 'ok');
 }
 function connectionError(message, response, code) {
   const error = Error(message);
@@ -52,14 +90,42 @@ function connectionError(message, response, code) {
   return error;
 }
 function showConnectionError(error) {
-  if (error.code === 'PLUGIN_OUTDATED') return showState("Reopen the plugin", "The tool was updated. Close the plugin and run it again.");
-  if (error.code === 'FOREIGN_JOB') return showState("Waiting for original project", `The current task belongs to project ${activeProject || "(unknown)"}. Run figma-agent-control connect there to return the result automatically. If no longer needed, close and reopen the plugin; the task will be treated as having an unknown result.`);
-  if (error.code === 'PAIRING_MISMATCH') return showState("Plugin credentials do not match", "This is not the current local Figma Agent Control installation; it may be an older per-project plugin with the same name. Run the plugin for the manifest printed by figma-agent-control connect, then remove the old plugin.");
-  if (error.needsAction) return showState("Check the connection", "Keep the plugin running and return to the agent conversation to investigate.");
-  showState("Reconnecting", error?.name === 'TimeoutError' || /timed? ?out|timeout|\u8d85\u65f6/i.test(error?.message || '') ? "The connection timed out. Reconnecting automatically." : "The local bridge is temporarily unavailable. The plugin will reconnect when it starts.");
+  if (error.code === 'PLUGIN_OUTDATED') return showState("Reopen the plugin", "The tool was updated. Close the plugin and run it again.", 'danger');
+  if (error.code === 'FOREIGN_JOB') return showState("Waiting for original project", `The current task belongs to project ${active?.project || "(unknown)"}. Run figma-agent-control connect there to return the result automatically. If no longer needed, close and reopen the plugin; the task will be treated as having an unknown result.`, 'warn');
+  if (error.code === 'PAIRING_MISMATCH') return showState("Plugin credentials do not match", "This is not the current local Figma Agent Control installation; it may be an older per-project plugin with the same name. Run the plugin for the manifest printed by figma-agent-control connect, then remove the old plugin.", 'danger');
+  if (error.needsAction) return showState("Check the connection", "Keep the plugin running and return to the agent conversation to investigate.", 'danger');
+  showState("Reconnecting", error?.name === 'TimeoutError' || /timed? ?out|timeout|\u8d85\u65f6/i.test(error?.message || '') ? "The connection timed out. Reconnecting automatically." : "The local bridge is temporarily unavailable. The plugin will reconnect when it starts.", 'warn');
+}
+
+// -- Task list ----------------------------------------------------------
+// Refresh active-task duration in place on each tick. Rebuild recent tasks only after persistence so hover details (full ID and error) remain stable.
+const OPERATION_TEXT = { run: "Script", inspect: "Read node tree", preview: "Export PNG", variables: "Read variables", extract: "Extract reproduction data" };
+const duration = ms => ms < 1000 ? ms + ' ms' : ms < 60000 ? (ms / 1000).toFixed(1) + ' s' : Math.floor(ms / 60000) + " min " + Math.floor(ms % 60000 / 1000) + " s";
+const clock = time => new Date(time).toTimeString().slice(0, 5);
+function showJob() {
+  $('job').hidden = !active;
+  $('empty').hidden = Boolean(active || recent.length);
+  // Do not focus during execution: page changes alter the script's figma.currentPage.
+  $('target-name').disabled = Boolean(active) || !targetFound;
+  if (!active) return;
+  $('job-op').textContent = active.operation;
+  $('job-label').textContent = active.title;
+  $('job-time').textContent = duration(Date.now() - active.startedAt);
+  $('job-phase').textContent = [review ? "Waiting for your approval" : pending ? "Returning the result; keep the plugin running" : "Running", active.nodeId && "Node " + active.nodeId, '#' + active.id.slice(0, 8)].filter(Boolean).join(' · ');
+}
+function showRecent() {
+  const cell = (className, text) => { const span = document.createElement('span'); span.className = className; span.textContent = text; return span; };
+  $('recent').replaceChildren(...recent.map(job => {
+    const row = document.createElement('li');
+    row.className = 'job ' + (job.ok ? 'done' : 'failed');
+    row.title = "Task " + job.id + (job.ok ? '' : '\n' + job.error);
+    row.append(cell('mark', job.ok ? '✓' : '✕'), cell('op', job.operation), cell('label', job.title), cell('time', duration(job.ms) + ' · ' + clock(job.endedAt)));
+    if (!job.ok) row.append(cell('sub', job.error));
+    return row;
+  }));
 }
 const route = path => path + '?client=' + client + '&visibility=' + (document.visibilityState === 'hidden' ? 'hidden' : 'visible')
-  + '&file=' + encodeURIComponent(fileKey) + (busy && activeId ? '&job=' + encodeURIComponent(activeId) : '');
+  + '&file=' + encodeURIComponent(fileKey) + (active ? '&job=' + encodeURIComponent(active.id) : '');
 const hello = () => parent.postMessage({ pluginMessage: { type: 'hello' } }, '*');
 const randomNonce = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
 // The bridge holds long polls for up to 10 s, so /poll permits 15 s. /complete scales with body size (see tick); other requests allow 3 s.
@@ -73,7 +139,8 @@ async function request(path, options = {}, timeoutMs = 3000) {
     let binding = null;
     try { binding = JSON.parse(response.headers.get('X-Figma-Binding')); } catch {}
     project = typeof binding?.project === 'string' ? binding.project : '';
-    document.getElementById('target-label').textContent = project ? 'Bound target - ' + project : 'Bound target';
+    $('project').textContent = project;
+    $('project').hidden = !project;
     parent.postMessage({ pluginMessage: { type: 'check-target', binding } }, '*');
   }
   return response;
@@ -92,7 +159,7 @@ const binaryBytes = value => [...(value.images || []).map(image => image?.base64
 const fitsResult = value => new TextEncoder().encode(JSON.stringify(value)).byteLength - binaryBytes(value) <= maxResultBytes;
 function compactFailure(message, minimal = false, error = 'Result exceeds the return size limit; large fields were omitted. Verify the execution state against the before-snapshot and an independent read-back') {
   const result = { id: message.id, ok: false, error,
-    executionStarted: typeof message.executionStarted === 'boolean' ? message.executionStarted : activeOperation === 'run',
+    executionStarted: typeof message.executionStarted === 'boolean' ? message.executionStarted : active?.operation === 'run',
     recovery: 'Keep the existing evidence; narrow the target and inspect independently; do not replay the script' };
   // Created/cleaned node lists and deleted-existing counts are small and essential cleanup evidence. Preserve them with verification fields and script stacks already truncated to 4000 characters.
   for (const field of ['bindingVerified', 'undoBoundaries', 'created', 'cleaned', 'cleanFailed', 'deletedExisting', 'warnings', 'stack']) if (message[field] !== undefined) result[field] = message[field];
@@ -113,14 +180,14 @@ async function decide(approved) {
     const response = await request('/approve', { method: 'POST', body: JSON.stringify({ id: current.id, scriptHash: current.scriptHash, approved }) });
     if (!response.ok) throw Error("Approval not saved");
     const decision = await response.json();
-    review = null; document.getElementById('approval').hidden = true;
+    review = null; $('approval').hidden = true;
     parent.postMessage({ pluginMessage: { type: 'approval-ack', id: current.id, channelNonce, approved: decision.approved === true } }, '*');
     showCurrentState();
-  } catch { showState("Review changes", "Approval was not saved. Please try again."); }
+  } catch { showState("Review changes", "Approval was not saved. Please try again.", 'warn'); }
   finally { deciding = false; }
 }
-document.getElementById('approve').onclick = () => decide(true);
-document.getElementById('reject').onclick = () => decide(false);
+$('approve').onclick = () => decide(true);
+$('reject').onclick = () => decide(false);
 
 // -- main.js messages ---------------------------------------------------
 window.onmessage = async event => {
@@ -131,22 +198,26 @@ window.onmessage = async event => {
     return;
   }
   if (message?.type === 'target-info') {
-    document.getElementById('target-name').textContent = message.name || "Target temporarily unavailable";
+    // Format Plugin API node types for display (FRAME -> Frame); page and node ID help compare with agent output.
+    const type = typeof message.nodeType === 'string' ? message.nodeType[0] + message.nodeType.slice(1).toLowerCase().replace(/_/g, ' ') : '';
+    $('target-name').textContent = message.name || "Target temporarily unavailable";
+    $('target-meta').textContent = message.issue ? '' : [type, message.page, message.id].filter(Boolean).join(' · ');
     targetIssue = message.issue || null;
-    if (!busy) showCurrentState();
+    targetFound = Boolean(message.name) && !targetIssue;
+    if (!active) showCurrentState();
     return;
   }
   if (message?.type === 'serialized-result') {
-    if (!channelNonce || message.channelNonce !== channelNonce || message.id !== activeId || typeof message.serialized !== 'string') return;
+    if (!channelNonce || message.channelNonce !== channelNonce || message.id !== active.id || typeof message.serialized !== 'string') return;
     try { message = JSON.parse(message.serialized); }
-    catch { pending = { id: activeId, ok: false, executionStarted: activeOperation === 'run', error: 'Result could not be parsed; check the current canvas, do not replay the script' }; void tick(); return; }
+    catch { pending = { id: active.id, ok: false, executionStarted: active.operation === 'run', error: 'Result could not be parsed; check the current canvas, do not replay the script' }; void tick(); return; }
   }
-  if (!channelNonce || message?.channelNonce !== channelNonce || message.id !== activeId) return;
+  if (!channelNonce || message?.channelNonce !== channelNonce || message.id !== active.id) return;
   if (message.type === 'approval-request') {
     review = message;
-    document.getElementById('approval-reason').textContent = message.reason;
-    document.getElementById('approval-details').textContent = `Reason: ${message.reason}\nFile: ${message.binding.fileKey}\nNode: ${message.binding.nodeId}\nScript hash: ${message.scriptHash}\n\n${message.code}`;
-    document.getElementById('approval').hidden = false;
+    $('approval-reason').textContent = message.reason;
+    $('approval-details').textContent = `Reason: ${message.reason}\nFile: ${message.binding.fileKey}\nNode: ${message.binding.nodeId}\nScript hash: ${message.scriptHash}\n\n${message.code}`;
+    $('approval').hidden = false;
     showCurrentState();
     return;
   }
@@ -162,7 +233,7 @@ window.onmessage = async event => {
   if (typeof message.ok === 'boolean' && !pending) {
     const { channelNonce: omitted, ...result } = message;
     pending = fitsResult(result) ? result : compactFailure(result);
-    review = null; document.getElementById('approval').hidden = true;
+    review = null; $('approval').hidden = true;
     // Return results and claim the next task immediately upon receipt, without waiting for the next polling tick.
     void tick();
   }
@@ -176,7 +247,7 @@ async function tick() {
   polling = true;
   try {
     // Upload pending results directly: /complete does not require a lease, so late results can persist after restart even when another instance owns the lease.
-    if (busy && !pending) {
+    if (active && !pending) {
       const heartbeat = await request(route('/heartbeat'));
       if (!heartbeat.ok) throw await failed(heartbeat, "Heartbeat failed; retaining the current task and forbidding replay");
     }
@@ -191,18 +262,24 @@ async function tick() {
         completeRejects = 0;
       }
       if (!response.ok) throw await failed(response, "The result was not saved. Keep the plugin running and ask the agent to investigate");
-      if (!pending.ok) lastFailure = pending.error || "This task did not complete";
       completeRejects = 0;
-      pending = null; busy = false; activeId = null; channelNonce = null; activeOperation = null; activeProject = '';
+      const endedAt = Date.now();
+      recent = [{ ...active, ok: pending.ok, error: pending.error || "This task did not complete", ms: endedAt - active.startedAt, endedAt }, ...recent].slice(0, 5);
+      pending = null; active = null; channelNonce = null;
+      showRecent();
     }
-    if (!busy) {
+    if (!active) {
       const nextNonce = randomNonce();
       const response = await request(route('/poll'), {}, 15000);
       if (!response.ok) throw await failed(response, "Connection not restored; retaining the current task");
       const job = await response.json();
       // Immediately continue after an empty long-poll response. Network callbacks keep claim latency independent of hidden-panel timer throttling.
       if (!job && response.headers?.get?.('X-Long-Poll')) again = true;
-      if (job) { lastFailure = null; busy = true; activeId = job.id; activeOperation = job.operation; activeProject = project; channelNonce = nextNonce; parent.postMessage({ pluginMessage: { ...job, channelNonce } }, '*'); }
+      if (job) {
+        active = { id: job.id, operation: job.operation, title: job.label || OPERATION_TEXT[job.operation] || job.operation, nodeId: job.targetNodeId, project, startedAt: Date.now() };
+        channelNonce = nextNonce;
+        parent.postMessage({ pluginMessage: { ...job, channelNonce } }, '*');
+      }
     }
     showCurrentState();
   } catch (error) { showConnectionError(error); }
@@ -223,8 +300,10 @@ async function reportVisibility() {
   finally { polling = false; if (again) { again = false; void tick(); } }
 }
 document.addEventListener('visibilitychange', reportVisibility);
+// Follow content height within main's limits without leaving gaps for hidden sections. The test VM has no ResizeObserver.
+if (typeof ResizeObserver === 'function') new ResizeObserver(() => parent.postMessage({ pluginMessage: { type: 'resize', height: document.body.offsetHeight } }, '*')).observe(document.body);
 hello();
 // The 750 ms timer handles steps not continued by network callbacks: hello retries before fileKey, initial/error polling, active heartbeats, /complete retries,
-// Also poll again after empty replies without X-Long-Poll (wrong file or stopping bridge) and refresh panel state. Hidden-panel timers throttle to roughly once a minute.
+// polling after empty responses without X-Long-Poll (wrong file or stopping bridge), panel state and active duration. Hidden panels throttle it to roughly once a minute.
 setInterval(tick, 750);
 </script></html>
