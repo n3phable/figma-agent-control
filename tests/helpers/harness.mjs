@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Imports node:fs/promises, node:os, node:path, node:vm, node:crypto, node:child_process, node:util, node:url, node:timers/promises, ../../src/bridge.mjs, ../../src/project.mjs, ../../src/session.mjs, ../../src/png.mjs.
- * [OUTPUT]: Exports cliFile, pluginSource, createDoc, fakeFigma, harness, writeScript.
+ * [OUTPUT]: Exports cliFile, pluginSource, createDoc, fakeElement, fakeFigma, harness, writeScript.
  * [POS]: Isolated test fixtures shared by the surrounding contract and integration suites.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -76,6 +76,10 @@ export function createDoc({ delay = 5 } = {}) {
   return { page, other, frame, text, swatch, all, create, listening: page => listeners.get(page)?.size ?? 0 };
 }
 
+// Minimal ui.html DOM: getElementById and createElement return the same element shape; children records panel list contents for assertions.
+export const fakeElement = (extra = {}) => ({ textContent: '', hidden: false, children: [],
+  append(...nodes) { this.children.push(...nodes); }, replaceChildren(...nodes) { this.children = nodes; }, ...extra });
+
 export function fakeFigma(doc, { fileKey = 'example', onUi = () => {} } = {}) {
   const figma = {
     fileKey, mode: 'default', editorType: 'figma', currentPage: doc.page,
@@ -110,7 +114,7 @@ export async function harness(t, { url = 'https://www.figma.com/design/example/T
   const doc = given ?? createDoc(), pending = new Set(), errors = [];
   const track = promise => { const work = Promise.resolve(promise).catch(error => errors.push(error)).finally(() => pending.delete(work)); pending.add(work); };
   const window = {}, elements = new Map();
-  const element = id => { if (!elements.has(id)) elements.set(id, { textContent: '', hidden: false }); return elements.get(id); };
+  const element = id => { if (!elements.has(id)) elements.set(id, fakeElement()); return elements.get(id); };
   const figma = Object.assign(fakeFigma(doc, { fileKey, onUi: message => track(window.onmessage({ data: { pluginMessage: structuredClone(message) } })) }), doc.globals);
   const parent = { postMessage: message => track(figma.ui.onmessage(structuredClone(message.pluginMessage))) };
   // Gate continuous long-poll delivery: pause() blocks new plugin requests and drains in-flight ones, leaving tasks queued. drive releases the gate automatically.
@@ -128,7 +132,7 @@ export async function harness(t, { url = 'https://www.figma.com/design/example/T
   let tick;
   vm.runInNewContext(main, { figma, __html__: html, setTimeout, clearTimeout });
   vm.runInNewContext(html.match(/<script>([\s\S]*)<\/script>/)[1], { window, parent, crypto, fetch: gatedFetch, AbortSignal, TextEncoder,
-    document: { visibilityState: 'visible', addEventListener() {}, getElementById: element }, setInterval: callback => { tick = callback; } });
+    document: { visibilityState: 'visible', addEventListener() {}, getElementById: element, createElement: () => fakeElement() }, setInterval: callback => { tick = callback; } });
   const settle = async () => { while (pending.size) await Promise.all([...pending]); };
   const drive = async promise => {
     resume();

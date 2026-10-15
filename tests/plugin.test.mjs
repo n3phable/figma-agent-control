@@ -524,7 +524,7 @@ test('variables reads local default-mode values through aliases and counts bindi
 test('check-target identifies the bound file and explains missing targets or read failures', async () => {
   const f = plugin();
   const ask = async binding => { await f.figma.ui.onmessage({ type: 'check-target', binding }); return f.infos.at(-1); };
-  assert.deepEqual(await ask(BINDING), { type: 'target-info', name: '\u753b\u677f', issue: null });
+  assert.deepEqual(await ask(BINDING), { type: 'target-info', name: '\u753b\u677f', nodeType: 'FRAME', page: '\u9875\u9762', id: '1:2', issue: null });
   assert.match((await ask({ ...BINDING, fileKey: 'other' })).issue, /not the bound file/);
   f.doc.frame.removed = true;
   assert.match((await ask(BINDING)).issue, /no longer exists/);
@@ -534,4 +534,21 @@ test('check-target identifies the bound file and explains missing targets or rea
   f.figma.fileKey = undefined;
   assert.match((await ask(BINDING)).issue, /cannot read this file's fileKey/);
   assert.equal(f.results.length, 0);
+});
+
+test('focus-target navigates to the last verified target page, selects it, and scrolls into view; failed verification prevents movement', async () => {
+  const f = plugin(), zoomed = [];
+  f.figma.viewport = { scrollAndZoomIntoView: nodes => zoomed.push(Array.from(nodes, n => n.id)) };
+  const focus = () => f.figma.ui.onmessage({ type: 'focus-target' });
+  f.figma.currentPage = f.doc.other;
+  await focus();
+  assert.deepEqual(zoomed, [], 'No target has been verified');
+  await f.figma.ui.onmessage({ type: 'check-target', binding: BINDING });
+  await focus();
+  assert.equal(f.figma.currentPage, f.doc.page);
+  assert.deepEqual(Array.from(f.doc.page.selection, n => n.id), ['1:2']);
+  assert.deepEqual(zoomed, [['1:2']]);
+  await f.figma.ui.onmessage({ type: 'check-target', binding: { ...BINDING, fileKey: 'other' } });
+  await focus();
+  assert.deepEqual(zoomed, [['1:2']], 'Failed verification prevents subsequent focus');
 });

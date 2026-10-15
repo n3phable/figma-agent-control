@@ -11,8 +11,11 @@
  *   risk?: { level: string, reason?: string }, scriptHash?: string, cleanOnFail?: boolean }} Job */
 /** @typedef {(message: Record<string, unknown>) => void} Send */
 /** @typedef {{ id: string, channelNonce: string, finish(message: { ok?: unknown, approved?: unknown }): void }} Waiter */
-figma.showUI(__html__, { width: 320, height: 200, themeColors: true });
+figma.showUI(__html__, { width: 320, height: 240, themeColors: true });
 let busy = false;
+// Last successfully validated binding node, used to focus the canvas when its panel name is clicked; cleared on validation failure.
+/** @type {string | null} */
+let boundNodeId = null;
 /** @type {Waiter | null} */
 let checkpointWaiter = null;
 /** @type {Waiter | null} */
@@ -549,14 +552,26 @@ function watchCreated(page, warnings) {
 }
 
 // -- Target guidance ----------------------------------------------------
-// The panel answers whether the currently open file and page match the bound target.
+// The panel first answers whether the open file/page matches the binding. Ready targets include type, page and ID; call the field nodeType so it does not overwrite the message's type.
 /** @param {{ fileKey: string, nodeId: string } | undefined} binding */
 async function checkTarget(binding) {
   if (!figma.fileKey) return { name: '', issue: "The plugin cannot read this file's fileKey. Use Figma Desktop and the development plugin installed by figma-agent-control connect." };
   if (!binding || binding.fileKey !== figma.fileKey) return { name: '', issue: "This is not the bound file. Open the file used by the agent and run the plugin again." };
   const node = await figma.getNodeByIdAsync(binding.nodeId);
   if (!node || node.removed) return { name: '', issue: "The bound target no longer exists. Ask the agent to bind it again." };
-  return { name: node.name, issue: null };
+  const page = pageOf(node);
+  return { name: node.name, nodeType: node.type, page: page && page !== node ? page.name : '', id: node.id, issue: null };
+}
+// Never call during execution: switching pages changes the script's figma.currentPage.
+/** @param {string} id */
+async function focusTarget(id) {
+  const node = await figma.getNodeByIdAsync(id), page = pageOf(node);
+  if (!node || !page) return;
+  if (page !== figma.currentPage) await figma.setCurrentPageAsync(page);
+  if (node === page) return;
+  const scene = /** @type {SceneNode} */ (node);
+  page.selection = [scene];
+  figma.viewport.scrollAndZoomIntoView([scene]);
 }
 
 figma.ui.onmessage = async job => {
@@ -565,9 +580,12 @@ figma.ui.onmessage = async job => {
   if (job?.type === 'check-target') {
     let info;
     try { info = await checkTarget(job.binding); } catch { info = { name: '', issue: "The target is temporarily unavailable." }; }
+    boundNodeId = info.issue ? null : job.binding.nodeId;
     figma.ui.postMessage({ type: 'target-info', ...info });
     return;
   }
+  if (job?.type === 'focus-target') { if (!busy && boundNodeId) await focusTarget(boundNodeId).catch(() => {}); return; }
+  if (job?.type === 'resize') { if (Number.isFinite(job.height)) figma.ui.resize(320, Math.min(600, Math.max(120, Math.ceil(job.height)))); return; }
   if (job?.type === 'hide-ui') { figma.ui.hide(); return; }
   // Check for a waiter first: when a reply lacks id, optional chains can both equal undefined, then reading fields from null would throw.
   if (job?.type === 'approval-ack') {

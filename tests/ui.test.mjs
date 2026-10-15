@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:vm, node:crypto.
+ * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:vm, node:crypto, ./helpers/harness.mjs.
  * [OUTPUT]: Node.js test cases and fixture setup for this revision.
  * [POS]: Regression coverage for ui; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
+import { fakeElement } from './helpers/harness.mjs';
 
 // -- Fixtures -------------------------------------------------------------
 // Match bridge injection by replacing only the configuration placeholder line. Queue mock fetch responses by path, defaulting to 200 + null.
@@ -24,8 +25,8 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 // fileKey is main's hello reply, normally read from figma.fileKey; null means main has not replied.
 function plugin({ visibility = 'visible', fileKey = 'example' } = {}) {
   const calls = [], toMain = [], queues = new Map(), elements = new Map(), listeners = {}, window = {};
-  const el = id => { if (!elements.has(id)) elements.set(id, { textContent: '', hidden: id === 'approval' }); return elements.get(id); };
-  const document = { visibilityState: visibility, getElementById: el, addEventListener: (type, fn) => { listeners[type] = fn; } };
+  const el = id => { if (!elements.has(id)) elements.set(id, fakeElement({ hidden: id === 'approval' })); return elements.get(id); };
+  const document = { visibilityState: visibility, getElementById: el, createElement: () => fakeElement(), addEventListener: (type, fn) => { listeners[type] = fn; } };
   let tick, interval;
   async function fetch(url, options = {}) {
     const { origin, pathname, searchParams } = new URL(url);
@@ -210,18 +211,50 @@ test('Bridge session changes send header binding to main for reverification and 
   f.reply('/poll', { session: 'S1', binding: { ...BINDING, project: 'project-a' } }, { session: 'S1' }, { session: 'S2', binding: other });
   await f.tick();
   assert.deepEqual(f.toMain, [{ type: 'check-target', binding: { ...BINDING, project: 'project-a' } }]);
-  assert.equal(f.el('target-label').textContent, 'Bound target - project-a');
+  assert.deepEqual([f.el('project').textContent, f.el('project').hidden], ['project-a', false]);
   await f.tick();
   assert.equal(f.toMain.length, 1, 'The same session does not repeat verification');
   await f.tick();
   assert.deepEqual(f.toMain.at(-1), { type: 'check-target', binding: other }, 'A different project uses its new binding');
-  assert.equal(f.el('target-label').textContent, 'Bound target - project-b');
+  assert.equal(f.el('project').textContent, 'project-b');
 
   await f.fromMain({ type: 'target-info', name: '', issue: 'This is not the bound file' });
-  assert.deepEqual([f.state(), f.detail()], ['Target needs attention', 'This is not the bound file']);
-  await f.fromMain({ type: 'target-info', name: '\u753b\u677f', issue: null });
-  assert.equal(f.el('target-name').textContent, '\u753b\u677f');
-  assert.equal(f.state(), 'Connected');
+  assert.deepEqual([f.state(), f.detail(), f.el('state-detail').hidden], ['Target needs attention', 'This is not the bound file', false]);
+  assert.equal(f.el('target-name').disabled, true, 'An unready target cannot be focused');
+  await f.fromMain({ type: 'target-info', name: '\u753b\u677f', nodeType: 'COMPONENT_SET', page: '\u9875\u9762', id: '1:2', issue: null });
+  assert.deepEqual([f.el('target-name').textContent, f.el('target-meta').textContent, f.el('target-name').disabled], ['\u753b\u677f', 'Component set · \u9875\u9762 · 1:2', false]);
+  assert.deepEqual([f.state(), f.el('state-detail').hidden], ['Connected', true], 'Normal operation hides the detail text');
+  await f.click('target-name');
+  assert.deepEqual(f.toMain.at(-1), { type: 'focus-target' });
+});
+
+test('The task panel shows operation, label, and progress, disables focus while running, then keeps up to five persisted recent tasks with failure reasons', async () => {
+  const f = plugin();
+  await f.fromMain({ type: 'target-info', name: '\u753b\u677f', nodeType: 'FRAME', page: '\u9875\u9762', id: '1:2', issue: null });
+  assert.deepEqual([f.el('job').hidden, f.el('empty').hidden], [true, false]);
+  const channelNonce = await claim(f, { id: 'job-0001-abcdef', operation: 'run', label: 'body.js', targetNodeId: '3:4', code: 'return 1' });
+  assert.deepEqual([f.el('job').hidden, f.el('empty').hidden, f.el('target-name').disabled], [false, true, true]);
+  assert.deepEqual([f.el('job-op').textContent, f.el('job-label').textContent, f.el('job-phase').textContent], ['run', 'body.js', 'Running · Node 3:4 · #job-0001']);
+  assert.match(f.el('job-time').textContent, /^\d+ ms$/);
+  f.reply('/complete', { body: { saved: true } });
+  await f.fromMain({ id: 'job-0001-abcdef', ok: false, executionStarted: true, error: 'TypeError: x is undefined', channelNonce });
+  const text = row => row.children.map(cell => cell.textContent);
+  const rows = () => f.el('recent').children;
+  assert.deepEqual([f.el('job').hidden, f.el('target-name').disabled], [true, false]);
+  assert.equal(rows().length, 1);
+  assert.equal(rows()[0].className, 'job failed');
+  assert.deepEqual(text(rows()[0]).slice(0, 3), ['✕', 'run', 'body.js']);
+  assert.equal(text(rows()[0])[4], 'TypeError: x is undefined');
+  assert.match(rows()[0].title, /^Task job-0001-abcdef\nTypeError/);
+
+  for (let i = 2; i <= 6; i++) {
+    const nonce = await claim(f, { id: `job-${i}`, operation: 'inspect' });
+    assert.equal(f.el('job-label').textContent, 'Read node tree', 'Unlabeled built-in operations use English descriptions');
+    f.reply('/complete', { body: { saved: true } });
+    await f.fromMain({ id: `job-${i}`, ok: true, output: i, channelNonce: nonce });
+  }
+  assert.deepEqual(rows().map(row => [row.className, text(row)[1], row.children.length]), Array(5).fill(['job done', 'inspect', 4]));
+  assert.match(rows()[0].title, /^Task job-6$/);
 });
 
 // -- Approval and checkpoints ---------------------------------------------
@@ -396,7 +429,7 @@ test('409 PLUGIN_OUTDATED asks to reopen the plugin without delivering tasks to 
   assert.match(f.detail(), /run it again/);
 });
 
-test('The panel shows injected pluginVersion in small text at bottom-right before file discovery and keeps it visible during PLUGIN_OUTDATED', async () => {
+test('The footer shows the injected status.pluginVersion before file discovery and retains it during PLUGIN_OUTDATED', async () => {
   assert.match(template, /<small id="plugin-version"[^>]*><\/small>/);
   const f = plugin({ fileKey: null });
   assert.equal(f.el('plugin-version').textContent, config.version);

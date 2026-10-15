@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
-import { harness, writeScript, fakeFigma, cliFile } from './helpers/harness.mjs';
+import { harness, writeScript, fakeFigma, fakeElement, cliFile } from './helpers/harness.mjs';
 import { start } from '../src/bridge.mjs';
 import { root, json, save, hash, init, installPlugin } from '../src/project.mjs';
 import { pairingToken } from '../src/session.mjs';
@@ -56,7 +56,7 @@ async function reopenPlugin(bridge, h) {
   vm.runInNewContext(main, { figma, __html__: html, setTimeout, clearTimeout });
   vm.runInNewContext(html.match(/<script>([\s\S]*)<\/script>/)[1], { window, crypto: globalThis.crypto, fetch, AbortSignal, TextEncoder,
     parent: { postMessage: message => track(figma.ui.onmessage(structuredClone(message.pluginMessage))) },
-    document: { visibilityState: 'visible', addEventListener() {}, getElementById: () => ({}) }, setInterval: callback => { tick = callback; } });
+    document: { visibilityState: 'visible', addEventListener() {}, getElementById: () => fakeElement(), createElement: () => fakeElement() }, setInterval: callback => { tick = callback; } });
   const drive = async promise => {
     let done = false; const result = promise.finally(() => { done = true; });
     while (!done) { await tick(); while (pending.size) await Promise.all([...pending]); await delay(10); }

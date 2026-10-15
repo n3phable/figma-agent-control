@@ -21,6 +21,8 @@ The [protocol](protocol.md) defines fields, files, and exit codes. The [agent gu
 
 [bridge.mjs](../src/bridge.mjs) assigns routes to CLI or plugin roles. Each role accepts only its credential. The CLI credential is freshly generated for each bridge startup and stored in the project's mode-0600 session file. The plugin credential is created exclusively once through [session.mjs](../src/session.mjs), stored in the shared pairing file, and injected into the iframe.
 
+Every plugin request also supplies a source version: sixteen SHA-256 hex characters from the concatenated execution script and uninjected UI template. A mismatch produces `PLUGIN_OUTDATED`, preventing an old plugin from interpreting a new protocol. All plugin template bytes, including comments, affect this value. A running plugin may need to be rerun after an update; its footer and `status.pluginVersion` expose the comparison.
+
 The iframe matches each task message against its ID and random nonce before accepting an acknowledgement or result.
 
 ### Local storage

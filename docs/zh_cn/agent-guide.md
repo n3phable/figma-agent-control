@@ -36,6 +36,8 @@ figma-agent-control doctor
 
 - 一个桥接同一时刻只执行一个任务。多个 Agent 应顺序取数，再离线并行分析。
 
+- 插件文件变化可能触发 Figma 开发插件重载。面板提示版本过旧时重新运行插件；页脚版本应与 `status.pluginVersion` 一致。
+
 - 结束时，对本次启动且不再需要的桥接运行 `figma-agent-control stop`。它停止本机桥接，文档同步在 Figma 中检查。退出码 `2` 表示仍在收尾，稍后查看 `status`。
 
 ## 写脚本
