@@ -2,6 +2,8 @@
 
 [English](../protocol.md) · [中文文档索引](README.md)
 
+本文定义 CLI、本机桥接、插件 iframe（`ui.html`）、插件执行代码（`main.js` 与 `extract.js`），以及主机侧 HTML 导出之间的契约。实现变更时应同步维护本文。操作步骤见 [Agent 使用指南](agent-guide.md)。
+
 ## 组件与数据流
 
 ```text
@@ -43,6 +45,7 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 |---|---|---|
 | `pairing.json` | `connect` 经 session | 持久化插件凭证，权限 `0600`；首次创建具有独占性；内容损坏时报 `PAIRING_INVALID` |
 | `plugin/manifest.json` | `connect` | 生成的开发插件清单，含 `documentAccess: dynamic-page`、`enablePrivatePluginApi: true`，没有 Figma 分配的插件 ID |
+| `plugin/main.js` | `connect` | 按 `PLUGIN_SCRIPTS` 顺序拼接源码 `plugin/main.js` 与 `plugin/extract.js` |
 
 由于清单没有 Figma 分配的 ID，私有 `setPluginData` 不可用。带命名空间的 `setSharedPluginData` 不依赖该 ID。
 
@@ -483,10 +486,6 @@ HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内
 | `2` | 尚未完成：等待超时或待核验。对 stop，表示已接受关闭，但约五秒后仍未释放锁；应稍后检查状态 |
 
 `report --since` 接受 ISO 日期/时间；带时间时必须提供 `Z` 或时区偏移，只有日期则按 UTC 零点处理。`jobs.failed` 统计 `ok:false`；`jobs.verifyFailed` 统计执行成功但画面核验失败/不可用的任务，两者互斥。
-
-## 提取实现位置
-
-只读提取在 plugin/main.js 内实现，并共享文档读取辅助函数。
 
 ## 连接范围
 

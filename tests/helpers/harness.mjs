@@ -13,14 +13,14 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { start } from '../../src/bridge.mjs';
+import { start, pluginMain } from '../../src/bridge.mjs';
 import { init, installPlugin } from '../../src/project.mjs';
 import { pairingToken } from '../../src/session.mjs';
 import { encodePng } from '../../src/png.mjs';
 
 const exec = promisify(execFile);
 export const cliFile = fileURLToPath(new URL('../../bin/figma-agent-control.mjs', import.meta.url));
-export const pluginSource = await fs.readFile(new URL('../../plugin/main.js', import.meta.url), 'utf8');
+export const pluginSource = await pluginMain();
 
 // -- Mock document --------------------------------------------------------
 // Page 1:1 contains bound frame 1:2, text 1:3, and color block 1:4; page 2:1 is empty. exportAsync renders the current fill color

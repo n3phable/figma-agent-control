@@ -2,6 +2,8 @@
 
 [Simplified Chinese](zh_cn/protocol.md)
 
+This document defines the contracts between the CLI, local bridge, plugin iframe (`ui.html`), plugin execution code (`main.js` plus `extract.js`), and host-side HTML export. Keep it aligned with implementation changes. For operating procedures, see the [agent guide](agent-guide.md).
+
 ## Components and data flow
 
 ```text
@@ -43,6 +45,7 @@ The shared directory is `~/.config/figma-agent-control/`, overridden by `FIGMA_A
 |---|---|---|
 | `pairing.json` | `connect` via session | Persistent plugin credential, mode `0600`; exclusive first creation. Corruption gives `PAIRING_INVALID` |
 | `plugin/manifest.json` | `connect` | Generated development manifest, `documentAccess: dynamic-page`, `enablePrivatePluginApi: true`, no Figma-assigned plugin ID |
+| `plugin/main.js` | `connect` | Concatenation of source `plugin/main.js` and `plugin/extract.js` in `PLUGIN_SCRIPTS` order |
 
 Because the manifest has no Figma-assigned ID, private `setPluginData` is unavailable. Namespaced `setSharedPluginData` does not depend on that ID.
 
@@ -479,10 +482,6 @@ HTML and html-check stdout summaries fit within 16 KiB of formatted UTF-8 JSON. 
 | `2` | Not complete: timeout or review pending. For stop, accepted shutdown has not released the lock after roughly five seconds; check status later |
 
 `report --since` accepts ISO dates/times; a time requires `Z` or an offset, and a date alone is UTC midnight. `jobs.failed` counts `ok:false`; `jobs.verifyFailed` counts successful executions with failed/unavailable visual checks. They are mutually exclusive.
-
-## Extraction ownership
-
-Read-only extraction runs inside plugin/main.js and shares its document-access helpers.
 
 ## Connection scope
 

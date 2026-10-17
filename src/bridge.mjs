@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Imports node:http, node:fs/promises, node:path, node:crypto, node:url, ./project.mjs, ./connection.mjs, ./session.mjs, ./png.mjs, ./record.mjs.
- * [OUTPUT]: Exports DEFAULT_PORT, start.
+ * [OUTPUT]: Exports DEFAULT_PORT, PLUGIN_SCRIPTS, pluginMain, start.
  * [POS]: Owns authenticated CLI/plugin transport, single-job delivery and durable outcomes.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -17,6 +17,10 @@ import { changeSet, scriptTrace } from './record.mjs';
 
 export const DEFAULT_PORT = 32523;
 const assets = fileURLToPath(new URL('../plugin/', import.meta.url));
+// Source scripts are split by responsibility, but Figma accepts one main: concatenate them in this order into a shared global scope and hash the assembled content for versioning.
+export const PLUGIN_SCRIPTS = ['main.js', 'extract.js'];
+/** @param {string} [dir] */
+export const pluginMain = async (dir = assets) => (await Promise.all(PLUGIN_SCRIPTS.map(file => fs.readFile(path.join(dir, file), 'utf8')))).join('\n');
 const OPERATIONS = new Set(['run', 'inspect', 'preview', 'variables', 'extract']);
 const PLUGIN_ROUTES = new Set(['/poll', '/heartbeat', '/checkpoint', '/approve', '/complete']);
 const BINARY_KEY = '__figmaAgentControlBinary';
@@ -84,7 +88,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   if (!/^[a-f0-9]{64}$/.test(pluginToken ?? '')) throw Error('Invalid plugin pairing token');
   const tokens = { cli: crypto.randomBytes(32).toString('hex'), plugin: pluginToken };
   const sessionId = crypto.randomUUID(), connection = createConnection(connectionOptions);
-  const main = await fs.readFile(path.join(assets, 'main.js'), 'utf8'), uiTemplate = await fs.readFile(path.join(assets, 'ui.html'), 'utf8');
+  const main = await pluginMain(), uiTemplate = await fs.readFile(path.join(assets, 'ui.html'), 'utf8');
   // Version handshake: every plugin request carries the asset hash. Reject old instances after updates so old semantics cannot execute a new protocol.
   const version = hash(main + uiTemplate).slice(0, 16);
   // pluginIssues records recent request rejection times per reason for status and doctor, covering plugins that reached the bridge but could not acquire a connection.

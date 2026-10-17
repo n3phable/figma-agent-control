@@ -10,6 +10,22 @@ The [protocol](protocol.md) defines fields, files, and exit codes. The [agent gu
 
 ## Processes and trust boundaries
 
+```text
+Agent --shell--> CLI (one process per command)
+                  |
+                  | HTTP on 127.0.0.1, CLI credential
+                  v
+               Bridge (foreground connect process) --> project evidence
+                  ^
+                  | HTTP on localhost, plugin credential + source version
+                  |
+Figma Desktop: ui.html (iframe relay)
+                  |
+                  | postMessage, per-job channel nonce
+                  v
+               main.js + extract.js --> Figma document
+```
+
 | Component | Responsibility | Boundary |
 |---|---|---|
 | CLI | Parse inputs, submit jobs, read local evidence, run host-side analysis | Does not communicate directly with the plugin |
@@ -54,6 +70,10 @@ The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.m
 | [clean](../src/clean.mjs) | Existing failure evidence becomes an ordinary run, reusing write guarantees without adding an operation |
 | [doctor](../src/doctor.mjs) | Read-only diagnosis can still explain binding, lock, or installation problems when the bridge is unreachable |
 | [report](../src/report.mjs) | Aggregation reads completed evidence without changing sessions or job state |
+
+### Plugin and libraries
+
+Figma loads one main script. Source is split into [main.js](../plugin/main.js) for execution and [extract.js](../plugin/extract.js) for read-only extraction, then concatenated at installation. They share a classic-script global scope. The extract contract is referenced during type checking.
 
 ## Key flows
 
@@ -140,10 +160,6 @@ Runtime executes `.mjs`/`.js` source directly; JSDoc is checked with lockfile-pi
 | [Plugin tsconfig](../plugin/tsconfig.json) | Classic-script main/extract with Figma globals, without Node APIs |
 
 The [extract contract](../src/html/extract-contract.d.ts) distinguishes plugin byte arrays, transport placeholders, and landed files. External JSON and dynamic API field access still require assertions; types alone cannot validate real Figma behavior. The optional `node tests/contract-samples.mjs <runs-directory>` checks explicitly supplied extract evidence against the type contract. It does not require or ship a private corpus.
-
-## Extraction ownership
-
-Read-only extraction runs inside plugin/main.js and shares its document-access helpers.
 
 ## Shadow mapping
 

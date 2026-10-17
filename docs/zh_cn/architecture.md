@@ -10,6 +10,22 @@ Figma Agent Control 让 Agent 从本机 CLI 提交可信的 Plugin API 脚本，
 
 ## 进程与信任边界
 
+```text
+Agent --shell--> CLI（每条命令一个进程）
+                  |
+                  | 127.0.0.1 HTTP，CLI 凭证
+                  v
+               桥接（前台 connect 进程）--> 项目证据
+                  ^
+                  | localhost HTTP，插件凭证 + 源码版本
+                  |
+Figma Desktop: ui.html（iframe 中继）
+                  |
+                  | postMessage，每任务一个通道 nonce
+                  v
+               main.js + extract.js --> Figma 文档
+```
+
 | 部分 | 职责 | 边界 |
 |---|---|---|
 | CLI | 解析输入、提交任务、读本机证据、运行主机分析 | 不直接与插件通信 |
@@ -54,6 +70,10 @@ iframe 在接受确认或结果前，逐条核对任务 ID 和随机 nonce。
 | [clean](../../src/clean.mjs) | 把已有失败证据变成普通 run，复用写入保障，不新增操作 |
 | [doctor](../../src/doctor.mjs) | 桥接不可达时仍可只读诊断绑定、锁和安装问题 |
 | [report](../../src/report.mjs) | 只聚合完成证据，不改会话或任务状态 |
+
+### 插件与库
+
+Figma 只加载一份 main 脚本。源码按职责分为执行端 [main.js](../../plugin/main.js) 和只读提取 [extract.js](../../plugin/extract.js)，安装时拼接，共享经典脚本全局作用域。extract 契约参与类型检查。
 
 ## 关键流程
 
@@ -140,10 +160,6 @@ overrides 是唯一支持的手工修正入口。文件先整体校验，basis �
 | [插件 tsconfig](../../plugin/tsconfig.json) | 带 Figma 全局的经典脚本 main/extract，不允许 Node API |
 
 [提取契约](../../src/html/extract-contract.d.ts)区分插件字节、传输占位和落盘文件。外部 JSON 和动态 API 字段仍需断言，类型不能单独验证真实 Figma 行为。可选 `node tests/contract-samples.mjs <runs-directory>` 检查明确提供的提取证据，不需要或附带私有语料。
-
-## 提取实现位置
-
-只读提取在 plugin/main.js 内实现，并共享文档读取辅助函数。
 
 ## 阴影映射
 
