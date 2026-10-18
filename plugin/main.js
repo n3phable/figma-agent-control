@@ -76,6 +76,10 @@ const KEYS = [
   'topLeftRadius', 'topRightRadius', 'bottomLeftRadius', 'bottomRightRadius', 'cornerSmoothing',
   'textStyleId', 'fillStyleId', 'strokeStyleId', 'effectStyleId', 'gridStyleId', 'boundVariables', 'explicitVariableModes'
 ];
+// Motion (Beta): scene nodes expose these fields as []/{} when empty; record only nonempty values. Observed reads of 1000 nodes take about 20 ms without errors;
+// Figma versions without Motion access may throw, so skip those reads. timelines describes the owning top-level frame and is recorded only there (timeline ID equals frame ID), preventing one duration change from marking every descendant updated.
+// Do not read animations: observed output omits style-generated tracks, while manual tracks already appear in manualKeyframeTracks.
+const MOTION_KEYS = ['animationStyles', 'manualKeyframeTracks', 'timelines'];
 // Key tables span node types; callers first check key in node. Subsequent use constrains each value's shape, so the dynamic reader returns any.
 /** @param {object} node @param {string} key @returns {any} */
 const prop = (node, key) => /** @type {Record<string, unknown>} */ (node)[key];
@@ -85,6 +89,13 @@ function tree(node, maxDepth, depth = 0, budget = { count: 0 }) {
   /** @type {Snapshot} */
   const value = { id: node.id, name: node.name, type: node.type };
   for (const key of KEYS) if (key in node && prop(node, key) !== undefined) value[key] = copy(prop(node, key));
+  for (const key of MOTION_KEYS) {
+    try {
+      const raw = key in node ? prop(node, key) : null;
+      const motion = key === 'timelines' && raw ? raw.filter((/** @type {Timeline} */ timeline) => timeline.id === node.id) : raw;
+      if (motion && Object.keys(motion).length) value[key] = copy(motion);
+    } catch { /* Motion is unavailable.*/ }
+  }
   if ('children' in node) {
     if (depth >= maxDepth && node.children.length) value.truncated = true;
     else value.children = node.children.map(child => tree(child, maxDepth, depth + 1, budget));

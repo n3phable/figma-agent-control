@@ -1,10 +1,13 @@
 /**
- * [INPUT]: Imports node:util, ./project.mjs.
- * [OUTPUT]: Exports COMMANDS, parse.
+ * [INPUT]: Imports node:util, node:fs, node:path, node:url, ./project.mjs.
+ * [OUTPUT]: Exports COMMANDS, libName, parse.
  * [POS]: CLI input boundary: validate command syntax and normalize options into command records.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { parseArgs } from 'node:util';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isJobId, isNodeId } from './project.mjs';
 
 const wait = /** @type {const} */ ({ timeout: { type: 'string' }, 'no-wait': { type: 'boolean' }, full: { type: 'boolean' } });
@@ -19,7 +22,7 @@ export const COMMANDS = {
   stop: { usage: 'stop [--force]: stop only the local bridge process; does not modify the Figma document or affect cloud sync; requires --force while a job is unfinished (queued or running); exit code 2 if still shutting down after about 5 s, confirm later with status', positionals: [0, 0], options: { force: { type: 'boolean' } } },
   status: { usage: 'status: live status of the bridge and plugin', positionals: [0, 0], options: {} },
   doctor: { usage: 'doctor: diagnose binding, session, lock, plugin files and connection; also report Chrome, required only by html commands', positionals: [0, 0], options: {} },
-  run: { usage: 'run <script.js> [--node <ID>] [--lib <file.js>]... [--data <file.json>] [--depth <1-31>] [--expect changed|unchanged] [--tolerance <pixels>] [--scale <0.1-4>] [--request-id <uuid>] [--high-risk <reason>] [--clean-on-fail] [--timeout <seconds>] [--no-wait] [--full]',
+  run: { usage: 'run <script.js> [--node <ID>] [--lib <file.js|builtin-name>]... [--data <file.json>] [--depth <1-31>] [--expect changed|unchanged] [--tolerance <pixels>] [--scale <0.1-4>] [--request-id <uuid>] [--high-risk <reason>] [--clean-on-fail] [--timeout <seconds>] [--no-wait] [--full]',
     positionals: [1, 1], submit: true, options: { ...node, lib: { type: 'string', multiple: true }, data: { type: 'string' }, depth: { type: 'string' }, expect: { type: 'string' }, tolerance: { type: 'string' },
       scale: { type: 'string' }, 'request-id': { type: 'string' }, 'high-risk': { type: 'string' }, 'clean-on-fail': { type: 'boolean' }, ...wait } },
   inspect: { usage: 'inspect [--node <ID>] [--depth <1-31>]: read the node tree (including masks and the ancestor visibility chain)', positionals: [0, 0], submit: true, options: { ...node, depth: { type: 'string' }, ...wait } },
@@ -62,6 +65,18 @@ const scale = value => {
   if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value) || Number(value) < 0.1 || Number(value) > 4) throw Error('--scale must be 0.1-4');
   return Number(value);
 };
+// A bare --lib name (lowercase letters, digits and hyphens, without / or .) selects bundled lib/<name>.js, such as --lib motion; local files require a path or extension.
+const BUILTIN = fileURLToPath(new URL('../lib/', import.meta.url));
+/** @param {string} value */
+const lib = value => {
+  if (!/^[a-z][a-z0-9-]*$/.test(value)) return value;
+  const file = path.join(BUILTIN, `${value}.js`);
+  if (!existsSync(file)) throw Error(`No built-in library named ${value}; give local files as a path, e.g. ./${value}.js`);
+  return file;
+};
+// Library names in traces and approval panels: built-ins use lib:<name> to distinguish same-named user scripts; local files use their basename.
+/** @param {string} file */
+export const libName = file => path.dirname(path.resolve(file)) + path.sep === BUILTIN ? `lib:${path.basename(file, '.js')}` : path.basename(file);
 /** @param {string} value */
 const expect = value => {
   if (!['changed', 'unchanged'].includes(value)) throw Error('--expect accepts only changed or unchanged');
@@ -134,7 +149,7 @@ export function parse(argv) {
     if (repeated) throw Error(`--island has a duplicate node: ${repeated}`);
     if (o.islands.length > 500) throw Error('--island takes at most 500 nodes');
   }
-  if (v.lib !== undefined) o.libFiles = v.lib;
+  if (v.lib !== undefined) o.libFiles = v.lib.map(lib);
   if (v.data !== undefined) o.dataFile = v.data;
   // Accept ISO format only: timestamps require Z or a time-zone offset; date-only values mean midnight UTC, never a guessed local time zone.
   if (v.since !== undefined) {

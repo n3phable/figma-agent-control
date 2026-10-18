@@ -24,6 +24,7 @@ Behavioral tests for the implementation in this revision.
 - `html-suggest.test.mjs`: Tests for html suggest behavior in this revision.
 - `html-summary.test.mjs`: Tests for html summary behavior in this revision.
 - `html-zoom.test.mjs`: Tests for html zoom behavior in this revision.
+- `motion.test.mjs`: Tests for motion behavior in this revision.
 - `plugin-failure.test.mjs`: Tests for plugin failure behavior in this revision.
 - `plugin.test.mjs`: Tests for plugin behavior in this revision.
 - `png.test.mjs`: Tests for png behavior in this revision.

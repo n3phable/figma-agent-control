@@ -25,8 +25,8 @@ if (stale.length) {
 }
 
 // -- Two type environments ----------------------------------------------
-for (const project of ['tsconfig.json', 'plugin/tsconfig.json']) {
+for (const project of ['tsconfig.json', 'plugin/tsconfig.json', 'lib/tsconfig.json']) {
   const { status } = spawnSync(process.execPath, [path.join(root, 'node_modules/typescript/bin/tsc'), '-p', path.join(root, project)], { stdio: 'inherit' });
   if (status !== 0) { process.stderr.write(`Type check failed: ${project}\n`); process.exit(1); }
 }
-process.stdout.write('Type checks passed: tsconfig.json (bin, src), plugin/tsconfig.json (plugin/main.js)\n');
+process.stdout.write('Type checks passed: tsconfig.json (bin, src), plugin/tsconfig.json (plugin/main.js, extract.js), lib/tsconfig.json (lib/*.js)\n');

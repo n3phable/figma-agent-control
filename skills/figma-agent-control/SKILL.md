@@ -33,6 +33,8 @@ This skill defines the working order and recovery rules. Read the [agent guide](
 | Reusable helpers/parameters | Repeated `--lib` plus `--data`; small JSON can use `/dev/stdin` |
 | Related batch edits | One script looping over an input array |
 
+Never choose an unrelated small target merely to evade the snapshot budget. It would leave the actual writes outside before/after evidence. Motion is Beta/private API functionality; check availability rather than assuming it works on every account.
+
 ## Write scripts
 
 - The file is a function body with `figma`, `target`, `data`, and library functions; return structured results.

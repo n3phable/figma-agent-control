@@ -153,7 +153,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       let size = null;
       if (head.startsWith('\x89PNG')) { try { size = pngSize(bytes); } catch { size = null; } }
       const type = size ? 'png' : bytes[0] === 0xff && bytes[1] === 0xd8 ? 'jpg' : head.startsWith('GIF8') ? 'gif' : head.startsWith('RIFF') && bytes.subarray(8, 12).toString('latin1') === 'WEBP' ? 'webp'
-        : head.startsWith('%PDF') ? 'pdf' : /^\s*(?:<\?xml|<svg)/.test(bytes.subarray(0, 64).toString('utf8')) ? 'svg' : 'bin';
+        : head.startsWith('%PDF') ? 'pdf' : head.slice(4, 8) === 'ftyp' ? 'mp4' : head.startsWith('\x1a\x45\xdf\xa3') ? 'webm' : /^\s*(?:<\?xml|<svg)/.test(bytes.subarray(0, 64).toString('utf8')) ? 'svg' : 'bin';
       return { ...await writeFile(job, `files/output-${i + 1}.${type}`, bytes), type, ...(size ? { ...size, ...(job.operation === 'run' ? pixelSummary(bytes, budget) : {}) } : {}) };
     }));
     const used = new Set();

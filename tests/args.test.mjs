@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:util, ../src/args.mjs, ./helpers/harness.mjs.
+ * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:util, node:url, ../src/args.mjs, ./helpers/harness.mjs.
  * [OUTPUT]: Node.js test cases and fixture setup for this revision.
  * [POS]: Regression coverage for args; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -11,7 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { parse, COMMANDS } from '../src/args.mjs';
+import { fileURLToPath } from 'node:url';
+import { parse, COMMANDS, libName } from '../src/args.mjs';
 import { cliFile } from './helpers/harness.mjs';
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e', ID2 = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
@@ -268,4 +269,12 @@ test('CLI status in an uninitialized directory reports NO_SESSION and suggests i
   assert.equal(json.code, 'NO_SESSION');
   assert.match(json.error, /init/);
   assert.match(json.error, /connect/);
+});
+
+test('run --lib resolves bare names to bundled lib/<name>.js, preserves mixed local-file order, and suggests a path for unknown bundled names', () => {
+  const [local, motion] = opts('run', 'a.js', '--lib', 'outer.js', '--lib', 'motion').libFiles;
+  assert.deepEqual([local, motion], ['outer.js', fileURLToPath(new URL('../lib/motion.js', import.meta.url))]);
+  assert.throws(() => parse(['run', 'a.js', '--lib', 'nope']), /No built-in library named nope; give local files as a path, e\.g\. \.\/nope\.js/);
+  assert.deepEqual(opts('run', 'a.js', '--lib', './motion', '--lib', 'Motion.js').libFiles, ['./motion', 'Motion.js'], 'Paths or extensions select local files');
+  assert.deepEqual([libName(motion), libName(local), libName('scripts/motion.js')], ['lib:motion', 'outer.js', 'motion.js'], 'Traces name bundled libraries lib:<name> to distinguish same-named scripts');
 });

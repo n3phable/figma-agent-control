@@ -10,7 +10,7 @@ import path from 'node:path';
 import { init, json, pluginHome, installPlugin } from '../src/project.mjs';
 import { start, DEFAULT_PORT } from '../src/bridge.mjs';
 import { pairingToken } from '../src/session.mjs';
-import { COMMANDS, parse } from '../src/args.mjs';
+import { COMMANDS, parse, libName } from '../src/args.mjs';
 import { call, stop } from '../src/client.mjs';
 import { doctor } from '../src/doctor.mjs';
 import { localResult, summarizeRecord, exitCode, waitForResult } from '../src/record.mjs';
@@ -25,7 +25,7 @@ const out = value => process.stdout.write(JSON.stringify(value, null, 2) + '\n')
 const HELP = {
   commands: Object.values(COMMANDS).map(c => c.usage),
   script: 'The run script is a trusted JavaScript function body with access to figma, target (the --node node, default the bound node) and data (the --data JSON); return the result with return. Bytes anywhere in the return value (exportAsync results, also nested in arrays or objects) are saved as files and replaced in output by file descriptors, at most 200 per job and 48 MB in total. Mark nodes with setSharedPluginData("figmaagentcontrol", key, value); setPluginData is unavailable (the manifest has no Figma-assigned plugin ID). The plugin runs with documentAccess: dynamic-page, so reading mainComponent or calling sync APIs such as figma.getNodeById throws; use the async versions such as getMainComponentAsync and getNodeByIdAsync (mapping table in the dynamic-page constraints section of docs/agent-guide.md). Nodes made by create* are attached to the current page root; appendChild them into the target. When the target is not a page, pageRoot in the result lists the nodes added to or removed from the page root',
-  lib: '--lib is repeatable: each library executes in a separate enclosing scope, and the body can call its functions directly; same-name declarations shadow outer scopes without conflicts',
+  lib: '--lib is repeatable: each lib runs in its own outer scope and the script body can call its functions directly; same-name declarations in the body shadow the outer ones without conflict. A bare name refers to a built-in library: --lib motion provides readMotion, applyMotion, exportMotion and motionIssues (see the motion section of docs/agent-guide.md)',
   expect: '--expect changed|unchanged: export the target once before and once after the script and compare them to check whether the write changed the rendering; --tolerance sets the number of changed pixels allowed',
   cleanOnFail: 'When the script fails, the result lists the nodes it created on the target page that still exist (created); --clean-on-fail also deletes them (cleaned, cleanFailed) as a separate Undo step. Nodes that existed on the target page before the run, or created nodes containing such nodes, are not deleted. detachInstance and flatten give existing content new IDs, so it is deleted as created nodes; the result then also gives deletedExisting and a warning, and one Undo in Figma reverts the cleanup. Created components emit no creation event, are not in created and are never deleted. Modified existing nodes are not rolled back; execution is not atomic. Without --clean-on-fail, confirm the subtree with inspect, then run clean <job-id>: it re-checks each node\'s name, type, parent and subtree node count before deleting, skips mismatches (exit code 1), deletes as a separate Undo step, and is safe to re-run',
   output: 'stdout carries exactly one JSON object: submitting commands wait for the result by default and print a summary (id, output, resultFile; preview also gives images[].name and absolute paths images[].file); --full prints the full record (return value in .result.output, image paths relative to evidence); --no-wait only submits. When the script throws, the summary includes trace (the failing lib or script file, line number and source; the first entry is where it threw). '
@@ -43,7 +43,7 @@ async function submit(command, [file], o) {
   if (command === 'run') {
     body.code = await fs.readFile(path.resolve(file), 'utf8');
     body.label = path.basename(file);
-    if (o.libFiles) body.libs = await Promise.all(o.libFiles.map(async lib => ({ name: path.basename(lib), code: await fs.readFile(path.resolve(lib), 'utf8') })));
+    if (o.libFiles) body.libs = await Promise.all(o.libFiles.map(async lib => ({ name: libName(lib), code: await fs.readFile(path.resolve(lib), 'utf8') })));
     if (o.dataFile) body.data = await json(path.resolve(o.dataFile));
   }
   const { ok, data } = await call(cwd, '/job', body);

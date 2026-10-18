@@ -244,6 +244,40 @@ figma-agent-control run export.js --depth 1 > out.json 2> receipt.log
 
 不要把导出内容转成 base64 字符串。任意嵌套的字节值走独立二进制通道：每任务最多 200 项，含画面判定图片在内的 base64 总量最多 48 MB。过大的字符串结果可能丢失整个返回值。大批量降低倍率或拆批。`useAbsoluteBounds:true` 按节点盒子导出，普通预览可能包含盒外投影。
 
+## 动效
+
+使用 `--lib motion` 访问 Figma Motion 的 Beta/private API。生成的 manifest 开启 `enablePrivatePluginApi`；接口能否使用及其行为取决于 Figma 和账户。完整约定见[协议中的 MotionSpec](protocol.md#motionspec)。
+
+```sh
+printf '%s\n' 'return readMotion(target)' > read-motion.js
+printf '%s\n' 'return exportMotion(target)' > export-motion.js
+figma-agent-control run read-motion.js --lib motion --node 12:34 --depth 1 > motion-old.json
+jq '.output | del(.issues)' motion-old.json > motion.json
+```
+
+编辑 `motion.json` 后，用这样的脚本应用：
+
+```js
+// apply-motion.js
+const before = (await exportMotion(target)).video;
+const result = await applyMotion(data);
+try {
+  return { ...result, video: (await exportMotion(target, undefined,
+    { differentFrom: before, waitSeconds: 200 })).video };
+} catch (error) {
+  // 写入已完成，稍后只重试视频导出。
+  return { ...result, exportError: String(error.message) };
+}
+```
+
+先读后改。原样 spec 不产生写入；省略节点或字段则保持原状，新增预设不写 `id`。关键帧为 `[秒,值,缓动?]`，缓动作用于**以该关键帧结束**的一段；第一帧的缓动不生效。优先以 `$name` 使用已有 EASING 变量，自定义样式用 `@name`。
+
+应修正 `beyond-timeline`、`first-key-easing`、`static-track`、`track-conflict`。时长、尾部空闲、原始/不一致缓动、交错间隔等由设计意图决定。`readMotion(target,{durationRange:[0.1,1]})` 可调整时长检查范围。
+
+在快照预算内，写入以顶层画框为目标且不声明浅深度。变更集可记录 `manualKeyframeTracks`、`animationStyles`、`timelines`。组件/变体集本身不能写动效，其子图层可以；实例子图层继承动效、不能直接改，实例本身可以。不要未经授权就 detach 实例来绕过限制。
+
+其他开发观察：关键帧不更新静态 `x`/`opacity`；超出时间线的动效可能被接受，但播放会截断；旋转以节点中心为轴，正值逆时针；第一帧之前使用该帧的值。COLOR 关键帧为 RGBA，不是颜色变量别名。依赖 TIMING 变量单位或 Beta 行为前，应在当前编辑器中核验。
+
 ## 导出 HTML
 
 `html` 生成固定尺寸、资源内联的 HTML，并与同一次 extract 的参考 PNG 比较。比对需要 Chrome；`--no-check` 只生成。[HTML 协议](protocol.md#html-导出)定义清单与诊断。
@@ -335,6 +369,8 @@ figma-agent-control resolve <original-job-id> --inspect <inspect-job-id> --previ
 - Plugin API 操作在当前 Figma 文件中进行；处理另一个文件时使用独立绑定。
 
 - 云端同步在 Figma 中检查。
+
+- Motion 需要账户开放 Beta/private API，字体发现当前搜索 macOS 目录；真实 Desktop 验收与自动测试分别记录。
 
 - 插件数据使用命名空间 `setSharedPluginData`，适用于生成的开发插件 manifest。
 

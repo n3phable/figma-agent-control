@@ -244,6 +244,40 @@ Read `.output[].png.file` from the raw `result.json`, relative to the evidence d
 
 Do not base64-encode exports into strings. Byte values nested anywhere in the result use a separate binary channel: at most 200 items and 48 MB of total base64 payload, including visual-check images. Oversized string results can lose the whole return value. Lower scale or split a large batch. `useAbsoluteBounds: true` exports the node's box; ordinary previews can include shadows outside it.
 
+## Motion
+
+Use `--lib motion` for Figma Motion, a Beta/private API surface. The generated manifest enables `enablePrivatePluginApi`; availability and behavior depend on Figma and the account. See [MotionSpec](protocol.md#motionspec) for the complete contract.
+
+```sh
+printf '%s\n' 'return readMotion(target)' > read-motion.js
+printf '%s\n' 'return exportMotion(target)' > export-motion.js
+figma-agent-control run read-motion.js --lib motion --node 12:34 --depth 1 > motion-old.json
+jq '.output | del(.issues)' motion-old.json > motion.json
+```
+
+Edit `motion.json`, then apply it with a script such as:
+
+```js
+// apply-motion.js
+const before = (await exportMotion(target)).video;
+const result = await applyMotion(data);
+try {
+  return { ...result, video: (await exportMotion(target, undefined,
+    { differentFrom: before, waitSeconds: 200 })).video };
+} catch (error) {
+  // The write completed; retry only the video export later.
+  return { ...result, exportError: String(error.message) };
+}
+```
+
+Read before editing. An unchanged spec performs no writes. Omitted nodes and keys stay untouched; new presets omit `id`. Keyframes are `[seconds, value, easing?]`, with easing on the segment **ending** at that keyframe. Easing on the first key has no effect. Prefer existing EASING variables through `$name`; custom styles use `@name`.
+
+Fix `beyond-timeline`, `first-key-easing`, `static-track`, and `track-conflict` findings. Treat duration, idle-tail, raw/inconsistent easing, and stagger findings as design judgments. `readMotion(target, {durationRange: [0.1, 1]})` adjusts the duration check.
+
+Write to a top-level frame without a shallow depth when its subtree fits the snapshot budget. Changes to `manualKeyframeTracks`, `animationStyles`, and `timelines` appear in the change set. Components and variant sets themselves cannot receive animation writes; their child layers can. Instance sublayers inherit motion and cannot be edited directly; instances themselves can. Do not detach an instance merely to bypass this limitation without authorization.
+
+Additional observed Motion behavior: keyframes do not update static `x`/`opacity`; animation beyond the timeline is accepted but truncated in playback; rotation uses the node center and positive values rotate counterclockwise; values before the first key equal that key's value. COLOR keyframe values are RGBA rather than color-variable aliases. Verify TIMING-variable units and Beta API details in the current editor before depending on them.
+
 ## Exporting HTML
 
 `html` generates fixed-size, self-contained HTML and compares it with a reference PNG from the same extract. Chrome is required for comparison; `--no-check` only generates. The [HTML protocol](protocol.md#html-export) defines the manifest and diagnostics.
@@ -335,6 +369,8 @@ The flag is an assertion that the previous plugin has actually stopped. The insp
 - Plugin API operations work within the current Figma file. Use a separate binding to work in another file.
 
 - Check cloud synchronization in Figma.
+
+- Motion requires the account's Beta/private APIs. Font discovery currently searches macOS directories; live Desktop acceptance is recorded separately from automated tests.
 
 - Store plugin data with namespaced `setSharedPluginData`, which works with the generated development manifest.
 

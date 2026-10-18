@@ -127,6 +127,10 @@ Writes take effect as the script runs. After failure, read `instruction` and `ex
 
 Licensed under the [MIT License](LICENSE). See third-party notices for included material. Maintained by [n3phable](https://github.com/n3phable).
 
+## Motion scripts
+
+Use --lib motion to read, apply and export MotionSpec data through readMotion, applyMotion, exportMotion and motionIssues. See the agent guide for the script workflow.
+
 ## Connection scope
 
 The bridge uses port 32523. Keep only one project bridge active on the machine. The globally installed plugin can reconnect after a bridge restart; stop the previous project before connecting another.

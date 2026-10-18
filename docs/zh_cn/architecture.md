@@ -33,6 +33,8 @@ Figma Desktop: ui.html（iframe 中继）
 | iframe | 网络中继、连接/确认/状态面板 | 不能访问文档 |
 | 执行端 | Plugin API、快照、脚本、读取和导出 | 不发送 HTTP，通过 iframe 中继 |
 
+这种拆分遵循 Figma 插件环境。iframe 提供超时、可见性和长轮询所需的完整浏览器能力；文档操作留在插件运行时。生成的 manifest 只允许localhost 开发端口 32523，使用 dynamic-page，并为 Motion 等功能开启 private plugin API。Motion 的可用性随当前 Figma 版本和账户权限而定。
+
 ### 凭证与版本
 
 [bridge.mjs](../../src/bridge.mjs)按路由区分 CLI 和插件角色，各自只接受自己的凭证。CLI 凭证每次桥接启动重新生成，存在权限为 `0600` 的项目 session 文件中。插件凭证经 [session.mjs](../../src/session.mjs)独占创建，保存在全局 pairing 文件并注入 iframe。
@@ -53,7 +55,7 @@ iframe 在接受确认或结果前，逐条核对任务 ID 和随机 nonce。
 
 ## 模块结构
 
-主机侧依赖无环。完整成员清单见 [src/AGENTS.md](../../src/AGENTS.md)、[src/html/AGENTS.md](../../src/html/AGENTS.md)、[plugin/AGENTS.md](../../plugin/AGENTS.md) 和 lib/AGENTS.md。
+主机侧依赖无环。完整成员清单见 [src/AGENTS.md](../../src/AGENTS.md)、[src/html/AGENTS.md](../../src/html/AGENTS.md)、[plugin/AGENTS.md](../../plugin/AGENTS.md) 和 [lib/AGENTS.md](../../lib/AGENTS.md)。
 
 `project` 不依赖内部模块；`connection` 是时钟可注入的纯内存状态；`png` 只用 zlib。桥接与 HTML 不互相 import：bridge/record 仅在 JSDoc 中引用共享 extract 类型。HTML 经 client 提交、经 record 读回。两侧共用的中断原因放在 session，避免循环依赖。
 
@@ -158,6 +160,7 @@ overrides 是唯一支持的手工修正入口。文件先整体校验，basis �
 |---|---|
 | [主机 tsconfig](https://github.com/n3phable/figma-agent-control/blob/main/tsconfig.json) | Node 模块与共享提取契约，不注入 Figma 全局 |
 | [插件 tsconfig](../../plugin/tsconfig.json) | 带 Figma 全局的经典脚本 main/extract，不允许 Node API |
+| [Motion tsconfig](../../lib/tsconfig.json) | Motion 库与注入的 target/data 声明 |
 
 [提取契约](../../src/html/extract-contract.d.ts)区分插件字节、传输占位和落盘文件。外部 JSON 和动态 API 字段仍需断言，类型不能单独验证真实 Figma 行为。可选 `node tests/contract-samples.mjs <runs-directory>` 检查明确提供的提取证据，不需要或附带私有语料。
 

@@ -33,6 +33,8 @@ Figma Desktop: ui.html (iframe relay)
 | Iframe | Network relay, connection/approval/status UI | Cannot access the document |
 | Execution code | Plugin API access, snapshots, scripts, reads, and exports | Sends no HTTP requests; relays through the iframe |
 
+The split follows Figma's plugin environment. The iframe offers the full browser fetch/visibility behavior needed for timeouts and long polling; document execution remains in the plugin runtime. The generated manifest allows only the localhost development port 32523, uses dynamic-page access, and enables private plugin APIs for functionality such as Motion. Motion availability follows the current Figma version and account access.
+
 ### Credentials and versions
 
 [bridge.mjs](../src/bridge.mjs) assigns routes to CLI or plugin roles. Each role accepts only its credential. The CLI credential is freshly generated for each bridge startup and stored in the project's mode-0600 session file. The plugin credential is created exclusively once through [session.mjs](../src/session.mjs), stored in the shared pairing file, and injected into the iframe.
@@ -53,7 +55,7 @@ The iframe matches each task message against its ID and random nonce before acce
 
 ## Module structure
 
-The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.md](../src/AGENTS.md), [src/html/AGENTS.md](../src/html/AGENTS.md), [plugin/AGENTS.md](../plugin/AGENTS.md), and lib/AGENTS.md.
+The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.md](../src/AGENTS.md), [src/html/AGENTS.md](../src/html/AGENTS.md), [plugin/AGENTS.md](../plugin/AGENTS.md), and [lib/AGENTS.md](../lib/AGENTS.md).
 
 `project` has no internal dependencies. `connection` is pure in-memory state with an injectable clock. `png` uses only zlib. Bridge and HTML do not import each other: the bridge/record reference the shared extract type contract only through JSDoc. HTML submits through client and reads records. Shared interruption reasons live in session because both sides need them without a circular dependency.
 
@@ -158,6 +160,7 @@ Runtime executes `.mjs`/`.js` source directly; JSDoc is checked with lockfile-pi
 |---|---|
 | [Host tsconfig](https://github.com/n3phable/figma-agent-control/blob/main/tsconfig.json) | Node modules and shared extract contract, without Figma globals |
 | [Plugin tsconfig](../plugin/tsconfig.json) | Classic-script main/extract with Figma globals, without Node APIs |
+| [Motion tsconfig](../lib/tsconfig.json) | Motion helper with injected target/data declarations |
 
 The [extract contract](../src/html/extract-contract.d.ts) distinguishes plugin byte arrays, transport placeholders, and landed files. External JSON and dynamic API field access still require assertions; types alone cannot validate real Figma behavior. The optional `node tests/contract-samples.mjs <runs-directory>` checks explicitly supplied extract evidence against the type contract. It does not require or ship a private corpus.
 

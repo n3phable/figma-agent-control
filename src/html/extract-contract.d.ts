@@ -160,7 +160,7 @@ export interface BinaryFile {
   file: string;
   bytes: number;
   sha256: string;
-  type: 'png' | 'jpg' | 'gif' | 'webp' | 'pdf' | 'svg' | 'bin';
+  type: 'png' | 'jpg' | 'gif' | 'webp' | 'pdf' | 'svg' | 'mp4' | 'webm' | 'bin';
   width?: number;
   height?: number;
 }

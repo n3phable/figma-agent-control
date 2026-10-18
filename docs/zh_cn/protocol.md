@@ -74,6 +74,8 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 | `requestId` | 全部 | 用作任务 ID 的小写 UUID；CLI 在 `run` 上开放该参数 |
 | `label` | 全部 | 报告中的来源名；CLI 使用脚本文件名，或 `clean <original-id>` |
 
+CLI 在提交前把裸名 `--lib motion` 解析为内置文件。桥接和插件只接收普通的具名源码字符串，不区分内置库与用户库。
+
 重复的 request ID 以 HTTP `200` 和 `reused:true` 返回原任务。绑定、操作、源码、库、目标、深度、nodes、倍率、data、实际生效的高风险原因、expect、tolerance、islands、cleanup 和 names 必须完全相同，否则返回 `400`。省略 cleanup 与显式 `false` 等价；省略目标与显式传入绑定节点不等价。`label` 不参与比较。该身份检查先于临时拒绝条件，因此即使断连或繁忙，重复请求仍可取回原任务。
 
 | 新提交条件 | 响应 |
@@ -224,6 +226,8 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 
 节点换父级，或不在前后兄弟节点的最长共同保序子序列中时，记为移动。插入/删除一个兄弟节点不会把其他所有兄弟都记为移动；交换两个兄弟只记一个。updated、created、deleted、moved 各最多展开五十个节点，其余通过 `omitted` 计数。逐节点 `keys` 不包含位置字段。
 
+显式深度会追加 `limitation`，更深处的变化不可见。可用时，快照包含非空 Motion 样式、轨道和所属画框的时间线。修改后快照发生未声明的深度截断，或超出节点预算时，变更集不可用。如果执行失败后，修改后快照也过大，`changes` 与 `after` 场景可能同时缺失，此时应使用 inspect。
+
 比较只覆盖目标子树。通过 `figma` 对目标之外的写入不会被直接观察；页面根直接子节点的增删另由 `pageRoot` 比较记录。
 
 ### 画面核验
@@ -287,6 +291,61 @@ iframe 与执行代码使用 postMessage。每个任务都有随机 `channelNonc
 包括快照和 base64 在内，超过 65,536 个 JavaScript 字符串字符的任务消息使用 `serialized-result` 封装。结构化部分超过约 16 MB、桥接返回 `413`，或同一完成回传累计收到三次 `400` 时，iframe 改用精简失败证据。其他失败不重置拒收计数，`409 FOREIGN_JOB` 永不触发降级。精简结果保留执行状态、核验后的绑定、脚本失败清理列表、新建资源、警告和 stack。
 
 有待回传结果时，iframe 发送 `/complete` 而非心跳。轮询超时为 15 秒；结果回传为三秒加上每 10 MB 载荷一秒；其他请求为三秒。
+
+## 动效
+
+[lib/motion.js](../../lib/motion.js) 在普通 `run --lib motion` 任务中执行，不增加桥接操作，沿用 run 的写前检查点、Undo 边界和变更集。Motion 属于 Beta/私有 API；清单开启了私有 API 访问，但 Figma 是否提供该能力不由 FAC 控制。
+
+### MotionSpec
+
+| 函数 | 返回值 |
+|---|---|
+| `readMotion(root = target, {durationRange}?)` | 按时间线分组的 MotionSpec，附带 `issues` |
+| `applyMotion(spec = data, root = target)` | `{changes,motion}`；统计 `tracksWritten`、`tracksRemoved`、`stylesApplied`、`stylesRemoved`、`durations`，然后重读 |
+| `exportMotion(node = target, settings = {format:'WEBM',quality:'LOW'}, {waitSeconds=60,intervalMs=3000,differentFrom}?)` | `{frame,video,attempts,waitedMs}`；视频字节按普通二进制流程落盘 |
+| `motionIssues(spec, {durationRange=[0.1,0.5],easingTokens=[]}?)` | 问题数组；readMotion 已包含它 |
+
+```json
+{
+  "timelines":[{"id":"12:34","name":"Card entrance","duration":0.6,"nodes":[
+    {"id":"12:35","name":"card","tracks":{"OPACITY":{"base":1,"keys":[[0,0],[0.3,1,"$motion/standard"]]}},
+     "styles":[{"id":"AnimationPresetId:12:40","preset":"Position","at":0.08,"dur":0.3,"easing":"spring(0.3)","props":{"direction":"bottom","distance":24}}]},
+    {"id":"I12:9;1:4","name":"spinner","inherited":true,"tracks":{"ROTATION":{"base":0,"keys":[[0,0],[1,360]]}}}
+  ]}],
+  "refs":{"$motion/standard":"VariableID:12:50"},
+  "issues":[]
+}
+```
+
+- 时间线 ID 属于其顶层画框或 Section。时长与关键帧时间均以秒计。根节点自己的时间线即使为空也会列出；其他时间线只有包含动效时才列出。
+
+- 轨道路径包括属性名（`OPACITY`、`TRANSLATION_X`）、`fills.0`、`strokes.1`、`effects.0.RADIUS`，以及 `fills.0.properties.<property-id>` 这样的组件属性路径。
+
+- 值使用数字、布尔值、`[x,y]`、`#RRGGBB` / `#RRGGBBAA`；其他类型保留原 `{type,value}` 对象。关键帧为 `[seconds,value,easing?]`。
+
+- 缓动控制以该关键帧结束的区间。支持的短记法包括 `linear`、标准 ease-in/out/back 变体、`hold`、`gentle`、`quick`、`bouncy`、`slow`、`cubic(x1,y1,x2,y2)`、`spring(bounce)` 和 `$variable-name`。未知形式保留原始对象。读取时省略默认手动缓动 `cubic(0.5,0,0.5,1)`。
+
+- 预设使用 `{id,preset,at,dur,easing?,props?}`，`preset` 来自 `figma.motion.figmaAnimationStyles()`。默认 props，以及跟随时间线偏移的 delay 会省略。自定义样式使用 `{id,style:"@name",at}`；新样式省略 `id`。
+
+- `refs` 把 `$` / `@` 记法映射到确切 ID；apply 先查 refs，再查本地名称。变量重名时添加 `#ID` 后缀。实例内部图层标记为 `inherited`。
+
+Apply 是声明式写入：列出的节点只要提供 `tracks` 或 `styles`，就完整同步对应字段，删除多余项，只写实际差异。省略的字段和节点不动。变化的时间线时长会写入。输入未变时不写入，包括只读的继承项和组件项。
+
+视频导出先找到所属顶层画框。遇到 `Video export failed` 时重试；提供 `differentFrom` 时，逐字节相同的导出也会重试。等待有上限，其他错误立即失败。视频导出可能滞后于文档修改：可见改动使用 `differentFrom` 并检查采样帧；应保持画面的改动省略该选项。
+
+问题形状为 `{rule,timeline,node?,message}`，检查不会修改数据：
+
+| 规则 | 含义 |
+|---|---|
+| `beyond-timeline` | 关键帧/预设超过播放或导出时长 |
+| `first-key-easing` | 第一个关键帧上的缓动不起作用 |
+| `static-track` | 少于两个关键帧 |
+| `track-conflict` | 预设与手动轨道竞争同一属性，或同类预设时间重叠 |
+| `duration-range` | 实际运动时长超出配置范围；hold/静止区间会分隔动画段；`null` 关闭此检查 |
+| `idle-tail` | 动效结束后还剩超过 0.5 秒且超过时间线四分之一的空转；时长未知的自定义样式不检查 |
+| `raw-easing` | 已存在 EASING 变量，但变化区间使用原始缓动；hold/静止区间不计 |
+| `inconsistent-easing` | 同预设/类型使用不同缓动 |
+| `irregular-stagger` | 至少三个同预设/类型/时长节点的偏移间隔不均匀 |
 
 ## HTML 导出
 
@@ -494,3 +553,7 @@ HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内
 ## 准备阶段顺序
 
 当前目标复核发生在前图导出及后续准备读取之前。准备期间保持目标不变。
+
+## 动效回滚值
+
+回滚从先前解析的 spec 重建写入。报错后应检查变量身份与数值。

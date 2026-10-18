@@ -74,6 +74,8 @@ The caller must use the CLI role.
 | `requestId` | All | Lowercase UUID used as the job ID; the CLI exposes it on `run` |
 | `label` | All | Source name for reports; CLI uses the script basename, or `clean <original-id>` |
 
+The CLI resolves a bare `--lib motion` to its bundled file before submission. The bridge and plugin receive ordinary named source strings and do not distinguish built-in libraries from user libraries.
+
 A repeated request ID returns the original job with HTTP `200` and `reused:true`. Binding, operation, source, libraries, target, depth, nodes, scale, data, effective high-risk reason, expectation, tolerance, islands, cleanup, and names must remain identical or submission returns `400`. Omitted cleanup and `false` are equivalent; an omitted target and an explicitly supplied bound node are not. `label` is not compared. This identity check precedes transient rejection conditions, so a repeated request can still retrieve its original job while disconnected or busy.
 
 | New-submission condition | Response |
@@ -224,6 +226,8 @@ Before/after snapshots produce `counts.created`, `deleted`, `moved`, `updated`, 
 
 A move changes parent or falls outside the longest common ordered sibling subsequence. Inserting/deleting a sibling does not mark every other sibling as moved; swapping two siblings marks one. Up to fifty changed/created/deleted/moved nodes are expanded, with `omitted` for the remainder. Position keys are omitted from per-node `keys`.
 
+Explicit depth adds a `limitation`; deeper changes are invisible. Nonempty Motion styles, tracks, and owner-frame timelines are snapshotted when available. An undeclared after-snapshot depth truncation or node-budget overflow makes the change set unavailable. After an execution failure with an oversized after snapshot, both `changes` and the `after` scene can be absent; use inspect.
+
 Only the target subtree is compared. Out-of-target writes through `figma` are not directly observed; direct page-root additions/deletions have the separate `pageRoot` comparison.
 
 ### Visual verification
@@ -283,6 +287,61 @@ The iframe and execution code use postMessage. Each job has a random `channelNon
 Job messages above 65,536 JavaScript string characters, including snapshots and base64, use a `serialized-result` envelope. The iframe falls back to compact failure evidence when the structured portion exceeds about 16 MB, the bridge returns `413`, or the same completion receives three cumulative `400` responses. Other failures do not reset the rejection count. `409 FOREIGN_JOB` never triggers degradation. The compact result retains execution state, verified binding, script-failure cleanup lists, new assets, warnings, and stack.
 
 While a result is awaiting delivery, the iframe sends `/complete` rather than heartbeats. Request deadlines are 15 seconds for polling, three seconds plus one second per 10 MB of completion payload, and three seconds for other requests.
+
+## Motion
+
+[lib/motion.js](../lib/motion.js) runs inside ordinary `run --lib motion` jobs. It adds no bridge operation, and inherits run checkpoints, Undo boundaries, and change sets. Motion is a Beta/private API surface; the manifest enables private API access, but Figma availability remains external to FAC.
+
+### MotionSpec
+
+| Function | Return value |
+|---|---|
+| `readMotion(root = target, {durationRange}?)` | MotionSpec grouped by timeline, with `issues` |
+| `applyMotion(spec = data, root = target)` | `{changes,motion}`; counts `tracksWritten`, `tracksRemoved`, `stylesApplied`, `stylesRemoved`, `durations`, then rereads |
+| `exportMotion(node = target, settings = {format:'WEBM',quality:'LOW'}, {waitSeconds=60,intervalMs=3000,differentFrom}?)` | `{frame,video,attempts,waitedMs}`; video bytes use normal binary landing |
+| `motionIssues(spec, {durationRange=[0.1,0.5],easingTokens=[]}?)` | Issue array; readMotion already includes it |
+
+```json
+{
+  "timelines":[{"id":"12:34","name":"Card entrance","duration":0.6,"nodes":[
+    {"id":"12:35","name":"card","tracks":{"OPACITY":{"base":1,"keys":[[0,0],[0.3,1,"$motion/standard"]]}},
+     "styles":[{"id":"AnimationPresetId:12:40","preset":"Position","at":0.08,"dur":0.3,"easing":"spring(0.3)","props":{"direction":"bottom","distance":24}}]},
+    {"id":"I12:9;1:4","name":"spinner","inherited":true,"tracks":{"ROTATION":{"base":0,"keys":[[0,0],[1,360]]}}}
+  ]}],
+  "refs":{"$motion/standard":"VariableID:12:50"},
+  "issues":[]
+}
+```
+
+- A timeline ID belongs to its top-level frame or Section. Durations and key times are seconds. The root's own timeline is included even when empty; other timelines require motion content.
+
+- Track paths include property names (`OPACITY`, `TRANSLATION_X`), `fills.0`, `strokes.1`, `effects.0.RADIUS`, and component property paths such as `fills.0.properties.<property-id>`.
+
+- Values use numbers, booleans, `[x,y]`, `#RRGGBB` / `#RRGGBBAA`, or unchanged `{type,value}` objects for other kinds. Keys are `[seconds,value,easing?]`.
+
+- Easing controls the segment ending at the keyframe. Supported shorthand includes `linear`, standard ease-in/out/back variants, `hold`, `gentle`, `quick`, `bouncy`, `slow`, `cubic(x1,y1,x2,y2)`, `spring(bounce)`, and `$variable-name`. Unknown forms preserve their raw object. The default manual easing `cubic(0.5,0,0.5,1)` is omitted on read.
+
+- Presets use `{id,preset,at,dur,easing?,props?}`. `preset` comes from `figma.motion.figmaAnimationStyles()`. Default props and delay following the timeline offset are omitted. Custom styles use `{id,style:"@name",at}`. New styles omit `id`.
+
+- `refs` maps `$` / `@` notation to exact IDs; apply tries refs before local names. Duplicate variable names get an `#ID` suffix. Instance sublayers are marked `inherited`.
+
+Apply is declarative: supplied `tracks` or `styles` fully reconcile that field for the listed node, deleting extras and changing only differences. Omitted fields/nodes remain untouched. Changed timeline durations are written. Unchanged input causes no writes, including read-only inherited or component entries.
+
+Video export finds the enclosing top-level frame. It retries `Video export failed`; with `differentFrom`, byte-identical exports also retry. The wait is bounded, and other errors fail immediately. Since video export can lag behind document edits, use `differentFrom` for visible changes and inspect the sampled frames. Omit it for edits intended to preserve appearance.
+
+Issues have `{rule,timeline,node?,message}` and do not modify data:
+
+| Rule | Meaning |
+|---|---|
+| `beyond-timeline` | Keys/presets extend beyond playback/export duration |
+| `first-key-easing` | Easing on the first key has no effect |
+| `static-track` | Fewer than two keys |
+| `track-conflict` | Competing preset/manual property or overlapping same-kind presets |
+| `duration-range` | Active motion outside the configured range; holds/static spans split runs; `null` disables |
+| `idle-tail` | More than 0.5 s and one-quarter of the timeline remains after motion; skipped for unknown-duration custom styles |
+| `raw-easing` | EASING variables exist but a changing segment uses a raw easing; holds/static segments excluded |
+| `inconsistent-easing` | Same preset/type uses different easing |
+| `irregular-stagger` | At least three same-preset/type/duration nodes have uneven offsets |
 
 ## HTML export
 
@@ -490,3 +549,7 @@ The bridge uses port 32523. Keep only one project bridge active on the machine. 
 ## Preparation ordering
 
 Target revalidation currently precedes the before-render and later preparation reads. Keep the target unchanged throughout preparation.
+
+## Motion rollback values
+
+Rollback reconstructs writes from the prior parsed spec. Inspect variable identities and numeric values after an error.

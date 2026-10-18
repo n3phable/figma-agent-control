@@ -127,6 +127,10 @@ figma-agent-control stop
 
 本项目采用 [MIT License](LICENSE)。所含材料的说明见第三方声明。由 [n3phable](https://github.com/n3phable) 维护。
 
+## 动效脚本
+
+使用 --lib motion，通过 readMotion、applyMotion、exportMotion 和 motionIssues 读取、应用并导出 MotionSpec；脚本流程见使用指南。
+
 ## 连接范围
 
 桥接使用端口 32523，同一台机器只保留一个项目桥接运行。全局插件可在桥接重启后重连；连接另一个项目前先停止原项目。
