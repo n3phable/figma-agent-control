@@ -12,6 +12,7 @@ Host-side command, bridge and evidence modules.
 - `client.mjs`: CLI-side HTTP requests and bridge lifecycle calls.
 - `connection.mjs`: Plugin instance lease state.
 - `doctor.mjs`: Read-only diagnosis of local setup and connection state.
+- `frames.mjs`: Sample exported videos in Chrome and write contact sheets.
 - `html/`: Host HTML and image-comparison modules available in this revision.
 - `image-diff.mjs`: Offline PNG or preview-evidence comparison.
 - `png.mjs`: PNG codec and strict pixel-change statistics.

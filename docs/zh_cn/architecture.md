@@ -57,6 +57,25 @@ iframe 在接受确认或结果前，逐条核对任务 ID 和随机 nonce。
 
 主机侧依赖无环。完整成员清单见 [src/AGENTS.md](../../src/AGENTS.md)、[src/html/AGENTS.md](../../src/html/AGENTS.md)、[plugin/AGENTS.md](../../plugin/AGENTS.md) 和 [lib/AGENTS.md](../../lib/AGENTS.md)。
 
+```text
+bin -> args / client / bridge / session / record / clean / doctor
+    -> report / image-diff / frames / html.command / project
+
+bridge -> connection / session / png / record / project
+client -> session / project
+clean -> record / project
+record / args / report / session -> project
+image-diff -> png / record / project
+frames -> png / record / project / html.chrome
+doctor -> client / session / project / html.chrome
+
+html.command -> extracts / page / overrides / summary / check / chrome
+html.extracts -> client / record / session / project
+html.page -> generate / fonts / match / png / project
+html.generate -> css
+html.check -> match / attrib / shift / layout / structure / suggest / zoom
+```
+
 `project` 不依赖内部模块；`connection` 是时钟可注入的纯内存状态；`png` 只用 zlib。桥接与 HTML 不互相 import：bridge/record 仅在 JSDoc 中引用共享 extract 类型。HTML 经 client 提交、经 record 读回。两侧共用的中断原因放在 session，避免循环依赖。
 
 ### 主机侧职责
@@ -71,6 +90,7 @@ iframe 在接受确认或结果前，逐条核对任务 ID 和随机 nonce。
 | [record](../../src/record.mjs) | 所有读取方共用证据、摘要、退出码和下一步解释，等待从不重提 |
 | [clean](../../src/clean.mjs) | 把已有失败证据变成普通 run，复用写入保障，不新增操作 |
 | [doctor](../../src/doctor.mjs) | 桥接不可达时仍可只读诊断绑定、锁和安装问题 |
+| [png](../../src/png.mjs)、[image-diff](../../src/image-diff.mjs)、[frames](../../src/frames.mjs) | 主机分析独立于文档执行，导出证据可离线检查 |
 | [report](../../src/report.mjs) | 只聚合完成证据，不改会话或任务状态 |
 
 ### 插件与库

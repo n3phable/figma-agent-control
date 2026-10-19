@@ -21,7 +21,7 @@ export const COMMANDS = {
   connect: { usage: 'connect: start the local bridge in the foreground (stop with Ctrl-C or stop)', positionals: [0, 0], options: {} },
   stop: { usage: 'stop [--force]: stop only the local bridge process; does not modify the Figma document or affect cloud sync; requires --force while a job is unfinished (queued or running); exit code 2 if still shutting down after about 5 s, confirm later with status', positionals: [0, 0], options: { force: { type: 'boolean' } } },
   status: { usage: 'status: live status of the bridge and plugin', positionals: [0, 0], options: {} },
-  doctor: { usage: 'doctor: diagnose binding, session, lock, plugin files and connection; also report Chrome, required only by html commands', positionals: [0, 0], options: {} },
+  doctor: { usage: 'doctor: diagnose binding, session, lock, plugin files and connection step by step; also reports Chrome (needed only by the html commands and frames)', positionals: [0, 0], options: {} },
   run: { usage: 'run <script.js> [--node <ID>] [--lib <file.js|builtin-name>]... [--data <file.json>] [--depth <1-31>] [--expect changed|unchanged] [--tolerance <pixels>] [--scale <0.1-4>] [--request-id <uuid>] [--high-risk <reason>] [--clean-on-fail] [--timeout <seconds>] [--no-wait] [--full]',
     positionals: [1, 1], submit: true, options: { ...node, lib: { type: 'string', multiple: true }, data: { type: 'string' }, depth: { type: 'string' }, expect: { type: 'string' }, tolerance: { type: 'string' },
       scale: { type: 'string' }, 'request-id': { type: 'string' }, 'high-risk': { type: 'string' }, 'clean-on-fail': { type: 'boolean' }, ...wait } },
@@ -38,6 +38,9 @@ export const COMMANDS = {
   wait: { usage: 'wait <job-id> [--timeout <seconds>] [--full]: wait for the original result without resubmitting', positionals: [1, 1], options: { timeout: { type: 'string' }, full: { type: 'boolean' } } },
   resolve: { usage: 'resolve <original-job-id> --inspect <inspect-job-id> --previous-plugin-stopped: after verification, end the unresolved wait without replaying the script', positionals: [1, 1],
     options: { inspect: { type: 'string' }, 'previous-plugin-stopped': { type: 'boolean' } } },
+  frames: { usage: 'frames <video.webm|.mp4|run-id> [--at <seconds,seconds,...>] [--count <2-24>] [--compare <video|run-id>]: sample video in Chrome and produce a timestamped PNG contact sheet, using 8 evenly spaced frames by default; '
+    + '--compare samples another video at the same times and compares each frame, with source above comparison in each cell; a job ID must identify a successful run returning exactly one video', positionals: [1, 1],
+    options: { at: { type: 'string' }, count: { type: 'string' }, compare: { type: 'string' } } },
   'image-diff': { usage: 'image-diff <before.png|preview-job-id> <after.png|preview-job-id> [--threshold <0-255>] [--expect changed|unchanged]', positionals: [2, 2],
     options: { threshold: { type: 'string' }, expect: { type: 'string' } } },
   report: { usage: 'report [--since <ISO-time>]: summary of job durations, gaps and repeated runs (default: last 24 hours; a date alone means UTC midnight)', positionals: [0, 0], options: { since: { type: 'string' } } },
@@ -87,12 +90,12 @@ const expect = value => {
 /** @typedef {{ node?: string | string[], name?: string[], lib?: string[], island?: string[], data?: string, depth?: string, expect?: string, tolerance?: string, scale?: string,
  *   'request-id'?: string, 'high-risk'?: string, 'clean-on-fail'?: boolean, timeout?: string, 'no-wait'?: boolean, full?: boolean, force?: boolean, inspect?: string,
  *   'previous-plugin-stopped'?: boolean, threshold?: string, since?: string, from?: string[], out?: string, overrides?: string, 'no-check'?: boolean, budget?: string,
- *   zoom?: string }} Values */
+ *   zoom?: string, at?: string, count?: string, compare?: string }} Values */
 // Normalized options, read by bin according to the command.
 /** @typedef {{ targetNodeId?: string, nodes?: string[], names?: string[], snapshotDepth?: number, timeoutSeconds?: number, threshold?: number, expect?: string, tolerance?: number,
  *   scale?: number, requestId?: string, risk?: { level: 'high', reason: string }, cleanOnFail?: true, islands?: string[], libFiles?: string[], dataFile?: string, since?: string,
  *   inspectId?: string, previousPluginStopped?: true, force?: true, full?: true, noWait?: true,
- *   fromIds?: string[], outDir?: string, overridesFile?: string, noCheck?: true, budgetSeconds?: number, zoomId?: string }} Options */
+ *   fromIds?: string[], outDir?: string, overridesFile?: string, noCheck?: true, budgetSeconds?: number, zoomId?: string, atSeconds?: number[], frameCount?: number, compareSource?: string }} Options */
 /** @param {string[]} argv @returns {{ command: string, positionals: string[], options: Options }} */
 export function parse(argv) {
   const [first = 'help', ...rest] = argv;
@@ -150,6 +153,16 @@ export function parse(argv) {
     if (o.islands.length > 500) throw Error('--island takes at most 500 nodes');
   }
   if (v.lib !== undefined) o.libFiles = v.lib.map(lib);
+  // frames: --at and --count are mutually exclusive; deduplicate and sort times, then check duration bounds once Chrome reads the video duration.
+  if (v.at !== undefined) {
+    if (v.count !== undefined) throw Error('--at cannot be combined with --count');
+    const times = v.at.split(',').map(t => t.trim());
+    if (times.some(t => !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(t))) throw Error('--at needs comma-separated seconds, e.g. 0,0.25,0.5');
+    o.atSeconds = [...new Set(times.map(Number))].sort((a, b) => a - b);
+    if (o.atSeconds.length > 24) throw Error('--at takes at most 24 times');
+  }
+  if (v.count !== undefined) o.frameCount = integer(v.count, 2, 24, '--count must be an integer 2-24');
+  if (v.compare !== undefined) o.compareSource = v.compare;
   if (v.data !== undefined) o.dataFile = v.data;
   // Accept ISO format only: timestamps require Z or a time-zone offset; date-only values mean midnight UTC, never a guessed local time zone.
   if (v.since !== undefined) {

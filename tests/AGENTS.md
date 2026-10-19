@@ -13,6 +13,7 @@ Behavioral tests for the implementation in this revision.
 - `cli.test.mjs`: Tests for cli behavior in this revision.
 - `contract-samples.mjs`: Check explicitly provided extraction evidence against its types.
 - `extract.test.mjs`: Tests for extract behavior in this revision.
+- `frames.test.mjs`: Tests for frames behavior in this revision.
 - `helpers/`: Isolated synthetic document, bridge and media fixtures.
 - `html-attrib.test.mjs`: Tests for html attrib behavior in this revision.
 - `html-cli.test.mjs`: Tests for html cli behavior in this revision.

@@ -29,6 +29,7 @@ This skill defines the working order and recovery rules. Read the [agent guide](
 | Write within a common ancestor of at most 2,000 full-depth nodes | Target that ancestor without `--depth` |
 | Write across a larger page/Section | Keep the correct ancestor and declare depth, often 2; state that deeper changes are absent from evidence |
 | Visible edits or visual-preserving refactors | `--expect changed` or `unchanged` on the smallest relevant target; avoid page-wide exports |
+| Motion | `--lib motion`: read spec, edit data, apply, then inspect exported video with `frames`; no static `--expect` |
 | Delete-then-create work | `--clean-on-fail`, understanding that deleted originals will not be restored |
 | Reusable helpers/parameters | Repeated `--lib` plus `--data`; small JSON can use `/dev/stdin` |
 | Related batch edits | One script looping over an input array |

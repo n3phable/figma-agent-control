@@ -276,6 +276,8 @@ Fix `beyond-timeline`, `first-key-easing`, `static-track`, and `track-conflict` 
 
 Write to a top-level frame without a shallow depth when its subtree fits the snapshot budget. Changes to `manualKeyframeTracks`, `animationStyles`, and `timelines` appear in the change set. Components and variant sets themselves cannot receive animation writes; their child layers can. Instance sublayers inherit motion and cannot be edited directly; instances themselves can. Do not detach an instance merely to bypass this limitation without authorization.
 
+Static PNG exports do not show keyframes, so do not use `--expect` for motion. Export video and inspect contact sheets. Video export can lag behind a change or fail for a newly created frame; `exportMotion` retries `Video export failed`, and `differentFrom` also waits for different bytes. Do not use `differentFrom` for a change intended to preserve rendering. Plan-specific limits can affect resolution, frame rate, and export settings.
+
 Additional observed Motion behavior: keyframes do not update static `x`/`opacity`; animation beyond the timeline is accepted but truncated in playback; rotation uses the node center and positive values rotate counterclockwise; values before the first key equal that key's value. COLOR keyframe values are RGBA rather than color-variable aliases. Verify TIMING-variable units and Beta API details in the current editor before depending on them.
 
 ## Exporting HTML
@@ -375,6 +377,10 @@ The flag is an assertion that the previous plugin has actually stopped. The insp
 - Store plugin data with namespaced `setSharedPluginData`, which works with the generated development manifest.
 
 Keep `.figma-agent-control/` out of version control. It includes credentials and design evidence. Deliver only the required result artifacts, retain unreviewed evidence, and stop bridges you started when their work is complete.
+
+## Video frame sampling
+
+`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` samples MP4/WebM in Chrome and writes a labeled contact sheet. The default is eight evenly spaced frames.
 
 ## Connection scope
 

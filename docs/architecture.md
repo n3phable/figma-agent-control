@@ -57,6 +57,25 @@ The iframe matches each task message against its ID and random nonce before acce
 
 The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.md](../src/AGENTS.md), [src/html/AGENTS.md](../src/html/AGENTS.md), [plugin/AGENTS.md](../plugin/AGENTS.md), and [lib/AGENTS.md](../lib/AGENTS.md).
 
+```text
+bin -> args / client / bridge / session / record / clean / doctor
+    -> report / image-diff / frames / html.command / project
+
+bridge -> connection / session / png / record / project
+client -> session / project
+clean -> record / project
+record / args / report / session -> project
+image-diff -> png / record / project
+frames -> png / record / project / html.chrome
+doctor -> client / session / project / html.chrome
+
+html.command -> extracts / page / overrides / summary / check / chrome
+html.extracts -> client / record / session / project
+html.page -> generate / fonts / match / png / project
+html.generate -> css
+html.check -> match / attrib / shift / layout / structure / suggest / zoom
+```
+
 `project` has no internal dependencies. `connection` is pure in-memory state with an injectable clock. `png` uses only zlib. Bridge and HTML do not import each other: the bridge/record reference the shared extract type contract only through JSDoc. HTML submits through client and reads records. Shared interruption reasons live in session because both sides need them without a circular dependency.
 
 ### Host responsibilities
@@ -71,6 +90,7 @@ The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.m
 | [record](../src/record.mjs) | All readers share one interpretation of evidence, summary, exit code, and next action; waits never resubmit |
 | [clean](../src/clean.mjs) | Existing failure evidence becomes an ordinary run, reusing write guarantees without adding an operation |
 | [doctor](../src/doctor.mjs) | Read-only diagnosis can still explain binding, lock, or installation problems when the bridge is unreachable |
+| [png](../src/png.mjs), [image-diff](../src/image-diff.mjs), [frames](../src/frames.mjs) | Host analysis is independent of document execution; exported evidence can be inspected offline |
 | [report](../src/report.mjs) | Aggregation reads completed evidence without changing sessions or job state |
 
 ### Plugin and libraries

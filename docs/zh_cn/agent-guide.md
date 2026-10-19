@@ -276,6 +276,8 @@ try {
 
 在快照预算内，写入以顶层画框为目标且不声明浅深度。变更集可记录 `manualKeyframeTracks`、`animationStyles`、`timelines`。组件/变体集本身不能写动效，其子图层可以；实例子图层继承动效、不能直接改，实例本身可以。不要未经授权就 detach 实例来绕过限制。
 
+静态 PNG 不反映关键帧，不要用 `--expect` 验收动效。导出视频并看联系表。视频导出可能落后于修改，或对新画框暂时失败；`exportMotion` 会重试 `Video export failed`，`differentFrom` 还会等待字节变化。应保持画面的修改不要设置 `differentFrom`。套餐可能限制分辨率、帧率和导出参数。
+
 其他开发观察：关键帧不更新静态 `x`/`opacity`；超出时间线的动效可能被接受，但播放会截断；旋转以节点中心为轴，正值逆时针；第一帧之前使用该帧的值。COLOR 关键帧为 RGBA，不是颜色变量别名。依赖 TIMING 变量单位或 Beta 行为前，应在当前编辑器中核验。
 
 ## 导出 HTML
@@ -375,6 +377,10 @@ figma-agent-control resolve <original-job-id> --inspect <inspect-job-id> --previ
 - 插件数据使用命名空间 `setSharedPluginData`，适用于生成的开发插件 manifest。
 
 不要把 `.figma-agent-control/` 提交到版本控制，其中有凭证和设计证据。只交付需要的产物，保留尚未核验的证据，完成后停止本次启动且不再需要的桥接。
+
+## 视频取帧
+
+`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` 在 Chrome 中采样 MP4/WebM，生成带时刻标记的联系表，默认均匀采样八帧。
 
 ## 连接范围
 

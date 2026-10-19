@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * [INPUT]: Imports node:fs/promises, node:path, ../src/project.mjs, ../src/bridge.mjs, ../src/session.mjs, ../src/args.mjs, ../src/client.mjs, ../src/doctor.mjs, ../src/record.mjs, ../src/clean.mjs, ../src/image-diff.mjs, ../src/report.mjs, ../src/html/command.mjs.
+ * [INPUT]: Imports node:fs/promises, node:path, ../src/project.mjs, ../src/bridge.mjs, ../src/session.mjs, ../src/args.mjs, ../src/client.mjs, ../src/doctor.mjs, ../src/record.mjs, ../src/clean.mjs, ../src/image-diff.mjs, ../src/frames.mjs, ../src/report.mjs, ../src/html/command.mjs.
  * [OUTPUT]: Plugin task handling and serialized results.
  * [POS]: CLI shell: validate arguments, dispatch a command, and emit its JSON result and exit status.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -16,6 +16,7 @@ import { doctor } from '../src/doctor.mjs';
 import { localResult, summarizeRecord, exitCode, waitForResult } from '../src/record.mjs';
 import { cleanJob } from '../src/clean.mjs';
 import { imageDiff } from '../src/image-diff.mjs';
+import { frames } from '../src/frames.mjs';
 import { report } from '../src/report.mjs';
 import { html, htmlCheck } from '../src/html/command.mjs';
 
@@ -82,6 +83,7 @@ try {
     out(data); if (!ok) process.exitCode = 1;
   }
   else if (command === 'image-diff') { const diff = await imageDiff(cwd, positionals, o); out(diff); if (diff.expectation === 'failed') process.exitCode = 1; }
+  else if (command === 'frames') out(await frames(cwd, positionals[0], o));
   else if (command === 'report') out(await report(cwd, o.since ? { since: o.since } : {}));
   else if (command === 'html' || command === 'html-check') {
     const { summary, exitCode: code } = command === 'html' ? await html(cwd, o) : await htmlCheck(cwd, positionals, o);

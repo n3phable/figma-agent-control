@@ -24,6 +24,8 @@ Figma Agent Control (FAC) connects your local CLI to a Figma Desktop development
 
 - **Local shell and localhost access** for the agent running the CLI.
 
+- **Google Chrome or Chromium** for HTML comparisons and video frame extraction. Set `FIGMA_AGENT_CONTROL_CHROME` to an executable path if needed. HTML generation with `--no-check` does not require Chrome.
+
 Font discovery searches macOS font directories.
 
 ## Install from source
@@ -101,6 +103,7 @@ A submitting command waits by default and returns one JSON object. Its stderr re
 | `run` | Execute a trusted script with `--lib`, `--data`, and optional `--expect changed\|unchanged` |
 | `clean` | Recheck and delete eligible nodes left by a failed run, as a separate Undo step |
 | `html`, `html-check` | Generate and compare static HTML, or recheck an existing export |
+| `frames` | Sample MP4/WebM video into a contact sheet, optionally comparing two videos |
 | `image-diff`, `report` | Compare PNGs or summarize job timings, failures, and repeated executions |
 
 Use `figma-agent-control help` for the exact syntax of the installed version. The [agent guide](docs/agent-guide.md) includes complete script examples and recovery procedures.

@@ -347,6 +347,14 @@ Apply 是声明式写入：列出的节点只要提供 `tracks` 或 `styles`，�
 | `inconsistent-easing` | 同预设/类型使用不同缓动 |
 | `irregular-stagger` | 至少三个同预设/类型/时长节点的偏移间隔不均匀 |
 
+### 静帧提取
+
+文件相对于工作目录解析。任务 ID 必须指向成功的 run，且返回值中恰好有一个已落盘的 MP4/WebM；无效来源在启动 Chrome 前失败。不支持 GIF，MP4 编解码支持取决于 Chrome 构建。
+
+显式时刻会去重排序，最多 24 个，且必须在视频时长内。默认从零到结束前 0.05 秒均匀取八个时刻，每个时刻选择覆盖它的那一帧。联系表格子带时间标注，每行最多四格，对照时最多六格，总宽不超过 1,600 px。窄帧以最近邻放大到至少 160 px。对照格把源帧和对照帧上下排列，并标注变化像素。
+
+输出为 `{source,compare?,width,height,duration,sheet,frames:[{t,file?,compareFile?,changedPixels?,sameSize?}],changed?,layout?,warning?,limitation}`。只有 dump 时才给出逐帧文件路径。视频字节相同会追加警告。像素差异沿用 run 画面核验的 `diffPng` 定义。输出写入绑定项目的 `frames/`，或系统临时目录。成功退出 `0`；无效输入或解码失败退出 `1`。
+
 ## HTML 导出
 
 `html` 根据 extract 生成自包含 HTML，并与同一次 extract 的参考图比对。`html-check` 重新检查已有页面。生成与比图都在 CLI 进程运行；只有 `html --node` 提交桥接任务。比图需要 Chrome，可通过 `FIGMA_AGENT_CONTROL_CHROME` 配置；`html --no-check` 不需要 Chrome。
@@ -544,7 +552,13 @@ HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内
 | `1` | 失败、画面核验失败/不可用、跳过/拒绝清理、跳过显式孤岛或提取二进制不完整，或已核验但结果未知 |
 | `2` | 尚未完成：等待超时或待核验。对 stop，表示已接受关闭，但约五秒后仍未释放锁；应稍后检查状态 |
 
+HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SANDBOX_BLOCKED` 表示 localhost 访问被拒绝，`BRIDGE_DOWN` 表示会话端口无响应，`BRIDGE_TIMEOUT` 表示请求超时，`NO_SESSION` 表示缺少会话文件。
+
 `report --since` 接受 ISO 日期/时间；带时间时必须提供 `Z` 或时区偏移，只有日期则按 UTC 零点处理。`jobs.failed` 统计 `ok:false`；`jobs.verifyFailed` 统计执行成功但画面核验失败/不可用的任务，两者互斥。
+
+## 视频取帧
+
+`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` 在 Chrome 中采样 MP4/WebM，生成带时刻标记的联系表，默认均匀采样八帧。
 
 ## 连接范围
 

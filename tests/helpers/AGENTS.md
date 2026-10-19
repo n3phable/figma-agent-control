@@ -11,6 +11,7 @@ Isolated synthetic document, bridge and media fixtures.
 - `generate.mjs`: Connect synthetic extraction to generation.
 - `harness.mjs`: Real bridge and VM-plugin integration fixture.
 - `match/`: Related implementation, fixtures or configuration.
+- `motion/`: Related implementation, fixtures or configuration.
 - `plugin.mjs`: VM plugin execution fixture.
 
 ## Contract maintenance

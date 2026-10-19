@@ -343,6 +343,14 @@ Issues have `{rule,timeline,node?,message}` and do not modify data:
 | `inconsistent-easing` | Same preset/type uses different easing |
 | `irregular-stagger` | At least three same-preset/type/duration nodes have uneven offsets |
 
+### Frames
+
+A file is resolved from the working directory. A job ID must be a successful run containing exactly one landed MP4/WebM; invalid sources fail before launching Chrome. GIF is unsupported. MP4 codec support depends on the Chrome build.
+
+Explicit times are deduplicated and sorted, limited to 24, and must fit the video. Default sampling uses eight times from zero to 0.05 seconds before the end. Each time selects the covering frame. Contact-sheet cells are labeled, with at most four per row, or six during comparison; total width is at most 1,600 px. Narrow frames are enlarged to at least 160 px with nearest-neighbor sampling. A comparison cell stacks source and comparison frames and labels changed pixels.
+
+Output is `{source,compare?,width,height,duration,sheet,frames:[{t,file?,compareFile?,changedPixels?,sameSize?}],changed?,layout?,warning?,limitation}`. File paths appear only with dump. Identical video bytes add a warning. Pixel differences use the same `diffPng` definition as run verification. Outputs go to the bound project's `frames/` or a system temporary directory. Success exits `0`; invalid inputs or decoding failure exit `1`.
+
 ## HTML export
 
 `html` generates self-contained HTML from extracts and compares it with the same extracts' reference images. `html-check` rechecks existing pages. Generation and comparison run in the CLI process; only `html --node` submits bridge jobs. Chrome is required for comparison, configurable through `FIGMA_AGENT_CONTROL_CHROME`; `html --no-check` does not need it.
@@ -540,7 +548,13 @@ HTML and html-check stdout summaries fit within 16 KiB of formatted UTF-8 JSON. 
 | `1` | Failure, failed/unavailable visual verification, skipped/rejected cleanup, skipped explicit islands or incomplete extraction binaries, or reviewed-but-unknown outcome |
 | `2` | Not complete: timeout or review pending. For stop, accepted shutdown has not released the lock after roughly five seconds; check status later |
 
+HTML-specific codes and frames output are defined above. Network errors remain distinct: `SANDBOX_BLOCKED` is denied localhost access, `BRIDGE_DOWN` is an unresponsive session port, `BRIDGE_TIMEOUT` is a request timeout, and `NO_SESSION` is a missing session file.
+
 `report --since` accepts ISO dates/times; a time requires `Z` or an offset, and a date alone is UTC midnight. `jobs.failed` counts `ok:false`; `jobs.verifyFailed` counts successful executions with failed/unavailable visual checks. They are mutually exclusive.
+
+## Video frame sampling
+
+`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` samples MP4/WebM in Chrome and writes a labeled contact sheet. The default is eight evenly spaced frames.
 
 ## Connection scope
 
