@@ -35,7 +35,9 @@ export const COMMANDS = {
   clean: { usage: 'clean <job-id> [--timeout <seconds>] [--no-wait] [--full]: delete the created nodes a failed run left behind that are not yet cleaned up (created); first re-checks each node\'s name, type, parent and subtree node count and skips mismatches (exit code 1); submits a run targeting the bound node, deletes as a separate Undo step, safe to re-run',
     positionals: [1, 1], submit: true, options: { ...wait } },
   result: { usage: 'result <job-id> [--full]: read local evidence', positionals: [1, 1], options: { full: { type: 'boolean' } } },
-  wait: { usage: 'wait <job-id> [--timeout <seconds>] [--full]: wait for the original result without resubmitting', positionals: [1, 1], options: { timeout: { type: 'string' }, full: { type: 'boolean' } } },
+  wait: { usage: 'wait <job-id> [--timeout <seconds>] [--full]: wait for the job result without resubmitting; while unfinished, reports progress (which figma async call it is waiting on, at which script line)', positionals: [1, 1], options: { timeout: { type: 'string' }, full: { type: 'boolean' } } },
+  cancel: { usage: 'cancel <job-id> [--timeout <seconds>] [--full]: abort an in-flight run and wait for the result: a job not yet handed to the plugin is recorded as not executed; a running one ends as failed once the plugin receives the cancel on its next heartbeat, listing created and cleaning up per --clean-on-fail as usual; '
+    + 'a hung call cannot be stopped from outside, see warnings in the result', positionals: [1, 1], options: { timeout: { type: 'string' }, full: { type: 'boolean' } } },
   resolve: { usage: 'resolve <original-job-id> --inspect <inspect-job-id> --previous-plugin-stopped: after verification, end the unresolved wait without replaying the script', positionals: [1, 1],
     options: { inspect: { type: 'string' }, 'previous-plugin-stopped': { type: 'boolean' } } },
   frames: { usage: 'frames <video.webm|.mp4|run-id> [--at <seconds,seconds,...>] [--count <2-24>] [--compare <video|run-id>]: sample video in Chrome and produce a timestamped PNG contact sheet, using 8 evenly spaced frames by default; '

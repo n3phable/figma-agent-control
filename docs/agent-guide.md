@@ -36,6 +36,8 @@ Start work when `connected` is `true`. The current working directory is the proj
 
 - One bridge executes one job at a time. Multiple agents should retrieve data sequentially, then analyze it independently offline.
 
+- Long polling continues while the panel is hidden. Reconnecting after a bridge restart may wait for a throttled timer. Figma can also throttle an invisible window or background file; see [stalled jobs](#stalled-jobs).
+
 - Plugin-file changes can trigger Figma's development-plugin reload. If the panel reports an outdated plugin, rerun it. Its footer version should match `status.pluginVersion`.
 
 - Finish with `figma-agent-control stop` for a bridge you started and no longer need. It stops the local bridge. Check document synchronization in Figma. Exit code `2` means shutdown is still finishing; check `status` later.
@@ -149,6 +151,8 @@ Read `instruction` first, then the evidence needed to choose the next action:
 | `verify` | Before/after visual check, when requested and the script succeeded |
 | `pageRoot` | Direct children added to or removed from the page root after a successful non-page-target run |
 | `trace` | Up to ten mapped error frames: `{file, line, column, source}`; first frame is the throw site |
+| `created`, `cleaned`, `cleanFailed`, `deletedExisting`, `createdAssets` | Partial-write and cleanup evidence |
+| `progress` | Latest execution progress while the result is pending |
 | `resultFile`, `evidence` | Paths to durable local evidence |
 
 `pageRoot` can reveal a missing `appendChild`, even when the target's change counts are zero. It is a before/after comparison, not attribution: concurrent collaborators and operations that replace IDs can also appear. Inspect before deleting anything.
@@ -207,9 +211,23 @@ When `executionStarted` is `true`, earlier writes may already exist. **Do not re
 
 - `deletedExisting` warns that existing nodes disappeared during execution while cleanup also deleted newly created nodes. Operations such as `detachInstance` and `flatten` can replace existing content with new IDs, making it look newly created. Inspect; if cleanup removed content that should remain, one deliberate Undo in Figma can restore the cleanup step. It does not undo earlier script edits.
 
+- `createdAssets` lists new collections, variables, and styles. Neither cleanup path deletes these. Reuse or remove them deliberately instead of creating duplicates.
+
 Cleanup preserves existing edits, moves, renames and deletions. A delete-then-rebuild script can leave an empty location after cleanup; undoing that cleanup step restores the unfinished replacement. Inspect the original edits separately and repair them deliberately.
 
 Limits matter: creation tracking observes only the target page and only script-thrown failures, not later serialization failures. New components may not emit creation events. Locally created canvas content during the run can be counted; remote collaborators' events are excluded. Existing nodes imported from another page are outside immediate cleanup's protection. Tracking failures are reported as warnings. If the closing Undo boundary fails, nodes are listed but not automatically cleaned. Summary lists are capped at 50 entries, with omitted counts.
+
+### Stalled jobs
+
+`status.progress` and a timed-out wait report the phase:
+
+- `prepare` covers target resolution, snapshots, checkpoint, and before rendering; `approval` waits for the panel; `script` runs the body; `finish` collects evidence. Large targets can make preparation or finishing slow.
+
+- `waiting` tracks proxied `figma.*Async` calls, including supported namespaces. Node methods such as `exportAsync` and a script's own Promises are not tracked.
+
+- Growing `changes` indicates progress. Keep waiting. If a call remains stuck, `cancel <job-id>` requests cancellation and waits for its result.
+
+- Cancellation cannot terminate an already suspended JavaScript continuation. Future accesses through the `figma` proxy throw, but direct writes through node objects already obtained can still occur if the pending call returns. Closing and reopening the plugin is required to terminate that continuation. Do not kill Figma or trigger global Undo as a generic recovery step.
 
 ## Visual verification
 
@@ -385,3 +403,11 @@ Keep `.figma-agent-control/` out of version control. It includes credentials and
 ## Connection scope
 
 The bridge uses port 32523. Keep only one project bridge active on the machine. The globally installed plugin can reconnect after a bridge restart; stop the previous project before connecting another.
+
+## Cancellation boundary
+
+An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
+
+## Background progress
+
+Progress and cancellation delivery still depend on timer-driven heartbeats. Hidden Figma windows can delay them substantially; make the window visible before judging a run stalled.

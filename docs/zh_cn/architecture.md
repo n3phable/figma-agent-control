@@ -97,6 +97,8 @@ html.check -> match / attrib / shift / layout / structure / suggest / zoom
 
 Figma 只加载一份 main 脚本。源码按职责分为执行端 [main.js](../../plugin/main.js) 和只读提取 [extract.js](../../plugin/extract.js)，安装时拼接，共享经典脚本全局作用域。extract 契约参与类型检查。
 
+run 用 `new Function` 编译，因此能触及插件全局变量。新增插件顶层名字应谨慎，脚本必须声明自己的变量。`figma` 代理记录部分异步调用和取消状态，节点保持为原 API 对象。
+
 ## 关键流程
 
 ### 连接
@@ -128,6 +130,12 @@ CLI 观察证据文件等待结果，等待前先向 stderr 写任务 ID。终�
 `result.json` 是提交点。从未交付的 queued 任务可证明未执行；已交付而无结果的 run 是未知状态，会阻止新 run。内置读操作保持可用，以便先检查目标。resolve 要求当前会话直接 inspect 原目标，并确认旧插件停止；它结束等待，不虚构成功，也不撤销。
 
 恢复任务仍可接受迟到结果。其他项目的结果收到 `FOREIGN_JOB`，留在 iframe 等原桥接回来。诊断优先处理它，避免通用的“重启插件”建议丢掉真实结果。
+
+### 进度与取消
+
+执行代理记录未返回的 `figma.*Async` 和支持的命名空间，并保留调用处 stack。进度含 prepare/approval/script/finish、耗时、页面本地改动和最早的等待调用。桥接把 stack 映射回脚本/库，并写 `progress.json` 供等待到期的 CLI 读取。
+
+脚本开始前取消记为未执行；开始后取消让执行 race 失败，走普通部分写入路径。它不能停止挂起的宿主调用或所有续体：之后经代理访问会抛错，但此前拿到的节点仍可能直接写入。关闭/重开插件才能终止该续体。系统公开这一限制，不宣称事务式取消。
 
 ### 提取与 HTML
 

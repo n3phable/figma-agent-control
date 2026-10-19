@@ -87,6 +87,7 @@ export function fakeFigma(doc, { fileKey = 'example', onUi = () => {} } = {}) {
     getNodeByIdAsync: async id => { const n = doc.all.get(id); return n && !n.removed ? n : null; },
     setCurrentPageAsync: async page => { figma.currentPage = page; },
     createFrame: () => doc.create('FRAME', figma.currentPage), createRectangle: () => doc.create('RECTANGLE', figma.currentPage),
+    getLocalPaintStylesAsync: async () => [], getLocalTextStylesAsync: async () => [], getLocalEffectStylesAsync: async () => [], getLocalGridStylesAsync: async () => [],
     variables: {
       getLocalVariableCollectionsAsync: async () => [{ id: 'C:1', name: '\u989c\u8272', modes: [{ modeId: 'M:1', name: '\u9ed8\u8ba4' }], defaultModeId: 'M:1' }],
       getLocalVariablesAsync: async () => [{ id: 'VariableID:1:1', name: 'brand', variableCollectionId: 'C:1', resolvedType: 'COLOR', valuesByMode: { 'M:1': { r: 0, g: 0, b: 1, a: 1 } }, scopes: ['ALL_FILLS'] }]
@@ -130,7 +131,8 @@ export async function harness(t, { url = 'https://www.figma.com/design/example/T
   const pause = async () => { gate.open = false; await Promise.allSettled([...gate.inflight]); };
   const resume = () => { gate.open = true; for (const wake of gate.waiters.splice(0)) wake(); };
   let tick;
-  vm.runInNewContext(main, { figma, __html__: html, setTimeout, clearTimeout });
+  // Plugin timers must not keep the process alive: execution progress reschedules every 2 s, including after tests intentionally suspend a script.
+  vm.runInNewContext(main, { figma, __html__: html, setTimeout: (fn, ms) => setTimeout(fn, ms).unref(), clearTimeout });
   vm.runInNewContext(html.match(/<script>([\s\S]*)<\/script>/)[1], { window, parent, crypto, fetch: gatedFetch, AbortSignal, TextEncoder,
     document: { visibilityState: 'visible', addEventListener() {}, getElementById: element, createElement: () => fakeElement() }, setInterval: callback => { tick = callback; } });
   const settle = async () => { while (pending.size) await Promise.all([...pending]); };

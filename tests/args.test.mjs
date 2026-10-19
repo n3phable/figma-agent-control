@@ -20,7 +20,8 @@ const URL_ = 'https://www.figma.com/design/k/n?node-id=1-2';
 // Valid positional arguments from the documented usage; resolve also needs two required flags. Independent of COMMANDS to verify the command table itself.
 const POSITIONALS = {
   help: [], init: [URL_], connect: [], stop: [], status: [], doctor: [],
-  run: ['a.js'], inspect: [], preview: [], variables: [], extract: [], clean: [ID], result: [ID], wait: [ID], resolve: [ID], frames: ['a.webm'], 'image-diff': ['a.png', 'b.png'], report: [], html: [], 'html-check': ['a.html'],
+  run: ['a.js'], inspect: [], preview: [], variables: [], extract: [], clean: [ID], result: [ID], wait: [ID], cancel: [ID],
+  resolve: [ID], frames: ['a.webm'], 'image-diff': ['a.png', 'b.png'], report: [], html: [], 'html-check': ['a.html'],
 };
 const FLAGS = { resolve: ['--inspect', ID2, '--previous-plugin-stopped'], html: ['--node', '1:2', '--out', 'd'] };
 const usageOf = cmd => ({ message }) => message.startsWith('Usage: ' + cmd);

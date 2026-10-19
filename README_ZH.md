@@ -14,6 +14,8 @@ Figma Agent Control（FAC）通过 localhost 桥接，把本地 CLI 连接到 Fi
 
 - **保留证据：** 保存执行前快照、失败现场快照、变更集、导出文件、执行堆栈，以及可选的画面检查结果。CLI 等待超时后，可按任务 ID 继续等待。
 
+- **按证据恢复：** 检查部分写入，清理本次新建的节点，取消卡住的 run，并核验结果未知的写入。
+
 - **导出静态 HTML：** 生成嵌入资源的嵌套 DOM，在 Chrome 中比图，按节点定位差异，并应用有记录的 overrides。
 
 ## 环境要求
@@ -101,6 +103,7 @@ figma-agent-control stop
 | `init`, `connect`, `stop`, `status`, `doctor` | 绑定范围、管理桥接、诊断连接 |
 | `inspect`, `preview`, `variables`, `extract` | 读取节点与变量、导出 PNG，或提取生成 HTML 所需的数据 |
 | `run` | 执行可信脚本，支持 `--lib`、`--data`，以及可选的 `--expect changed\|unchanged` |
+| `result`, `wait`, `cancel`, `resolve` | 读取证据、继续等待而不重放、取消 run，或核验未知结果 |
 | `clean` | 重新检查并删除失败 run 留下的符合条件的节点，形成独立的 Undo 步骤 |
 | `html`, `html-check` | 生成并比较静态 HTML，或重新检查已有导出 |
 | `frames` | 从 MP4/WebM 视频取帧生成联系表，可选对比两段视频 |

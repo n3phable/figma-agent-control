@@ -184,6 +184,7 @@ Atomic creation of `runs/<job-id>/result.json` is the sole completion commit poi
 | `bindingVerified` | Actually verified file, page, and node |
 | `undoBoundaries` | `before`, `after`, and optionally cleanup `clean` boundary outcomes |
 | `created`, `cleaned`, `cleanFailed` | Failed-script node tracking and cleanup results |
+| `createdAssets` | New surviving collections, variables, and styles; entries `{id,name}` |
 | `deletedExisting` | Existing nodes deleted during a run that also performed cleanup |
 | `warnings`, `binaryErrors` | Evidence/cleanup limitations and binary transport issues |
 | `pluginMs`, `approvalMs`, `finishedAt` | Execution timing excluding approval, approval timing, and landing time |
@@ -209,6 +210,8 @@ With `cleanOnFail`, cleanup runs only after a successful closing boundary. It pr
 If cleanup deleted nodes and original target-page nodes disappeared during execution, `deletedExisting` counts the reported top-level deletions and adds a warning. ID-replacing operations such as detach/flatten can make existing content look new. A deliberate Undo of the cleanup step can restore that content; existing script edits are never rolled back automatically.
 
 Creation tracking excludes other pages and failures after the script body completed, such as serialization failure. New components may not emit CREATE events. Local user edits during execution are indistinguishable from script edits. Existing content moved in from another page is not covered by cleanup protection. Evidence/cleanup errors add warnings while preserving the original script error.
+
+Collections, variables, and styles use before/after ID comparisons rather than node events. `createdAssets` only reports them; neither cleanup path deletes them. Each failure-evidence read has a 15-second timeout. Summary node lists cap at fifty entries with omitted counts.
 
 ### Deferred cleanup: `clean`
 
@@ -263,15 +266,28 @@ Resolve with `resolve <original-id> --inspect <inspection-id> --previous-plugin-
 
 Completions are idempotent when `result.json` already exists, even if the job is absent from current memory. A job neither loaded nor completed on disk gets `409 FOREIGN_JOB`; no evidence is written and the plugin retains its original result for the right project. This also applies to a run resolved before restart, which is intentionally not reloaded. Its stale plugin must be closed and rerun; the reviewed result remains unknown.
 
+### Progress and cancellation
+
+The plugin reports progress one second after receiving a run, then every two seconds when timers can run:
+
+```text
+{seq, phase, elapsedMs, changes?, lastChangeAgoMs?, waiting?, waitingCount?}
+```
+
+Cancellation cannot kill the suspended JavaScript continuation or a host call already in flight. Later proxy access throws, but later direct writes through a previously acquired node are not blocked. A warning records this limit. Stop and rerun the plugin to terminate the continuation. Read-only jobs cannot be cancelled; synchronous work must yield before cancellation can be handled.
+
 ## Bridge endpoints
 
 | Endpoint | Role | Contract |
 |---|---|---|
+| `GET /status` | CLI | Binding, connection, active/unresolved jobs, plugin version, latest twenty jobs, optional progress and cancellation request |
 | `POST /job` | CLI | Submit a job |
 | `GET /result?id=` | CLI | Current-session result; the CLI normally reads evidence from disk |
 | `POST /resolve` | CLI | Resolve an unknown write after inspection |
+| `POST /cancel` | CLI | `200 {cancelled:"before-delivery"}` or `202 {cancelRequested:true}`; otherwise `409 NOT_ACTIVE` / `NOT_RUN` |
 | `POST /shutdown` | CLI | Requires `{force:boolean}`; active queued/running work without force gives `409 ACTIVE_JOB`; otherwise responds `202` before closing |
 | `GET /poll` | Plugin | Claim work, or hold an empty response for up to ten seconds |
+| `GET /heartbeat` | Plugin | Identity probe, lease renewal, job/progress report, or held cancellation channel |
 | `POST /checkpoint` | Plugin | Persist the write-ahead snapshot |
 | `POST /approve` | Plugin | Immutable decision for a high-risk run delivered in this session |
 | `POST /complete` | Plugin | Idempotent completion, first result wins; does not require the current lease |
@@ -534,9 +550,12 @@ Submitting commands wait by default and print a summary; `--full` prints the com
 
 Summary `output` above 16 KiB UTF-8 is replaced with a reading command. Extract output is always summarized by shape/reading command, with separate `extract:{stats,islandsSkipped,warnings}`; at most fifty skipped IDs and twenty warnings of at most 600 characters are expanded, with omitted counts.
 
+`cancel` requests cancellation then waits as `wait` does. Waiting defaults to thirty seconds, configurable to 1–300 seconds:
+
 | `waitStatus` | Meaning |
 |---|---|
 | `completed` | Result landed |
+| `timeout` | Job may still run; progress and wait/cancel guidance are included when available |
 | `needs-review` | Recovery evidence needs the stated review action |
 | `resolved` | Reviewed, but the original execution outcome remains unknown |
 
@@ -563,6 +582,14 @@ The bridge uses port 32523. Keep only one project bridge active on the machine. 
 ## Preparation ordering
 
 Target revalidation currently precedes the before-render and later preparation reads. Keep the target unchanged throughout preparation.
+
+## Cancellation boundary
+
+An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
+
+## Background progress
+
+Progress and cancellation delivery still depend on timer-driven heartbeats. Hidden Figma windows can delay them substantially; make the window visible before judging a run stalled.
 
 ## Motion rollback values
 

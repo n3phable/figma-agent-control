@@ -9,6 +9,7 @@ Behavioral tests for the implementation in this revision.
 - `args.test.mjs`: Tests for args behavior in this revision.
 - `bridge-session.test.mjs`: Tests for bridge session behavior in this revision.
 - `bridge.test.mjs`: Tests for bridge behavior in this revision.
+- `cancel.test.mjs`: Tests for cancel behavior in this revision.
 - `clean.test.mjs`: Tests for clean behavior in this revision.
 - `cli.test.mjs`: Tests for cli behavior in this revision.
 - `contract-samples.mjs`: Check explicitly provided extraction evidence against its types.

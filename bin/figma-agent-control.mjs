@@ -78,6 +78,11 @@ try {
   else if (COMMANDS[command].submit) process.exitCode = await submit(command, positionals, o);
   else if (command === 'result') { const record = await localResult(cwd, positionals[0]); out(o.full ? record : summarizeRecord(record)); process.exitCode = exitCode(record); }
   else if (command === 'wait') { const record = await waitForResult(cwd, positionals[0], o.timeoutSeconds); out(o.full ? record : summarizeRecord(record)); process.exitCode = exitCode(record); }
+  else if (command === 'cancel') {
+    const { ok, data } = await call(cwd, '/cancel', { id: positionals[0] });
+    if (!ok) { out(data); process.exitCode = 1; }
+    else { const record = await waitForResult(cwd, positionals[0], o.timeoutSeconds); out(o.full ? record : summarizeRecord(record)); process.exitCode = exitCode(record); }
+  }
   else if (command === 'resolve') {
     const { ok, data } = await call(cwd, '/resolve', { id: positionals[0], inspectId: o.inspectId, previousPluginStopped: true });
     out(data); if (!ok) process.exitCode = 1;

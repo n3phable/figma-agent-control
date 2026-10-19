@@ -134,7 +134,9 @@ export async function localResult(cwd, id) {
   const result = await optional(path.join(dir, 'result.json'));
   if (result && (result.id !== id || typeof result.ok !== 'boolean')) throw Error('Invalid result file: ' + id);
   const recovery = await optional(path.join(dir, 'recovery.json')), resolution = await optional(path.join(dir, 'resolution.json'));
-  return { evidence: dir, job, result, recordedState: job.state, journalComplete: !!result, recovery, resolution,
+  // progress.json holds the bridge's last execution update, identifying pending work and remaining available for later inspection after completion.
+  const progress = await optional(path.join(dir, 'progress.json'));
+  return { evidence: dir, job, result, recordedState: job.state, journalComplete: !!result, recovery, resolution, progress,
     checkpointFile: await exists(path.join(dir, 'before.json')) ? path.join(dir, 'before.json') : null,
     instruction: result ? 'Result read from saved evidence' : resolution ? resolution.instruction
       : recovery ? (job.operation === 'run' ? recovery.instruction ?? 'The job has a recovery note; check the document and the bridge first; do not replay the script' : 'Read-only job interrupted; the document was not modified; resubmit it')
@@ -173,7 +175,10 @@ function instruction(record) {
     // After script errors, created lists new nodes; --clean-on-fail also returns cleaned/cleanFailed. These describe new-node disposition only; modified existing nodes still require inspect.
     // New nodes may contain existing layers moved inside them, so inspect subtrees before deletion. cleanFailed covers both failed deletion and intentional preservation of existing content.
     // If cleanup removed nodes and deletedExisting is positive, they may be replacement IDs for existing content; suggest one Undo to recover the cleanup.
-    const count = (/** @type {string} */ key) => Array.isArray(result[key]) ? result[key].length : 0, review = 'keep the evidence; verify the current state with inspect first; do not replay the script';
+    // New variable collections, variables and styles (createdAssets) are outside clean's scope; call them out separately.
+    const assets = result.createdAssets && typeof result.createdAssets === 'object' ? Object.values(result.createdAssets).reduce((n, list) => n + (Array.isArray(list) ? list.length : 0), 0) : 0;
+    const count = (/** @type {string} */ key) => Array.isArray(result[key]) ? result[key].length : 0;
+    const review = (assets ? `also created ${assets} variable collection(s), variable(s) or style(s) (see createdAssets), which clean does not delete; delete them in Figma if unneeded; ` : '') + 'keep the evidence; verify the current state with inspect first; do not replay the script';
     if (!count('cleaned') && count('cleanFailed')) return `The script started running; the document may have been modified; created nodes were not deleted: ${count('cleanFailed')} node(s) kept or failed to delete (reasons in cleanFailed); ${review}`;
     if (count('cleaned')) return `The script started running; deleted ${count('cleaned')} node(s) created by this job${count('cleanFailed') ? `, ${count('cleanFailed')} not deleted (reasons in cleanFailed)` : ''}; modified existing nodes were not rolled back; `
       + (result.deletedExisting > 0 ? `${result.deletedExisting} node(s) that existed before the run were deleted during it (by the script, or replaced with new IDs by detachInstance, flatten or createComponentFromNode), so the cleaned nodes may include their replacements; inspect first, and if needed undo once in Figma to restore what the cleanup deleted; ` : '') + review;
@@ -215,8 +220,11 @@ export function summarizeRecord(record) {
       summary[key] = result[key].slice(0, LIST_LIMIT);
       if (result[key].length > LIST_LIMIT) summary[key + 'Omitted'] = result[key].length - LIST_LIMIT;
     }
+    if (result.createdAssets !== undefined) summary.createdAssets = result.createdAssets;
     if (result.warnings !== undefined) summary.warnings = result.warnings;
   }
+  // Without a result, expose the last execution update: pending call, script line and report age.
+  if (!result && record.progress) summary.progress = record.progress;
   const target = result?.bindingVerified?.nodeId ?? job.targetNodeId;
   if (target) summary.target = target;
   // Extracted trees are not useful in terminal summaries: output always gives shape and a jq command; expose statistics, up to 50 skipped islands and up to 20 warnings separately.
@@ -254,7 +262,7 @@ export async function waitForResult(cwd, id, timeoutSeconds = DEFAULT_TIMEOUT_SE
     if (record.resolution) return { ...record, waitStatus: 'resolved' };
     if (record.recovery) return { ...record, waitStatus: 'needs-review' };
     const remaining = timeoutSeconds * 1000 - (clock.now() - started);
-    if (remaining <= 0) return { ...record, waitStatus: 'timeout', instruction: 'Wait timed out; the job state still needs checking; keep the plugin running and read status; do not replay the script' };
+    if (remaining <= 0) return { ...record, waitStatus: 'timeout', instruction: 'Wait timed out; the job state still needs checking; keep the plugin running and read status; do not replay the script. For a running run, check progress: if it stays on the same call for a long time, keep waiting with wait, or stop it with cancel' };
     await clock.sleep(Math.min(POLL_MS, remaining));
   }
 }

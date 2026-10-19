@@ -102,6 +102,8 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
     .replace(/[^\x20-\x7e]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
   const jobs = /** @type {Map<string, Job>} */ (new Map()), unresolved = /** @type {Set<string>} */ (new Set());
   const completing = new Map(), checkpoints = new Map(), approvals = new Map(), deliveries = new Map(), waiters = new Set();
+  // Keep progress and cancellation in memory by task ID, outside job.json. Heartbeats continually refresh progress, also persisted to runs/<id>/progress.json.
+  const progress = /** @type {Map<string, Record<string, unknown> & { seq: number, reportedAt: string }>} */ (new Map()), cancels = /** @type {Set<string>} */ (new Set());
   const wakePolls = () => { for (const wake of [...waiters]) wake(); };
   const runDir = (/** @type {string} */ id) => path.join(dir, 'runs', id);
   const optional = async (/** @type {string} */ file) => { try { return await json(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
@@ -195,6 +197,31 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
         changedBounds: diff.changedBounds, maxChannelDelta: diff.maxChannelDelta, sameSize: diff.sameSize, before: diff.before, after: diff.after, images };
     } catch (error) { data.verify = { expect: job.expect, tolerance, pass: false, error: 'Visual check unavailable: ' + error.message }; }
   }
+  // -- Execution progress -------------------------------------------------
+  // During run, the plugin reports progress every 2 s through the heartbeat progress parameter: pending figma async calls (the oldest includes a stack) and target-page change counts.
+  // Map stacks to script locations (at), keep them for status and persist progress.json for wait and later inspection. Deduplicate by seq and discard malformed data.
+  /** @param {Job} job @param {string | null} raw */
+  function noteProgress(job, raw) {
+    let p;
+    try { p = JSON.parse(raw ?? 'null'); } catch { return; }
+    if (job.state !== 'running' || !p || typeof p !== 'object' || !Number.isInteger(p.seq) || p.seq === progress.get(job.id)?.seq) return;
+    const number = (/** @type {unknown} */ v) => typeof v === 'number' && Number.isFinite(v) ? v : 0;
+    const waiting = (Array.isArray(p.waiting) ? p.waiting.slice(0, 3) : []).map((/** @type {any} */ w) => {
+      let at;
+      try { at = typeof w?.stack === 'string' ? scriptTrace(job, w.stack, true)[0] : undefined; } catch (_) {}
+      return { call: String(w?.call ?? '').slice(0, 100), forMs: number(w?.forMs), ...(at ? { at } : {}) };
+    });
+    const view = { seq: p.seq, elapsedMs: number(p.elapsedMs), changes: number(p.changes), ...(typeof p.lastChangeAgoMs === 'number' ? { lastChangeAgoMs: number(p.lastChangeAgoMs) } : {}),
+      waiting, waitingCount: number(p.waitingCount), reportedAt: new Date().toISOString() };
+    progress.set(job.id, view);
+    save(path.join(runDir(job.id), 'progress.json'), view).catch(() => {});
+  }
+  /** @param {string | null} id Active-task progress and cancellation state for /status. */
+  const progressOf = id => {
+    const view = id && progress.get(id);
+    return { ...(view ? { progress: { ...view, ageMs: Date.now() - Date.parse(view.reportedAt) } } : {}), ...(id && cancels.has(id) ? { cancelRequested: true } : {}) };
+  };
+
   // -- Commit point -------------------------------------------------------
   // Atomic result.json persistence means completion; job.json is then a derived status update. session repairs it after a crash between the two writes.
   // complete persists each task once: /complete can race with read-only abandonment during takeover. The later caller waits for the first write, then discards its duplicate.
@@ -231,6 +258,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
     await save(path.join(runDir(job.id), 'job.json'), { ...job, state, finishedAt: result.finishedAt }, true);
     Object.assign(job, { state, finishedAt: result.finishedAt });
     unresolved.delete(job.id);
+    progress.delete(job.id); cancels.delete(job.id);
     if (active === job.id) active = null;
   }
 
@@ -257,7 +285,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       if (role === 'plugin' && req.headers['x-plugin-version'] !== version) return reply(409, { code: 'PLUGIN_OUTDATED', error: 'Plugin code has been updated: close the plugin in Figma and run it again' });
       if (role === 'plugin') res.setHeader('X-Figma-Binding', bindingHeader);
       if (req.method === 'GET' && u.pathname === '/status') return reply(200, { sessionId, pid: process.pid, connected: connection.connected, connectionState: connection.state, pollAgeMs: connection.ageMs,
-        active, unresolved: [...unresolved], binding, pluginVersion: version, pluginIssues, jobs: [...jobs.values()].slice(-20).map(j => ({ id: j.id, operation: j.operation, state: j.state, ...(j.label ? { label: j.label } : {}) })) });
+        active, ...progressOf(active), unresolved: [...unresolved], binding, pluginVersion: version, pluginIssues, jobs: [...jobs.values()].slice(-20).map(j => ({ id: j.id, operation: j.operation, state: j.state, ...(j.label ? { label: j.label } : {}) })) });
       if (req.method === 'GET' && ['/poll', '/heartbeat'].includes(u.pathname)) {
         // Only instances in the bound file without foreign tasks acquire the connection. Others receive binding headers for panel guidance but cannot claim tasks or renew leases.
         const file = u.searchParams.get('file');
@@ -270,7 +298,10 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
         const lease = connection.touch(client, active !== null && !readOnly, u.searchParams.get('visibility') || 'visible');
         if (!lease.ok) return reply(409, { code: lease.code, error: lease.code === 'OPERATION_UNCERTAIN' ? 'The previous operation\'s result is not confirmed yet; repeated execution was blocked' : 'Reconnecting', retryable: lease.code === 'CONNECTION_IN_USE' });
         if (readOnly && current.state === 'running' && claimer !== client) await complete(current, { id: current.id, ok: false, executionStarted: false, error: ABANDONED });
-        if (u.pathname === '/heartbeat') return reply(200, { connected: true, active });
+        if (u.pathname === '/heartbeat') {
+          if (current && held === current.id) noteProgress(current, u.searchParams.get('progress'));
+          return reply(200, { connected: true, active, ...(current && held === current.id && cancels.has(current.id) ? { cancel: true } : {}) });
+        }
         const claimable = () => !stopping && active && jobs.get(active)?.state === 'queued' && !deliveries.has(active);
         if (!claimable() && !stopping && pollHoldMs > 0) {
           await /** @type {Promise<void>} */ (new Promise(resolve => {
@@ -312,6 +343,18 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
         // Finish the response before closing, since close cuts every connection. Premature client disconnect also emits close.
         res.once('close', () => { void close(); });
         return reply(202, { stopping: true, sessionId, pid: process.pid, active, unresolved: [...unresolved] });
+      }
+      // Cancel active runs: undelivered work is recorded unexecuted; delivered work stores a request that the next heartbeat passes to the plugin for failure completion (see plugin/main.js progress and cancellation).
+      if (u.pathname === '/cancel') {
+        const job = jobs.get(data.id);
+        if (!job || data.id !== active) return reply(409, { code: 'NOT_ACTIVE', error: 'Only the current in-flight job can be cancelled: this job has finished or does not belong to the current session; read its result with wait or result' });
+        if (job.operation !== 'run') return reply(409, { code: 'NOT_RUN', error: 'cancel is only for run: read-only jobs do not modify the document; wait for it to finish, or reopen the plugin in Figma' });
+        if (job.state === 'queued' && !deliveries.has(job.id)) {
+          await complete(job, { id: job.id, ok: false, executionStarted: false, error: 'Cancelled before delivery: the job had not reached the plugin; the script did not run' });
+          return reply(200, { id: job.id, cancelled: 'before-delivery' });
+        }
+        cancels.add(job.id);
+        return reply(202, { id: job.id, cancelRequested: true });
       }
       if (u.pathname === '/approve') {
         const job = jobs.get(data.id);

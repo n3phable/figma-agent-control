@@ -93,9 +93,13 @@ html.check -> match / attrib / shift / layout / structure / suggest / zoom
 | [png](../src/png.mjs), [image-diff](../src/image-diff.mjs), [frames](../src/frames.mjs) | Host analysis is independent of document execution; exported evidence can be inspected offline |
 | [report](../src/report.mjs) | Aggregation reads completed evidence without changing sessions or job state |
 
+The bridge keeps a small set of runtime owners: `active` for the one in-flight slot, `unresolved` for unknown writes, `jobs` for current/recovered records, and per-operation promises for delivery/completion/checkpoint/approval writes. Concurrent duplicate requests share the same persistence operation. Checkpoint contents and approval decisions are immutable. Shutdown waits for in-progress persistence before classifying unfinished work.
+
 ### Plugin and libraries
 
 Figma loads one main script. Source is split into [main.js](../plugin/main.js) for execution and [extract.js](../plugin/extract.js) for read-only extraction, then concatenated at installation. They share a classic-script global scope. The extract contract is referenced during type checking.
+
+Run scripts are compiled with `new Function`, so plugin globals remain reachable. Keep new top-level plugin names deliberate; scripts should declare their own variables. The `figma` proxy tracks supported async calls and cancellation, while nodes remain original API objects.
 
 ## Key flows
 
@@ -128,6 +132,10 @@ The CLI waits by observing evidence files and writes the job ID to stderr first.
 `result.json` is the commit point. A queued job that was never delivered can be recorded as nonexecuted. A delivered run without a result is unknown and blocks future runs. Built-in reads remain available so the user/agent can inspect the target. Resolve requires a current-session direct inspection and an assertion that the previous plugin stopped; it ends the wait without inventing success or undoing anything.
 
 Late results can still land for recovered jobs. Results belonging to another project receive `FOREIGN_JOB` and stay in the iframe until their bridge returns. Diagnostics prioritize that cause so a generic “restart the plugin” instruction does not discard a real result.
+
+### Progress and cancellation
+
+The execution proxy tracks outstanding `figma.*Async` calls and supported namespaces, retaining their call-site stack. Progress carries preparation/approval/script/finish phase, elapsed time, page-local changes, and the oldest pending calls. The bridge maps stack locations to script/library files and persists `progress.json` for a timed-out CLI.
 
 ### Extraction and HTML
 

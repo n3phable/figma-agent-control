@@ -19,6 +19,9 @@ let boundNodeId = null;
 let checkpointWaiter = null;
 /** @type {Waiter | null} */
 let approvalWaiter = null;
+// The currently executing run: cancellation must match its task ID and channelNonce.
+/** @type {{ id: string, channelNonce: string, cancel(): void } | null} */
+let execution = null;
 // Web components often have nested wrappers; cover typical component trees without increasing the total node budget.
 const SNAPSHOT_DEPTH = 32, NODE_BUDGET = 2000;
 // If snapshots exceed budget, trade depth for scope on writes. Shrinking the target outside the written area would make change sets, write-ahead evidence and final checks describe unrelated nodes.
@@ -235,13 +238,6 @@ async function localVariables(target) {
   };
 }
 
-// -- Extraction ---------------------------------------------------------
-// Built-in read-only extraction executes no user script. Serialize the target subtree in target coordinates, preserving layers, masks, clipping, visible paints and effects;
-// deep copies retain boundVariables inside paints and effects. The host decides approximation and baking. Reference images, original bitmap bytes and explicit islands use the binary channel;
-// automatic island SVG strings deduplicate by content. Only read/export APIs are called; finally restores the sole modified plugin state, skipInvisibleInstanceChildren.
-// Traverse SLOT as a container like FRAME, without special handling.
-
-
 // -- Script compilation -------------------------------------------------
 // Nest each library and the body in its own function scope: earlier libraries are outermost, with the body inside and able to call their functions directly;
 // duplicate names shadow outer declarations instead of causing redeclaration errors. Library top-level code evaluates with the body inside Undo boundaries.
@@ -268,22 +264,27 @@ async function settleEvents(count) {
     if (count() !== seen) { seen = count(); last = now; }
   }
 }
-// Listener registration failure only warns; stop is idempotent. created returns surviving nodes without a newly created ancestor, or null when listening is unavailable.
+// Registration failure only warns; stop is idempotent. activity feeds progress. created returns surviving nodes without a newly created ancestor, or null when listening is unavailable.
 // Call deletedFrom after created, once events settle: count preexisting nodes with DELETE events that no longer exist. Nodes moved to another page still exist and do not count.
 // detachInstance and flatten replace existing content with new IDs, emitting CREATE for replacements in observed behavior. Cleanup would treat them as new and remove them; this count supports the warning.
 // Observed createComponent and createComponentFromNode results emit no CREATE, so they do not enter created and are not deleted.
 /** @param {PageNode} page @param {string[]} warnings */
 function watchCreated(page, warnings) {
-  const ids = /** @type {Set<string>} */ (new Set()), deleted = /** @type {Set<string>} */ (new Set());
+  const ids = /** @type {Set<string>} */ (new Set()), deleted = /** @type {Set<string>} */ (new Set()), activity = { changes: 0, lastChangeAt: 0 };
   /** @param {NodeChangeEvent} event */
   const onChange = event => {
-    for (const change of event.nodeChanges) if (change.origin !== 'REMOTE') { if (change.type === 'CREATE') ids.add(change.id); if (change.type === 'DELETE') deleted.add(change.id); }
+    for (const change of event.nodeChanges) if (change.origin !== 'REMOTE') {
+      activity.changes++; activity.lastChangeAt = Date.now();
+      if (change.type === 'CREATE') ids.add(change.id); if (change.type === 'DELETE') deleted.add(change.id);
+    }
   };
   let listening = false;
   try { page.on('nodechange', onChange); listening = true; }
   catch (error) { warnings.push('nodechange listener unavailable; created nodes cannot be listed if the script fails: ' + String(error)); }
   return {
     stop() { if (listening) try { page.off('nodechange', onChange); } catch (_) {} listening = false; },
+    // Progress reports this run's target-page change count and last-change time; unavailable listening leaves the count at zero.
+    activity: () => activity,
     /** @param {Set<string>} existing */
     async deletedFrom(existing) { let n = 0; for (const id of deleted) if (existing.has(id)) { const node = await figma.getNodeByIdAsync(id); if (!node || node.removed) n++; } return n; },
     async created() {
@@ -294,6 +295,88 @@ function watchCreated(page, warnings) {
       const found = new Set(nodes.map(node => node.id));
       return nodes.filter(node => { for (let up = node.parent; up; up = up.parent) if (found.has(up.id)) return false; return true; });
     }
+  };
+}
+
+// -- Failure evidence: new variables and styles ---------------------------
+// Collections, variables and styles are not nodes and do not emit nodechange. Record local IDs before execution and report additions as createdAssets on failure. Never delete them; clean handles nodes only.
+// Custom animation-style reads belong to Motion (Beta); skip when the API is unavailable.
+async function localAssets() {
+  const motion = 'getLocalCustomAnimationStylesAsync' in figma ? [figma.getLocalCustomAnimationStylesAsync()] : [];
+  const [collections, variables, ...styles] = await Promise.all([figma.variables.getLocalVariableCollectionsAsync(), figma.variables.getLocalVariablesAsync(),
+    figma.getLocalPaintStylesAsync(), figma.getLocalTextStylesAsync(), figma.getLocalEffectStylesAsync(), figma.getLocalGridStylesAsync(), ...motion]);
+  const brief = (/** @type {{ id: string, name: string }[]} */ list) => list.map(({ id, name }) => ({ id, name }));
+  return { collections: brief(collections), variables: brief(variables), styles: brief(styles.flat()) };
+}
+/** @typedef {Awaited<ReturnType<typeof localAssets>>} Assets */
+/** @param {Assets} before @param {Assets} after */
+const newAssets = (before, after) => Object.fromEntries(Object.entries(after)
+  .map(([kind, list]) => { const had = new Set(before[/** @type {keyof Assets} */ (kind)].map(a => a.id)); return /** @type {const} */ ([kind, list.filter(a => !had.has(a.id))]); })
+  .filter(([, list]) => list.length));
+// Post-failure evidence also uses async Figma APIs. If cancellation followed a stalled Figma call, these may stall too; bound them with timeouts and warn on expiry.
+/** @template T @param {Promise<T>} promise @param {string} what @returns {Promise<T>} */
+const timed = (promise, what) => {
+  let timer = 0;
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Error(`${what} did not finish within 15 s`)), 15000); })]).finally(() => clearTimeout(timer));
+};
+
+// -- Execution progress and cancellation --------------------------------
+// Scripts can stall in calls that never return (two observed stalls lasted about 27 minutes). Agents need a visible call site and cancellation. Scripts and libraries receive a figma proxy that records pending
+// Track Async calls, start times and call-site stacks for bridge source mapping, along with target-page activity. Report after 1 s of execution, then every 2 s through iframe heartbeats, which throttle to roughly one minute while hidden.
+// The proxy targets an empty object and forwards reads/writes to real figma, avoiding invariants imposed by figma property descriptors. Bind methods back to figma and wrap only namespaces with frequent async calls.
+// Return nodes unchanged because API arguments require the original objects; node-owned async methods such as exportAsync are therefore not tracked.
+// Cancellation immediately rejects the execution race. The failure path still records created and performs cleanOnFail; the error stack uses the oldest pending call's origin.
+// Suspended scripts cannot be externally terminated. Future figma-proxy access throws, but writes through previously obtained nodes cannot be blocked; disclose this in the result.
+const FIRST_PROGRESS_MS = 1000, PROGRESS_MS = 2000, TRACKED = new Set(['variables', 'motion', 'teamLibrary', 'clientStorage', 'annotations']);
+function watchExecution() {
+  const pending = /** @type {Map<number, { call: string, at: number, stack: string }>} */ (new Map());
+  let seq = 0, stopped = '', reject = /** @type {(error: unknown) => void} */ (() => {});
+  const cancelled = /** @type {Promise<never>} */ (new Promise((_, no) => { reject = no; }));
+  /** @param {any} real @param {string} prefix @returns {any} */
+  const wrap = (real, prefix) => {
+    const namespaces = /** @type {Map<string, unknown>} */ (new Map());
+    return new Proxy(Object.create(null), {
+      get(_, key) {
+        if (stopped) throw Error(stopped);
+        const value = real[key];
+        if (typeof key !== 'string') return value;
+        if (prefix === 'figma' && TRACKED.has(key) && value && typeof value === 'object') { if (!namespaces.has(key)) namespaces.set(key, wrap(value, `figma.${key}`)); return namespaces.get(key); }
+        if (typeof value !== 'function') return value;
+        if (!key.endsWith('Async')) return value.bind(real);
+        return (/** @type {unknown[]} */ ...args) => {
+          const id = ++seq, done = () => { pending.delete(id); };
+          pending.set(id, { call: `${prefix}.${key}`, at: Date.now(), stack: String(Error().stack ?? '').slice(0, 1000) });
+          const result = value.apply(real, args);
+          Promise.resolve(result).then(done, done);
+          return result;
+        };
+      },
+      set(_, key, value) { if (stopped) throw Error(stopped); real[key] = value; return true; },
+      has: (_, key) => key in real,
+      ownKeys: () => Reflect.ownKeys(real),
+      getOwnPropertyDescriptor(_, key) { const d = Reflect.getOwnPropertyDescriptor(real, key); return d && { ...d, configurable: true }; }
+    });
+  };
+  let reports = 0;
+  return {
+    api: wrap(figma, 'figma'), cancelled,
+    // Order pending calls by start time, with the oldest most likely stalled. Include only its stack to keep heartbeat URLs bounded.
+    /** @param {number} started @param {{ changes: number, lastChangeAt: number }} activity */
+    progress(started, activity) {
+      const now = Date.now(), waiting = [...pending.values()];
+      return { seq: ++reports, elapsedMs: now - started, changes: activity.changes, ...(activity.lastChangeAt ? { lastChangeAgoMs: now - activity.lastChangeAt } : {}),
+        waiting: waiting.slice(0, 3).map((p, i) => ({ call: p.call, forMs: now - p.at, ...(i ? {} : { stack: p.stack }) })), waitingCount: waiting.length };
+    },
+    cancel() {
+      if (stopped) return;
+      const oldest = pending.values().next().value;
+      const error = Error(oldest ? `Aborted by cancel: the script was waiting on ${oldest.call}, which had not returned after ${Math.round((Date.now() - oldest.at) / 1000)} s`
+        : 'Aborted by cancel: the script was not waiting on a figma async call; it may be waiting on a node async method (e.g. exportAsync) or on its own Promise');
+      if (oldest) try { error.stack = oldest.stack; } catch (_) { /* Omit location if stack is read-only.*/ }
+      stopped = 'The job was cancelled; the script can no longer call figma';
+      reject(error);
+    },
+    get wasCancelled() { return stopped !== ''; }
   };
 }
 
@@ -336,6 +419,10 @@ figma.ui.onmessage = async job => {
   // Check for a waiter first: when a reply lacks id, optional chains can both equal undefined, then reading fields from null would throw.
   if (job?.type === 'approval-ack') {
     if (approvalWaiter && approvalWaiter.id === job.id && approvalWaiter.channelNonce === job.channelNonce) approvalWaiter.finish(job);
+    return;
+  }
+  if (job?.type === 'cancel') {
+    if (execution && execution.id === job.id && execution.channelNonce === job.channelNonce) execution.cancel();
     return;
   }
   if (job?.type === 'checkpoint-ack') {
@@ -417,15 +504,27 @@ figma.ui.onmessage = async job => {
       const existing = job.cleanOnFail ? new Set(page.findAll().map(node => node.id)) : null;
       // For non-page targets, synchronously record direct page children at low cost: create* without appendChild leaves new nodes at page root, outside the target change set. Page targets already cover them.
       const rootChildren = (/** @type {PageNode} */ p) => p.children.map(({ id, name, type }) => ({ id, name, type })), rootBefore = target.type === 'PAGE' ? null : rootChildren(page);
+      const assetsBefore = await localAssets().catch(error => { warnings.push('Cannot read variables and styles before execution; created variables and styles cannot be listed if the script fails: ' + String(error)); return null; });
       if (typeof figma.commitUndo !== 'function') throw Error('This environment does not support Undo boundaries; the script did not run');
       const commitUndo = figma.commitUndo.bind(figma);
       try { commitUndo(); undoBoundaries.before = 'committed'; }
       catch (error) { undoBoundaries.before = 'failed'; throw error; }
       watch = watchCreated(page, warnings);
+      const tracker = watchExecution(), startedAt = Date.now(), activity = watch.activity;
+      execution = { id: job.id, channelNonce: job.channelNonce, cancel: tracker.cancel };
+      let ticker = 0;
+      const report = (/** @type {number} */ ms) => { ticker = setTimeout(() => { send({ type: 'progress', id: job.id, ...tracker.progress(startedAt, activity()) }); report(PROGRESS_MS); }, ms); };
+      report(FIRST_PROGRESS_MS);
       executionStarted = true;
       let boundaryFailure;
-      try { output = await /** @type {Function} */ (program)(figma, target, job.data ?? null); }
+      try {
+        const script = /** @type {Promise<unknown>} */ (/** @type {Function} */ (program)(tracker.api, target, job.data ?? null));
+        script.catch(() => {});
+        output = await Promise.race([script, tracker.cancelled]);
+      }
       catch (error) { scriptFailure = { error }; }
+      finally { clearTimeout(ticker); execution = null; }
+      if (tracker.wasCancelled) warnings.push('A suspended script cannot be terminated from outside: if the call it waits on returns later, the script resumes; further figma access throws, but direct writes through nodes it already holds cannot be blocked. To stop it completely, close and reopen the plugin in Figma');
       // Create history boundaries for success and partial failure alike; never trigger global Undo automatically.
       try { commitUndo(); undoBoundaries.after = 'committed'; }
       catch (error) {
@@ -437,7 +536,7 @@ figma.ui.onmessage = async job => {
         // If the ending boundary fails, cleanup cannot be a separate step, so report without deletion. Preserve new nodes that are or contain preexisting nodes, recording cleanFailed.
         // Evidence/cleanup errors only warn; report the original script error. Read names/types before deletion because removed-node properties are inaccessible. Parent and owned-subtree size (excluding instance internals; leaves lack findAll) support deferred clean, matching src/clean.mjs.
         try {
-          const nodes = await watch.created();
+          const nodes = await timed(watch.created(), 'Listing created nodes');
           if (nodes) {
             const created = nodes.map(node => ({ id: node.id, name: node.name, type: node.type, parentId: node.parent?.id ?? null, size: 'findAll' in node ? node.findAll(child => !child.id.startsWith('I')).length : 0 }));
             leftovers.created = created;
@@ -462,6 +561,8 @@ figma.ui.onmessage = async job => {
             }
           }
         } catch (error) { warnings.push('Failed to list or clean up created nodes: ' + String(error)); }
+        if (assetsBefore) try { const created = newAssets(assetsBefore, await timed(localAssets(), 'Listing created variables and styles')); if (Object.keys(created).length) leftovers.createdAssets = created; }
+        catch (error) { warnings.push('Failed to list created variables and styles: ' + String(error)); }
       }
       if (boundaryFailure) throw boundaryFailure;
       if (scriptFailure) throw scriptFailure.error;

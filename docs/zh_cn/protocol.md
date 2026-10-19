@@ -184,6 +184,7 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 | `bindingVerified` | 实际核验的文件、页面和节点 |
 | `undoBoundaries` | `before`、`after`，以及可选的清理边界 `clean` 的结果 |
 | `created`, `cleaned`, `cleanFailed` | 失败脚本的新建节点跟踪与清理结果 |
+| `createdAssets` | 新建且仍存在的集合、变量和样式；条目为 `{id,name}` |
 | `deletedExisting` | 同时执行了清理的 run 在执行期间删除的已有节点数 |
 | `warnings`, `binaryErrors` | 取证/清理限制与二进制传输问题 |
 | `pluginMs`, `approvalMs`, `finishedAt` | 不含确认的执行耗时、确认耗时和结果落盘时间 |
@@ -209,6 +210,8 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 如果清理删除了节点，且执行期间原目标页上的节点消失，`deletedExisting` 会统计事件报告的顶层删除数，并追加警告。detach/flatten 等替换 ID 的操作可能让已有内容看起来像新建。主动撤销清理步骤可以找回这些内容；脚本对已有节点的修改绝不自动回滚。
 
 新建跟踪不覆盖其他页面，也不覆盖脚本正文已经成功完成后的失败，例如序列化失败。新建组件可能不发出 CREATE。执行期间本地用户的编辑无法与脚本编辑区分。清理保护也不覆盖从其他页面移入的已有内容。取证或清理错误只追加警告，保留原始脚本错误。
+
+集合、变量和样式通过执行前后 ID 比较识别，不依赖节点事件。`createdAssets` 只报告它们；两条清理路径都不会删除这些资源。每项失败后的取证读取都有 15 秒超时。摘要节点列表最多展开五十项，并给出省略数量。
 
 ### 延后清理：`clean`
 
@@ -263,20 +266,35 @@ pass = expect === "changed" ? changed : !changed
 
 只要 `result.json` 已存在，完成回传就是幂等的，即使当前内存中没有该任务。既未载入、磁盘上也未完成的任务返回 `409 FOREIGN_JOB`，不写任何证据；插件保留原结果，等待正确项目。重启前已 resolve、因而有意不再载入的 run 也适用这条规则。其旧插件必须关闭后重新运行；已经核验的原结果仍保持未知。
 
+### 进度与取消
+
+插件在收到 run 后一秒首次报告进度；计时器可运行时，之后每两秒报告一次：
+
+```text
+{seq, phase, elapsedMs, changes?, lastChangeAgoMs?, waiting?, waitingCount?}
+```
+
+取消无法终止已经挂起的 JavaScript 后续执行，也无法终止已经发出的宿主调用。之后经代理的访问会抛错，但通过此前已取得节点进行的直接写入无法阻止。结果会以警告说明该限制。要终止后续执行，应停止并重新运行插件。读取任务不能取消；同步工作必须先让出控制，取消才有机会被处理。
+
 ## 桥接接口
 
 | 接口 | 角色 | 契约 |
 |---|---|---|
+| `GET /status` | CLI | 绑定、连接、在途/未决任务、插件版本、最近二十个任务，以及可选的进度和取消请求 |
 | `POST /job` | CLI | 提交任务 |
 | `GET /result?id=` | CLI | 当前会话结果；CLI 通常直接从磁盘读取证据 |
 | `POST /resolve` | CLI | 检查后核验未知写入 |
+| `POST /cancel` | CLI | `200 {cancelled:"before-delivery"}` 或 `202 {cancelRequested:true}`；其他情况为 `409 NOT_ACTIVE` / `NOT_RUN` |
 | `POST /shutdown` | CLI | 必须提供 `{force:boolean}`；有 queued/running 任务且未 force 时返回 `409 ACTIVE_JOB`；否则先返回 `202` 再关闭 |
 | `GET /poll` | 插件 | 领取任务，或将空响应最多挂起十秒 |
+| `GET /heartbeat` | 插件 | 身份探测、租约续期、任务/进度报告，或挂起的取消通道 |
 | `POST /checkpoint` | 插件 | 保存写前快照 |
 | `POST /approve` | 插件 | 对本会话交付的高风险 run 作出不可更改的决定 |
 | `POST /complete` | 插件 | 幂等完成，先到的结果生效；不要求持有当前租约 |
 
 每个请求都带 `X-Session-Token`，插件路由还必须带 `X-Plugin-Version`。CLI 与插件凭证分开且限定角色。插件凭证不符返回 `403 PAIRING_MISMATCH`，不回显凭证；CLI 凭证不符返回 `403`。版本不符返回 `409 PLUGIN_OUTDATED`。
+
+插件正式请求带 `client`、`visibility` 和当前文件 `file`。执行心跳还带 `job` 和可选的 `progress`。文件错误或缺失时，不发任务也不续租。持有未知任务时返回 `409 FOREIGN_JOB`，同样不续租。探测不取得或续期租约。前台租约为 15 秒，后台为 90 秒。在途 run 会阻止替换其插件实例；读取任务在租约过期后可以被放弃并由其他实例接管。
 
 每个响应都带 `X-Figma-Session`。已认证插件响应还带 `X-Figma-Binding`，包含绑定 ID、文件 key、节点 ID 和项目目录名。响应头 JSON 把非 ASCII 字符转义为 `\uXXXX`，iframe 通过 JSON 解析还原。CORS 暴露这些响应头和 `X-Long-Poll`。会话变化会触发重新核验文件。
 
@@ -538,9 +556,12 @@ Stdout 只包含一个 JSON 对象。错误形状为 `{error,code}`，错误文�
 
 摘要 `output` 超过 16 KiB UTF-8 时，替换为读取命令。Extract 输出始终只给结构形状/读取命令，另带 `extract:{stats,islandsSkipped,warnings}`；最多展开五十个跳过 ID，以及二十条各不超过 600 字符的警告，并给出省略数量。
 
+`cancel` 发起取消后按 `wait` 的方式等待。缺省等待三十秒，可配置为 1–300 秒：
+
 | `waitStatus` | 含义 |
 |---|---|
 | `completed` | 结果已落盘 |
+| `timeout` | 任务可能仍在运行；有进度时附带进度及 wait/cancel 指引 |
 | `needs-review` | 恢复证据要求执行给出的核验动作 |
 | `resolved` | 已核验，但原执行结果仍然未知 |
 
@@ -567,6 +588,14 @@ HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SAN
 ## 准备阶段顺序
 
 当前目标复核发生在前图导出及后续准备读取之前。准备期间保持目标不变。
+
+## 取消边界
+
+未交付的 run 可记为未执行。交付后在脚本执行阶段请求取消。准备、确认和写前日志等待使用各自的超时，随后检查返回的执行状态。
+
+## 后台进度
+
+进度与取消送达仍依赖计时器心跳。隐藏的 Figma 窗口可能使它们明显延迟；判断任务停滞前先让窗口可见。
 
 ## 动效回滚值
 

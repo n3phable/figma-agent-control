@@ -72,6 +72,10 @@ Read `instruction`, then `ok`, `error`, `executionStarted`, `changes`, `verify`,
 
 ## Recover deliberately
 
+After a partial script failure, inspect `created` subtrees before `clean <job-id>`. Cleanup rechecks page, name, type, parent, and subtree count and skips mismatches. Its separate Undo step covers eligible new nodes; repair existing edits and handle `createdAssets` separately. Read the documented limits around ID-replacing operations and imported existing content.
+
+For a stalled run, inspect `progress`. Make a throttled Figma window visible. Growing changes warrant waiting; a stuck call may warrant `cancel <job-id>`. Existing node references can still be written if a pending call resumes after cancellation. Closing/reopening the plugin terminates that continuation. Do not kill Figma, trigger generic global Undo, or erase evidence as a shortcut.
+
 Save recurring script sequences and stop at the first nonzero status. An unfinished step must be waited on or reviewed before the next write.
 
 ## Export and deliver
