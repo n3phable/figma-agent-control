@@ -509,6 +509,6 @@ export function embed(html, uris) {
   const out = html.replace(/ (?:style|src)="[^"]*"/g, attr => attr.replace(/(url\(&quot;|src=")fac-asset:([0-9a-z]+)/g, (m, at, k) => Object.hasOwn(uris, k) ? at + uris[k] : (missing.add(k), m)));
   return { html: out, missing: [...missing] };
 }
-const MIME = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', pdf: 'application/pdf', bin: 'application/octet-stream' };
+const MIME = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', pdf: 'application/pdf', mp4: 'video/mp4', webm: 'video/webm', bin: 'application/octet-stream' };
 /** @param {BinaryFile['type']} type Use the bridge-persisted type without sniffing bytes again. @param {Uint8Array} bytes */
 export const dataUri = (type, bytes) => `data:${MIME[type]};base64,${Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64')}`;

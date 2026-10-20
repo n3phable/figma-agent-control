@@ -73,13 +73,15 @@ test('Preview images use ordinal and node names; binary placeholders become file
     assert.equal(image.base64, undefined);
   }
 
-  const pdf = Buffer.from('%PDF-1.4\n');
-  const binary = await b.finish(RUN, { ok: true, executionStarted: true, binaries: [b64(red), b64(pdf)],
-    output: { chart: { __figmaAgentControlBinary: 0 }, list: [{ __figmaAgentControlBinary: 1 }], bad: { __figmaAgentControlBinary: 5 } } });
-  const { chart, list: [doc], bad } = binary.result.output;
+  // Headers from real Figma exports: MP4 has ftyp at bytes 4-8; WebM starts with the EBML magic bytes 1A 45 DF A3.
+  const pdf = Buffer.from('%PDF-1.4\n'), mp4 = Buffer.from('\x00\x00\x00\x1cftypisom', 'latin1'), webm = Buffer.from('\x1a\x45\xdf\xa3\x10\x00\x00\x1f', 'latin1');
+  const binary = await b.finish(RUN, { ok: true, executionStarted: true, binaries: [b64(red), b64(pdf), b64(mp4), b64(webm)],
+    output: { chart: { __figmaAgentControlBinary: 0 }, list: [{ __figmaAgentControlBinary: 1 }], bad: { __figmaAgentControlBinary: 5 }, video: [{ __figmaAgentControlBinary: 2 }, { __figmaAgentControlBinary: 3 }] } });
+  const { chart, list: [doc], bad, video } = binary.result.output;
   assert.deepEqual([chart.file, chart.type, chart.bytes, chart.sha256, chart.width, chart.height], ['files/output-1.png', 'png', red.length, sha256(red), 2, 2]);
   assert.deepEqual(await fs.readFile(path.join(b.run(binary.id), chart.file)), red);
   assert.deepEqual([doc.file, doc.type, doc.sha256], ['files/output-2.pdf', 'pdf', sha256(pdf)]);
+  assert.deepEqual(video.map(v => [v.file, v.type, v.width]), [['files/output-3.mp4', 'mp4', undefined], ['files/output-4.webm', 'webm', undefined]]);
   assert.deepEqual(bad, { binaryUnavailable: true });
   assert.ok(binary.result.binaryErrors.length > 0, 'Invalid placeholders are recorded in binaryErrors');
   assert.equal(binary.result.ok, true, 'Binary problems do not change the script result');
@@ -421,7 +423,7 @@ test('Missing templates make start report ENOENT without leaving bridge.lock or 
   const pkg = path.join(cwd, 'pkg'), source = file => fileURLToPath(new URL('../' + file, import.meta.url));
   await fs.cp(source('src/'), path.join(pkg, 'src'), { recursive: true });
   await fs.mkdir(path.join(pkg, 'plugin'));
-  await fs.copyFile(source('plugin/main.js'), path.join(pkg, 'plugin', 'main.js'));
+  for (const file of ['main.js', 'extract.js']) await fs.copyFile(source('plugin/' + file), path.join(pkg, 'plugin', file));
   const { start: startCopy } = await import(pathToFileURL(path.join(pkg, 'src', 'bridge.mjs')).href);
   await assert.rejects(startCopy(cwd, 0, { pluginToken: 'a'.repeat(64) }), { code: 'ENOENT' });
   assert.equal(await exists(path.join(root(cwd), 'bridge.lock')), false);

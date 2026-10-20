@@ -36,6 +36,8 @@ Start work when `connected` is `true`. The current working directory is the proj
 
 - One bridge executes one job at a time. Multiple agents should retrieve data sequentially, then analyze it independently offline.
 
+- Long polling continues while the panel is hidden. Reconnecting after a bridge restart may wait for a throttled timer. Figma can also throttle an invisible window or background file; see [stalled jobs](#stalled-jobs).
+
 - Plugin-file changes can trigger Figma's development-plugin reload. If the panel reports an outdated plugin, rerun it. Its footer version should match `status.pluginVersion`.
 
 - Finish with `figma-agent-control stop` for a bridge you started and no longer need. It stops the local bridge. Check document synchronization in Figma. Exit code `2` means shutdown is still finishing; check `status` later.
@@ -149,6 +151,8 @@ Read `instruction` first, then the evidence needed to choose the next action:
 | `verify` | Before/after visual check, when requested and the script succeeded |
 | `pageRoot` | Direct children added to or removed from the page root after a successful non-page-target run |
 | `trace` | Up to ten mapped error frames: `{file, line, column, source}`; first frame is the throw site |
+| `created`, `cleaned`, `cleanFailed`, `deletedExisting`, `createdAssets` | Partial-write and cleanup evidence |
+| `progress` | Latest execution progress while the result is pending |
 | `resultFile`, `evidence` | Paths to durable local evidence |
 
 `pageRoot` can reveal a missing `appendChild`, even when the target's change counts are zero. It is a before/after comparison, not attribution: concurrent collaborators and operations that replace IDs can also appear. Inspect before deleting anything.
@@ -207,9 +211,23 @@ When `executionStarted` is `true`, earlier writes may already exist. **Do not re
 
 - `deletedExisting` warns that existing nodes disappeared during execution while cleanup also deleted newly created nodes. Operations such as `detachInstance` and `flatten` can replace existing content with new IDs, making it look newly created. Inspect; if cleanup removed content that should remain, one deliberate Undo in Figma can restore the cleanup step. It does not undo earlier script edits.
 
+- `createdAssets` lists new collections, variables, and styles. Neither cleanup path deletes these. Reuse or remove them deliberately instead of creating duplicates.
+
 Cleanup preserves existing edits, moves, renames and deletions. A delete-then-rebuild script can leave an empty location after cleanup; undoing that cleanup step restores the unfinished replacement. Inspect the original edits separately and repair them deliberately.
 
 Limits matter: creation tracking observes only the target page and only script-thrown failures, not later serialization failures. New components may not emit creation events. Locally created canvas content during the run can be counted; remote collaborators' events are excluded. Existing nodes imported from another page are outside immediate cleanup's protection. Tracking failures are reported as warnings. If the closing Undo boundary fails, nodes are listed but not automatically cleaned. Summary lists are capped at 50 entries, with omitted counts.
+
+### Stalled jobs
+
+`status.progress` and a timed-out wait report the phase:
+
+- `prepare` covers target resolution, snapshots, checkpoint, and before rendering; `approval` waits for the panel; `script` runs the body; `finish` collects evidence. Large targets can make preparation or finishing slow.
+
+- `waiting` tracks proxied `figma.*Async` calls, including supported namespaces. Node methods such as `exportAsync` and a script's own Promises are not tracked.
+
+- Growing `changes` indicates progress. Keep waiting. If a call remains stuck, `cancel <job-id>` requests cancellation and waits for its result.
+
+- Cancellation cannot terminate an already suspended JavaScript continuation. Future accesses through the `figma` proxy throw, but direct writes through node objects already obtained can still occur if the pending call returns. Closing and reopening the plugin is required to terminate that continuation. Do not kill Figma or trigger global Undo as a generic recovery step.
 
 ## Visual verification
 
@@ -243,6 +261,42 @@ figma-agent-control run export.js --depth 1 > out.json 2> receipt.log
 Read `.output[].png.file` from the raw `result.json`, relative to the evidence directory. Include the node ID in delivery filenames to prevent duplicate or empty names from overwriting files.
 
 Do not base64-encode exports into strings. Byte values nested anywhere in the result use a separate binary channel: at most 200 items and 48 MB of total base64 payload, including visual-check images. Oversized string results can lose the whole return value. Lower scale or split a large batch. `useAbsoluteBounds: true` exports the node's box; ordinary previews can include shadows outside it.
+
+## Motion
+
+Use `--lib motion` for Figma Motion, a Beta/private API surface. The generated manifest enables `enablePrivatePluginApi`; availability and behavior depend on Figma and the account. See [MotionSpec](protocol.md#motionspec) for the complete contract.
+
+```sh
+printf '%s\n' 'return readMotion(target)' > read-motion.js
+printf '%s\n' 'return exportMotion(target)' > export-motion.js
+figma-agent-control run read-motion.js --lib motion --node 12:34 --depth 1 > motion-old.json
+jq '.output | del(.issues)' motion-old.json > motion.json
+```
+
+Edit `motion.json`, then apply it with a script such as:
+
+```js
+// apply-motion.js
+const before = (await exportMotion(target)).video;
+const result = await applyMotion(data);
+try {
+  return { ...result, video: (await exportMotion(target, undefined,
+    { differentFrom: before, waitSeconds: 200 })).video };
+} catch (error) {
+  // The write completed; retry only the video export later.
+  return { ...result, exportError: String(error.message) };
+}
+```
+
+Read before editing. An unchanged spec performs no writes. Omitted nodes and keys stay untouched; new presets omit `id`. Keyframes are `[seconds, value, easing?]`, with easing on the segment **ending** at that keyframe. Easing on the first key has no effect. Prefer existing EASING variables through `$name`; custom styles use `@name`.
+
+Fix `beyond-timeline`, `first-key-easing`, `static-track`, and `track-conflict` findings. Treat duration, idle-tail, raw/inconsistent easing, and stagger findings as design judgments. `readMotion(target, {durationRange: [0.1, 1]})` adjusts the duration check.
+
+Write to a top-level frame without a shallow depth when its subtree fits the snapshot budget. Changes to `manualKeyframeTracks`, `animationStyles`, and `timelines` appear in the change set. Components and variant sets themselves cannot receive animation writes; their child layers can. Instance sublayers inherit motion and cannot be edited directly; instances themselves can. Do not detach an instance merely to bypass this limitation without authorization.
+
+Static PNG exports do not show keyframes, so do not use `--expect` for motion. Export video and inspect contact sheets. Video export can lag behind a change or fail for a newly created frame; `exportMotion` retries `Video export failed`, and `differentFrom` also waits for different bytes. Do not use `differentFrom` for a change intended to preserve rendering. Plan-specific limits can affect resolution, frame rate, and export settings.
+
+Additional observed Motion behavior: keyframes do not update static `x`/`opacity`; animation beyond the timeline is accepted but truncated in playback; rotation uses the node center and positive values rotate counterclockwise; values before the first key equal that key's value. COLOR keyframe values are RGBA rather than color-variable aliases. Verify TIMING-variable units and Beta API details in the current editor before depending on them.
 
 ## Exporting HTML
 
@@ -336,10 +390,24 @@ The flag is an assertion that the previous plugin has actually stopped. The insp
 
 - Check cloud synchronization in Figma.
 
+- Motion requires the account's Beta/private APIs. Font discovery currently searches macOS directories; live Desktop acceptance is recorded separately from automated tests.
+
 - Store plugin data with namespaced `setSharedPluginData`, which works with the generated development manifest.
 
 Keep `.figma-agent-control/` out of version control. It includes credentials and design evidence. Deliver only the required result artifacts, retain unreviewed evidence, and stop bridges you started when their work is complete.
 
+## Video frame sampling
+
+`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` samples MP4/WebM in Chrome and writes a labeled contact sheet. The default is eight evenly spaced frames.
+
 ## Connection scope
 
 The bridge uses port 32523. Keep only one project bridge active on the machine. The globally installed plugin can reconnect after a bridge restart; stop the previous project before connecting another.
+
+## Cancellation boundary
+
+An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
+
+## Background progress
+
+Progress and cancellation delivery still depend on timer-driven heartbeats. Hidden Figma windows can delay them substantially; make the window visible before judging a run stalled.

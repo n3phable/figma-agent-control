@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:util, ../src/args.mjs, ./helpers/harness.mjs.
+ * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:util, node:url, ../src/args.mjs, ./helpers/harness.mjs.
  * [OUTPUT]: Node.js test cases and fixture setup for this revision.
  * [POS]: Regression coverage for args; tests use local synthetic inputs and isolated state.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -11,7 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { parse, COMMANDS } from '../src/args.mjs';
+import { fileURLToPath } from 'node:url';
+import { parse, COMMANDS, libName } from '../src/args.mjs';
 import { cliFile } from './helpers/harness.mjs';
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e', ID2 = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
@@ -19,8 +20,8 @@ const URL_ = 'https://www.figma.com/design/k/n?node-id=1-2';
 // Valid positional arguments from the documented usage; resolve also needs two required flags. Independent of COMMANDS to verify the command table itself.
 const POSITIONALS = {
   help: [], init: [URL_], connect: [], stop: [], status: [], doctor: [],
-  run: ['a.js'], inspect: [], preview: [], variables: [], extract: [], clean: [ID], result: [ID], wait: [ID],
-  resolve: [ID], 'image-diff': ['a.png', 'b.png'], report: [], html: [], 'html-check': ['a.html'],
+  run: ['a.js'], inspect: [], preview: [], variables: [], extract: [], clean: [ID], result: [ID], wait: [ID], cancel: [ID],
+  resolve: [ID], frames: ['a.webm'], 'image-diff': ['a.png', 'b.png'], report: [], html: [], 'html-check': ['a.html'],
 };
 const FLAGS = { resolve: ['--inspect', ID2, '--previous-plugin-stopped'], html: ['--node', '1:2', '--out', 'd'] };
 const usageOf = cmd => ({ message }) => message.startsWith('Usage: ' + cmd);
@@ -206,6 +207,24 @@ test('run validates UUID --request-id and nonempty --high-risk reasons, preserve
   assert.deepEqual(opts('run', 'a.js', '--lib', 'outer.js', '--lib', 'inner.js').libFiles, ['outer.js', 'inner.js']);
   assert.deepEqual([opts('run', 'a.js', '--clean-on-fail').cleanOnFail, opts('run', 'a.js').cleanOnFail], [true, undefined]);
   assert.throws(() => parse(['run', 'a.js', '--clean-on-fail', '--clean-on-fail']), /--clean-on-fail may be given only once/);
+});
+
+test('run --lib resolves bare names to bundled lib/<name>.js, preserves mixed local-file order, and suggests a path for unknown bundled names', () => {
+  const [local, motion] = opts('run', 'a.js', '--lib', 'outer.js', '--lib', 'motion').libFiles;
+  assert.deepEqual([local, motion], ['outer.js', fileURLToPath(new URL('../lib/motion.js', import.meta.url))]);
+  assert.throws(() => parse(['run', 'a.js', '--lib', 'nope']), /No built-in library named nope; give local files as a path, e\.g\. \.\/nope\.js/);
+  assert.deepEqual(opts('run', 'a.js', '--lib', './motion', '--lib', 'Motion.js').libFiles, ['./motion', 'Motion.js'], 'Paths or extensions select local files');
+  assert.deepEqual([libName(motion), libName(local), libName('scripts/motion.js')], ['lib:motion', 'outer.js', 'motion.js'], 'Traces name bundled libraries lib:<name> to distinguish same-named scripts');
+});
+
+test('frames parses, deduplicates and sorts up to 24 --at times; --count (2-24) is exclusive and --compare is preserved', () => {
+  assert.deepEqual(opts('frames', 'a.webm', '--at', '0.5, 0,.25,0.5').atSeconds, [0, 0.25, 0.5]);
+  for (const bad of ['', '1,', 'a', '1s', '0.1.2']) assert.throws(() => parse(['frames', 'a.webm', '--at', bad]), /--at needs comma-separated seconds/, JSON.stringify(bad));
+  assert.throws(() => parse(['frames', 'a.webm', '--at', Array.from({ length: 25 }, (_, i) => i).join(',')]), /--at takes at most 24 times/);
+  assert.equal(opts('frames', 'a.webm', '--count', '12').frameCount, 12);
+  for (const bad of ['1', '25', '2.5']) assert.throws(() => parse(['frames', 'a.webm', '--count', bad]), /--count must be an integer 2-24/, bad);
+  assert.throws(() => parse(['frames', 'a.webm', '--at', '0', '--count', '3']), /--at cannot be combined with --count/);
+  assert.equal(opts('frames', 'a.webm', '--compare', ID).compareSource, ID);
 });
 
 // ── resolve ─────────────────────────────────────────────────────────────

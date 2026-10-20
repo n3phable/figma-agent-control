@@ -10,12 +10,30 @@ The [protocol](protocol.md) defines fields, files, and exit codes. The [agent gu
 
 ## Processes and trust boundaries
 
+```text
+Agent --shell--> CLI (one process per command)
+                  |
+                  | HTTP on 127.0.0.1, CLI credential
+                  v
+               Bridge (foreground connect process) --> project evidence
+                  ^
+                  | HTTP on localhost, plugin credential + source version
+                  |
+Figma Desktop: ui.html (iframe relay)
+                  |
+                  | postMessage, per-job channel nonce
+                  v
+               main.js + extract.js --> Figma document
+```
+
 | Component | Responsibility | Boundary |
 |---|---|---|
 | CLI | Parse inputs, submit jobs, read local evidence, run host-side analysis | Does not communicate directly with the plugin |
 | Bridge | Validate, serialize, persist, and recover jobs | Does not access the Figma document |
 | Iframe | Network relay, connection/approval/status UI | Cannot access the document |
 | Execution code | Plugin API access, snapshots, scripts, reads, and exports | Sends no HTTP requests; relays through the iframe |
+
+The split follows Figma's plugin environment. The iframe offers the full browser fetch/visibility behavior needed for timeouts and long polling; document execution remains in the plugin runtime. The generated manifest allows only the localhost development port 32523, uses dynamic-page access, and enables private plugin APIs for functionality such as Motion. Motion availability follows the current Figma version and account access.
 
 ### Credentials and versions
 
@@ -37,7 +55,26 @@ The iframe matches each task message against its ID and random nonce before acce
 
 ## Module structure
 
-The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.md](../src/AGENTS.md), [src/html/AGENTS.md](../src/html/AGENTS.md), [plugin/AGENTS.md](../plugin/AGENTS.md), and lib/AGENTS.md.
+The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.md](../src/AGENTS.md), [src/html/AGENTS.md](../src/html/AGENTS.md), [plugin/AGENTS.md](../plugin/AGENTS.md), and [lib/AGENTS.md](../lib/AGENTS.md).
+
+```text
+bin -> args / client / bridge / session / record / clean / doctor
+    -> report / image-diff / frames / html.command / project
+
+bridge -> connection / session / png / record / project
+client -> session / project
+clean -> record / project
+record / args / report / session -> project
+image-diff -> png / record / project
+frames -> png / record / project / html.chrome
+doctor -> client / session / project / html.chrome
+
+html.command -> extracts / page / overrides / summary / check / chrome
+html.extracts -> client / record / session / project
+html.page -> generate / fonts / match / png / project
+html.generate -> css
+html.check -> match / attrib / shift / layout / structure / suggest / zoom
+```
 
 `project` has no internal dependencies. `connection` is pure in-memory state with an injectable clock. `png` uses only zlib. Bridge and HTML do not import each other: the bridge/record reference the shared extract type contract only through JSDoc. HTML submits through client and reads records. Shared interruption reasons live in session because both sides need them without a circular dependency.
 
@@ -53,7 +90,16 @@ The host dependency graph is acyclic. Detailed inventories live in [src/AGENTS.m
 | [record](../src/record.mjs) | All readers share one interpretation of evidence, summary, exit code, and next action; waits never resubmit |
 | [clean](../src/clean.mjs) | Existing failure evidence becomes an ordinary run, reusing write guarantees without adding an operation |
 | [doctor](../src/doctor.mjs) | Read-only diagnosis can still explain binding, lock, or installation problems when the bridge is unreachable |
+| [png](../src/png.mjs), [image-diff](../src/image-diff.mjs), [frames](../src/frames.mjs) | Host analysis is independent of document execution; exported evidence can be inspected offline |
 | [report](../src/report.mjs) | Aggregation reads completed evidence without changing sessions or job state |
+
+The bridge keeps a small set of runtime owners: `active` for the one in-flight slot, `unresolved` for unknown writes, `jobs` for current/recovered records, and per-operation promises for delivery/completion/checkpoint/approval writes. Concurrent duplicate requests share the same persistence operation. Checkpoint contents and approval decisions are immutable. Shutdown waits for in-progress persistence before classifying unfinished work.
+
+### Plugin and libraries
+
+Figma loads one main script. Source is split into [main.js](../plugin/main.js) for execution and [extract.js](../plugin/extract.js) for read-only extraction, then concatenated at installation. They share a classic-script global scope. The extract contract is referenced during type checking.
+
+Run scripts are compiled with `new Function`, so plugin globals remain reachable. Keep new top-level plugin names deliberate; scripts should declare their own variables. The `figma` proxy tracks supported async calls and cancellation, while nodes remain original API objects.
 
 ## Key flows
 
@@ -86,6 +132,10 @@ The CLI waits by observing evidence files and writes the job ID to stderr first.
 `result.json` is the commit point. A queued job that was never delivered can be recorded as nonexecuted. A delivered run without a result is unknown and blocks future runs. Built-in reads remain available so the user/agent can inspect the target. Resolve requires a current-session direct inspection and an assertion that the previous plugin stopped; it ends the wait without inventing success or undoing anything.
 
 Late results can still land for recovered jobs. Results belonging to another project receive `FOREIGN_JOB` and stay in the iframe until their bridge returns. Diagnostics prioritize that cause so a generic “restart the plugin” instruction does not discard a real result.
+
+### Progress and cancellation
+
+The execution proxy tracks outstanding `figma.*Async` calls and supported namespaces, retaining their call-site stack. Progress carries preparation/approval/script/finish phase, elapsed time, page-local changes, and the oldest pending calls. The bridge maps stack locations to script/library files and persists `progress.json` for a timed-out CLI.
 
 ### Extraction and HTML
 
@@ -138,12 +188,9 @@ Runtime executes `.mjs`/`.js` source directly; JSDoc is checked with lockfile-pi
 |---|---|
 | [Host tsconfig](https://github.com/n3phable/figma-agent-control/blob/main/tsconfig.json) | Node modules and shared extract contract, without Figma globals |
 | [Plugin tsconfig](../plugin/tsconfig.json) | Classic-script main/extract with Figma globals, without Node APIs |
+| [Motion tsconfig](../lib/tsconfig.json) | Motion helper with injected target/data declarations |
 
 The [extract contract](../src/html/extract-contract.d.ts) distinguishes plugin byte arrays, transport placeholders, and landed files. External JSON and dynamic API field access still require assertions; types alone cannot validate real Figma behavior. The optional `node tests/contract-samples.mjs <runs-directory>` checks explicitly supplied extract evidence against the type contract. It does not require or ship a private corpus.
-
-## Extraction ownership
-
-Read-only extraction runs inside plugin/main.js and shares its document-access helpers.
 
 ## Shadow mapping
 

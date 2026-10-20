@@ -58,6 +58,8 @@ const $ = id => document.getElementById(id);
 let pending = null, polling = false, again = false, channelNonce = null;
 // active holds the current task's operation, title, local target, project and start time. After persistence, move it into recent (newest first, at most 5).
 let active = null, recent = [];
+// Latest main-reported execution progress, attached to the next heartbeat; clear on completion or a new claim.
+let progress = null;
 let serverSessionId = null, targetIssue = null, targetFound = false, completeRejects = 0;
 // main supplies fileKey; null means unknown and prevents polling. project identifies the current bridge's project.
 let fileKey = null, project = '';
@@ -162,7 +164,7 @@ function compactFailure(message, minimal = false, error = 'Result exceeds the re
     executionStarted: typeof message.executionStarted === 'boolean' ? message.executionStarted : active?.operation === 'run',
     recovery: 'Keep the existing evidence; narrow the target and inspect independently; do not replay the script' };
   // Created/cleaned node lists and deleted-existing counts are small and essential cleanup evidence. Preserve them with verification fields and script stacks already truncated to 4000 characters.
-  for (const field of ['bindingVerified', 'undoBoundaries', 'created', 'cleaned', 'cleanFailed', 'deletedExisting', 'warnings', 'stack']) if (message[field] !== undefined) result[field] = message[field];
+  for (const field of ['bindingVerified', 'undoBoundaries', 'created', 'cleaned', 'cleanFailed', 'deletedExisting', 'createdAssets', 'warnings', 'stack']) if (message[field] !== undefined) result[field] = message[field];
   if (!minimal) for (const field of ['after', 'before']) {
     if (message[field] === undefined) continue;
     result[field] = message[field];
@@ -213,6 +215,7 @@ window.onmessage = async event => {
     catch { pending = { id: active.id, ok: false, executionStarted: active.operation === 'run', error: 'Result could not be parsed; check the current canvas, do not replay the script' }; void tick(); return; }
   }
   if (!channelNonce || message?.channelNonce !== channelNonce || message.id !== active.id) return;
+  if (message.type === 'progress') { const { type, id, channelNonce: omitted, ...rest } = message; progress = rest; return; }
   if (message.type === 'approval-request') {
     review = message;
     $('approval-reason').textContent = message.reason;
@@ -248,8 +251,11 @@ async function tick() {
   try {
     // Upload pending results directly: /complete does not require a lease, so late results can persist after restart even when another instance owns the lease.
     if (active && !pending) {
-      const heartbeat = await request(route('/heartbeat'));
+      const heartbeat = await request(route('/heartbeat') + (progress ? '&progress=' + encodeURIComponent(JSON.stringify(progress)) : ''));
       if (!heartbeat.ok) throw await failed(heartbeat, "Heartbeat failed; retaining the current task and forbidding replay");
+      // Forward bridge cancellation on every heartbeat. main applies it only to the matching task; duplicates are harmless, and pre-execution cancellation is retained.
+      const beat = await heartbeat.json().catch(() => null);
+      if (beat?.cancel === true && active) parent.postMessage({ pluginMessage: { type: 'cancel', id: active.id, channelNonce } }, '*');
     }
     if (pending) {
       // Upload timeout is 3 s plus 1 s per 10 MB measured in characters. A near-limit 48 MB extract gets about 7.8 s.
@@ -265,7 +271,7 @@ async function tick() {
       completeRejects = 0;
       const endedAt = Date.now();
       recent = [{ ...active, ok: pending.ok, error: pending.error || "This task did not complete", ms: endedAt - active.startedAt, endedAt }, ...recent].slice(0, 5);
-      pending = null; active = null; channelNonce = null;
+      pending = null; active = null; channelNonce = null; progress = null;
       showRecent();
     }
     if (!active) {
@@ -277,7 +283,7 @@ async function tick() {
       if (!job && response.headers?.get?.('X-Long-Poll')) again = true;
       if (job) {
         active = { id: job.id, operation: job.operation, title: job.label || OPERATION_TEXT[job.operation] || job.operation, nodeId: job.targetNodeId, project, startedAt: Date.now() };
-        channelNonce = nextNonce;
+        channelNonce = nextNonce; progress = null;
         parent.postMessage({ pluginMessage: { ...job, channelNonce } }, '*');
       }
     }

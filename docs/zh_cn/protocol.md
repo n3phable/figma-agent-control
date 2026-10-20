@@ -2,6 +2,8 @@
 
 [English](../protocol.md) · [中文文档索引](README.md)
 
+本文定义 CLI、本机桥接、插件 iframe（`ui.html`）、插件执行代码（`main.js` 与 `extract.js`），以及主机侧 HTML 导出之间的契约。实现变更时应同步维护本文。操作步骤见 [Agent 使用指南](agent-guide.md)。
+
 ## 组件与数据流
 
 ```text
@@ -43,6 +45,7 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 |---|---|---|
 | `pairing.json` | `connect` 经 session | 持久化插件凭证，权限 `0600`；首次创建具有独占性；内容损坏时报 `PAIRING_INVALID` |
 | `plugin/manifest.json` | `connect` | 生成的开发插件清单，含 `documentAccess: dynamic-page`、`enablePrivatePluginApi: true`，没有 Figma 分配的插件 ID |
+| `plugin/main.js` | `connect` | 按 `PLUGIN_SCRIPTS` 顺序拼接源码 `plugin/main.js` 与 `plugin/extract.js` |
 
 由于清单没有 Figma 分配的 ID，私有 `setPluginData` 不可用。带命名空间的 `setSharedPluginData` 不依赖该 ID。
 
@@ -70,6 +73,8 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 | `cleanOnFail` | Run | 布尔值；对应 CLI 的 `--clean-on-fail` |
 | `requestId` | 全部 | 用作任务 ID 的小写 UUID；CLI 在 `run` 上开放该参数 |
 | `label` | 全部 | 报告中的来源名；CLI 使用脚本文件名，或 `clean <original-id>` |
+
+CLI 在提交前把裸名 `--lib motion` 解析为内置文件。桥接和插件只接收普通的具名源码字符串，不区分内置库与用户库。
 
 重复的 request ID 以 HTTP `200` 和 `reused:true` 返回原任务。绑定、操作、源码、库、目标、深度、nodes、倍率、data、实际生效的高风险原因、expect、tolerance、islands、cleanup 和 names 必须完全相同，否则返回 `400`。省略 cleanup 与显式 `false` 等价；省略目标与显式传入绑定节点不等价。`label` 不参与比较。该身份检查先于临时拒绝条件，因此即使断连或繁忙，重复请求仍可取回原任务。
 
@@ -179,6 +184,7 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 | `bindingVerified` | 实际核验的文件、页面和节点 |
 | `undoBoundaries` | `before`、`after`，以及可选的清理边界 `clean` 的结果 |
 | `created`, `cleaned`, `cleanFailed` | 失败脚本的新建节点跟踪与清理结果 |
+| `createdAssets` | 新建且仍存在的集合、变量和样式；条目为 `{id,name}` |
 | `deletedExisting` | 同时执行了清理的 run 在执行期间删除的已有节点数 |
 | `warnings`, `binaryErrors` | 取证/清理限制与二进制传输问题 |
 | `pluginMs`, `approvalMs`, `finishedAt` | 不含确认的执行耗时、确认耗时和结果落盘时间 |
@@ -205,6 +211,8 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 
 新建跟踪不覆盖其他页面，也不覆盖脚本正文已经成功完成后的失败，例如序列化失败。新建组件可能不发出 CREATE。执行期间本地用户的编辑无法与脚本编辑区分。清理保护也不覆盖从其他页面移入的已有内容。取证或清理错误只追加警告，保留原始脚本错误。
 
+集合、变量和样式通过执行前后 ID 比较识别，不依赖节点事件。`createdAssets` 只报告它们；两条清理路径都不会删除这些资源。每项失败后的取证读取都有 15 秒超时。摘要节点列表最多展开五十项，并给出省略数量。
+
 ### 延后清理：`clean`
 
 `clean <job-id>` 构造普通 run，因此写前检查点、Undo、未知写入核验和普通证据规则全部适用。插件没有专用的清理操作。
@@ -220,6 +228,8 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 修改前后快照生成 `counts.created`、`deleted`、`moved`、`updated`、`bindingOnly` 和 `positionOnly`。最后三项互斥，分别表示取值变化、仅绑定变化、仅布局导致的位置变化。
 
 节点换父级，或不在前后兄弟节点的最长共同保序子序列中时，记为移动。插入/删除一个兄弟节点不会把其他所有兄弟都记为移动；交换两个兄弟只记一个。updated、created、deleted、moved 各最多展开五十个节点，其余通过 `omitted` 计数。逐节点 `keys` 不包含位置字段。
+
+显式深度会追加 `limitation`，更深处的变化不可见。可用时，快照包含非空 Motion 样式、轨道和所属画框的时间线。修改后快照发生未声明的深度截断，或超出节点预算时，变更集不可用。如果执行失败后，修改后快照也过大，`changes` 与 `after` 场景可能同时缺失，此时应使用 inspect。
 
 比较只覆盖目标子树。通过 `figma` 对目标之外的写入不会被直接观察；页面根直接子节点的增删另由 `pageRoot` 比较记录。
 
@@ -256,20 +266,35 @@ pass = expect === "changed" ? changed : !changed
 
 只要 `result.json` 已存在，完成回传就是幂等的，即使当前内存中没有该任务。既未载入、磁盘上也未完成的任务返回 `409 FOREIGN_JOB`，不写任何证据；插件保留原结果，等待正确项目。重启前已 resolve、因而有意不再载入的 run 也适用这条规则。其旧插件必须关闭后重新运行；已经核验的原结果仍保持未知。
 
+### 进度与取消
+
+插件在收到 run 后一秒首次报告进度；计时器可运行时，之后每两秒报告一次：
+
+```text
+{seq, phase, elapsedMs, changes?, lastChangeAgoMs?, waiting?, waitingCount?}
+```
+
+取消无法终止已经挂起的 JavaScript 后续执行，也无法终止已经发出的宿主调用。之后经代理的访问会抛错，但通过此前已取得节点进行的直接写入无法阻止。结果会以警告说明该限制。要终止后续执行，应停止并重新运行插件。读取任务不能取消；同步工作必须先让出控制，取消才有机会被处理。
+
 ## 桥接接口
 
 | 接口 | 角色 | 契约 |
 |---|---|---|
+| `GET /status` | CLI | 绑定、连接、在途/未决任务、插件版本、最近二十个任务，以及可选的进度和取消请求 |
 | `POST /job` | CLI | 提交任务 |
 | `GET /result?id=` | CLI | 当前会话结果；CLI 通常直接从磁盘读取证据 |
 | `POST /resolve` | CLI | 检查后核验未知写入 |
+| `POST /cancel` | CLI | `200 {cancelled:"before-delivery"}` 或 `202 {cancelRequested:true}`；其他情况为 `409 NOT_ACTIVE` / `NOT_RUN` |
 | `POST /shutdown` | CLI | 必须提供 `{force:boolean}`；有 queued/running 任务且未 force 时返回 `409 ACTIVE_JOB`；否则先返回 `202` 再关闭 |
 | `GET /poll` | 插件 | 领取任务，或将空响应最多挂起十秒 |
+| `GET /heartbeat` | 插件 | 身份探测、租约续期、任务/进度报告，或挂起的取消通道 |
 | `POST /checkpoint` | 插件 | 保存写前快照 |
 | `POST /approve` | 插件 | 对本会话交付的高风险 run 作出不可更改的决定 |
 | `POST /complete` | 插件 | 幂等完成，先到的结果生效；不要求持有当前租约 |
 
 每个请求都带 `X-Session-Token`，插件路由还必须带 `X-Plugin-Version`。CLI 与插件凭证分开且限定角色。插件凭证不符返回 `403 PAIRING_MISMATCH`，不回显凭证；CLI 凭证不符返回 `403`。版本不符返回 `409 PLUGIN_OUTDATED`。
+
+插件正式请求带 `client`、`visibility` 和当前文件 `file`。执行心跳还带 `job` 和可选的 `progress`。文件错误或缺失时，不发任务也不续租。持有未知任务时返回 `409 FOREIGN_JOB`，同样不续租。探测不取得或续期租约。前台租约为 15 秒，后台为 90 秒。在途 run 会阻止替换其插件实例；读取任务在租约过期后可以被放弃并由其他实例接管。
 
 每个响应都带 `X-Figma-Session`。已认证插件响应还带 `X-Figma-Binding`，包含绑定 ID、文件 key、节点 ID 和项目目录名。响应头 JSON 把非 ASCII 字符转义为 `\uXXXX`，iframe 通过 JSON 解析还原。CORS 暴露这些响应头和 `X-Long-Poll`。会话变化会触发重新核验文件。
 
@@ -284,6 +309,69 @@ iframe 与执行代码使用 postMessage。每个任务都有随机 `channelNonc
 包括快照和 base64 在内，超过 65,536 个 JavaScript 字符串字符的任务消息使用 `serialized-result` 封装。结构化部分超过约 16 MB、桥接返回 `413`，或同一完成回传累计收到三次 `400` 时，iframe 改用精简失败证据。其他失败不重置拒收计数，`409 FOREIGN_JOB` 永不触发降级。精简结果保留执行状态、核验后的绑定、脚本失败清理列表、新建资源、警告和 stack。
 
 有待回传结果时，iframe 发送 `/complete` 而非心跳。轮询超时为 15 秒；结果回传为三秒加上每 10 MB 载荷一秒；其他请求为三秒。
+
+## 动效
+
+[lib/motion.js](../../lib/motion.js) 在普通 `run --lib motion` 任务中执行，不增加桥接操作，沿用 run 的写前检查点、Undo 边界和变更集。Motion 属于 Beta/私有 API；清单开启了私有 API 访问，但 Figma 是否提供该能力不由 FAC 控制。
+
+### MotionSpec
+
+| 函数 | 返回值 |
+|---|---|
+| `readMotion(root = target, {durationRange}?)` | 按时间线分组的 MotionSpec，附带 `issues` |
+| `applyMotion(spec = data, root = target)` | `{changes,motion}`；统计 `tracksWritten`、`tracksRemoved`、`stylesApplied`、`stylesRemoved`、`durations`，然后重读 |
+| `exportMotion(node = target, settings = {format:'WEBM',quality:'LOW'}, {waitSeconds=60,intervalMs=3000,differentFrom}?)` | `{frame,video,attempts,waitedMs}`；视频字节按普通二进制流程落盘 |
+| `motionIssues(spec, {durationRange=[0.1,0.5],easingTokens=[]}?)` | 问题数组；readMotion 已包含它 |
+
+```json
+{
+  "timelines":[{"id":"12:34","name":"Card entrance","duration":0.6,"nodes":[
+    {"id":"12:35","name":"card","tracks":{"OPACITY":{"base":1,"keys":[[0,0],[0.3,1,"$motion/standard"]]}},
+     "styles":[{"id":"AnimationPresetId:12:40","preset":"Position","at":0.08,"dur":0.3,"easing":"spring(0.3)","props":{"direction":"bottom","distance":24}}]},
+    {"id":"I12:9;1:4","name":"spinner","inherited":true,"tracks":{"ROTATION":{"base":0,"keys":[[0,0],[1,360]]}}}
+  ]}],
+  "refs":{"$motion/standard":"VariableID:12:50"},
+  "issues":[]
+}
+```
+
+- 时间线 ID 属于其顶层画框或 Section。时长与关键帧时间均以秒计。根节点自己的时间线即使为空也会列出；其他时间线只有包含动效时才列出。
+
+- 轨道路径包括属性名（`OPACITY`、`TRANSLATION_X`）、`fills.0`、`strokes.1`、`effects.0.RADIUS`，以及 `fills.0.properties.<property-id>` 这样的组件属性路径。
+
+- 值使用数字、布尔值、`[x,y]`、`#RRGGBB` / `#RRGGBBAA`；其他类型保留原 `{type,value}` 对象。关键帧为 `[seconds,value,easing?]`。
+
+- 缓动控制以该关键帧结束的区间。支持的短记法包括 `linear`、标准 ease-in/out/back 变体、`hold`、`gentle`、`quick`、`bouncy`、`slow`、`cubic(x1,y1,x2,y2)`、`spring(bounce)` 和 `$variable-name`。未知形式保留原始对象。读取时省略默认手动缓动 `cubic(0.5,0,0.5,1)`。
+
+- 预设使用 `{id,preset,at,dur,easing?,props?}`，`preset` 来自 `figma.motion.figmaAnimationStyles()`。默认 props，以及跟随时间线偏移的 delay 会省略。自定义样式使用 `{id,style:"@name",at}`；新样式省略 `id`。
+
+- `refs` 把 `$` / `@` 记法映射到确切 ID；apply 先查 refs，再查本地名称。变量重名时添加 `#ID` 后缀。实例内部图层标记为 `inherited`。
+
+Apply 是声明式写入：列出的节点只要提供 `tracks` 或 `styles`，就完整同步对应字段，删除多余项，只写实际差异。省略的字段和节点不动。变化的时间线时长会写入。输入未变时不写入，包括只读的继承项和组件项。
+
+视频导出先找到所属顶层画框。遇到 `Video export failed` 时重试；提供 `differentFrom` 时，逐字节相同的导出也会重试。等待有上限，其他错误立即失败。视频导出可能滞后于文档修改：可见改动使用 `differentFrom` 并检查采样帧；应保持画面的改动省略该选项。
+
+问题形状为 `{rule,timeline,node?,message}`，检查不会修改数据：
+
+| 规则 | 含义 |
+|---|---|
+| `beyond-timeline` | 关键帧/预设超过播放或导出时长 |
+| `first-key-easing` | 第一个关键帧上的缓动不起作用 |
+| `static-track` | 少于两个关键帧 |
+| `track-conflict` | 预设与手动轨道竞争同一属性，或同类预设时间重叠 |
+| `duration-range` | 实际运动时长超出配置范围；hold/静止区间会分隔动画段；`null` 关闭此检查 |
+| `idle-tail` | 动效结束后还剩超过 0.5 秒且超过时间线四分之一的空转；时长未知的自定义样式不检查 |
+| `raw-easing` | 已存在 EASING 变量，但变化区间使用原始缓动；hold/静止区间不计 |
+| `inconsistent-easing` | 同预设/类型使用不同缓动 |
+| `irregular-stagger` | 至少三个同预设/类型/时长节点的偏移间隔不均匀 |
+
+### 静帧提取
+
+文件相对于工作目录解析。任务 ID 必须指向成功的 run，且返回值中恰好有一个已落盘的 MP4/WebM；无效来源在启动 Chrome 前失败。不支持 GIF，MP4 编解码支持取决于 Chrome 构建。
+
+显式时刻会去重排序，最多 24 个，且必须在视频时长内。默认从零到结束前 0.05 秒均匀取八个时刻，每个时刻选择覆盖它的那一帧。联系表格子带时间标注，每行最多四格，对照时最多六格，总宽不超过 1,600 px。窄帧以最近邻放大到至少 160 px。对照格把源帧和对照帧上下排列，并标注变化像素。
+
+输出为 `{source,compare?,width,height,duration,sheet,frames:[{t,file?,compareFile?,changedPixels?,sameSize?}],changed?,layout?,warning?,limitation}`。只有 dump 时才给出逐帧文件路径。视频字节相同会追加警告。像素差异沿用 run 画面核验的 `diffPng` 定义。输出写入绑定项目的 `frames/`，或系统临时目录。成功退出 `0`；无效输入或解码失败退出 `1`。
 
 ## HTML 导出
 
@@ -468,9 +556,12 @@ Stdout 只包含一个 JSON 对象。错误形状为 `{error,code}`，错误文�
 
 摘要 `output` 超过 16 KiB UTF-8 时，替换为读取命令。Extract 输出始终只给结构形状/读取命令，另带 `extract:{stats,islandsSkipped,warnings}`；最多展开五十个跳过 ID，以及二十条各不超过 600 字符的警告，并给出省略数量。
 
+`cancel` 发起取消后按 `wait` 的方式等待。缺省等待三十秒，可配置为 1–300 秒：
+
 | `waitStatus` | 含义 |
 |---|---|
 | `completed` | 结果已落盘 |
+| `timeout` | 任务可能仍在运行；有进度时附带进度及 wait/cancel 指引 |
 | `needs-review` | 恢复证据要求执行给出的核验动作 |
 | `resolved` | 已核验，但原执行结果仍然未知 |
 
@@ -482,11 +573,13 @@ HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内
 | `1` | 失败、画面核验失败/不可用、跳过/拒绝清理、跳过显式孤岛或提取二进制不完整，或已核验但结果未知 |
 | `2` | 尚未完成：等待超时或待核验。对 stop，表示已接受关闭，但约五秒后仍未释放锁；应稍后检查状态 |
 
+HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SANDBOX_BLOCKED` 表示 localhost 访问被拒绝，`BRIDGE_DOWN` 表示会话端口无响应，`BRIDGE_TIMEOUT` 表示请求超时，`NO_SESSION` 表示缺少会话文件。
+
 `report --since` 接受 ISO 日期/时间；带时间时必须提供 `Z` 或时区偏移，只有日期则按 UTC 零点处理。`jobs.failed` 统计 `ok:false`；`jobs.verifyFailed` 统计执行成功但画面核验失败/不可用的任务，两者互斥。
 
-## 提取实现位置
+## 视频取帧
 
-只读提取在 plugin/main.js 内实现，并共享文档读取辅助函数。
+`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` 在 Chrome 中采样 MP4/WebM，生成带时刻标记的联系表，默认均匀采样八帧。
 
 ## 连接范围
 
@@ -495,3 +588,15 @@ HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内
 ## 准备阶段顺序
 
 当前目标复核发生在前图导出及后续准备读取之前。准备期间保持目标不变。
+
+## 取消边界
+
+未交付的 run 可记为未执行。交付后在脚本执行阶段请求取消。准备、确认和写前日志等待使用各自的超时，随后检查返回的执行状态。
+
+## 后台进度
+
+进度与取消送达仍依赖计时器心跳。隐藏的 Figma 窗口可能使它们明显延迟；判断任务停滞前先让窗口可见。
+
+## 动效回滚值
+
+回滚从先前解析的 spec 重建写入。报错后应检查变量身份与数值。

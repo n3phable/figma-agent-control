@@ -408,6 +408,21 @@ test('Successful non-page targets report pageRoot additions/removals capped at 5
   assert.deepEqual([inside, failed, page].map(r => [r.ok, 'pageRoot' in r]), [[true, false], [false, false], [true, false]]);
 });
 
+// Real-device readback shape: motionless nodes use [] and {}, and each node's timelines refer to its owning top-level frame by frame ID.
+test('Motion snapshots include only nonempty fields and timelines only on their owning frame, skip throwing getters, and expose keyframe changes', async () => {
+  const f = plugin(), { doc } = f, timelines = [{ id: '1:2', duration: 2 }];
+  const style = { type: 'FIGMA', id: 'AnimationPresetId:9:1', styleId: 'CodeComponentId:9:2', name: 'motion.preset_name.opacity', duration: 0.8, timelineOffset: 0, props: { type: 'fadeIn' } };
+  Object.assign(doc.frame, { animationStyles: [], manualKeyframeTracks: {}, timelines });
+  Object.assign(doc.swatch, { animationStyles: [style], manualKeyframeTracks: {}, timelines });
+  Object.defineProperty(doc.text, 'animationStyles', { get() { throw Error('Motion \u4e0d\u53ef\u7528'); } });
+  const r = await f.send({ code: `(await figma.getNodeByIdAsync("${doc.swatch.id}")).manualKeyframeTracks = { OPACITY: { id: "t", keyframes: [{ timelinePosition: 0, value: { type: "FLOAT", value: 0 } }] } };` });
+  assert.equal(r.ok, true, r.error);
+  const before = f.checkpoints[0].before, motion = n => Object.fromEntries(Object.entries(n).filter(([k]) => ['animationStyles', 'manualKeyframeTracks', 'timelines'].includes(k)));
+  assert.deepEqual(motion(before), { timelines });
+  assert.deepEqual(before.children.map(motion), [{}, { animationStyles: [style] }]);
+  assert.equal(motion(r.after.children[1]).manualKeyframeTracks.OPACITY.id, 't');
+});
+
 // -- Read-only tasks ------------------------------------------------------
 test('inspect returns the target-to-page display chain in top-down order excluding the page, without checkpointing', async () => {
   const f = plugin(), { doc } = f;

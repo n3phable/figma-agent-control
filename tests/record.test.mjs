@@ -330,7 +330,7 @@ test('Summaries give distinct next steps for success, unexecuted failure, execut
   assert.notEqual(verdict.instruction, started.instruction);
 });
 
-test('Failure summaries explain created-node outcomes, cap lists at 50, expose deleted-existing counts and listener warnings, and retain inspect-first/no-replay guidance', async t => {
+test('Failure summaries explain created-node outcomes, cap lists at 50, expose deleted-existing counts/assets/warnings, and retain inspect-first/no-replay guidance', async t => {
   const { write, read } = await evidence(t);
   const failed = { id: ID, operation: 'run', state: 'failed' }, base = { id: ID, ok: false, error: '\u4e2d\u9014\u5931\u8d25', executionStarted: true };
   const nodes = n => Array.from({ length: n }, (_, i) => ({ id: `10:${i + 1}`, name: `FRAME-${i + 1}`, type: 'FRAME' }));
@@ -362,6 +362,13 @@ test('Failure summaries explain created-node outcomes, cap lists at 50, expose d
   await write({ 'result.json': { ...base, created: [], cleaned: [], cleanFailed: [] } });
   const none = summarizeRecord(await read());
   assert.equal(none.instruction, 'The script started running; the document may have been modified; keep the evidence; verify the current state with inspect first; do not replay the script');
+
+  // New variables/styles are outside clean's scope: expose them unchanged and call them out before inspect-first guidance.
+  const assets = { collections: [{ id: 'VariableCollectionId:1:1', name: 'Motion' }], variables: [{ id: 'VariableID:1:2', name: 'motion/ease' }] };
+  await write({ 'result.json': { ...base, createdAssets: assets } });
+  const extra = summarizeRecord(await read());
+  assert.deepEqual(extra.createdAssets, assets);
+  assert.equal(extra.instruction, 'The script started running; the document may have been modified; also created 2 variable collection(s), variable(s) or style(s) (see createdAssets), which clean does not delete; delete them in Figma if unneeded; keep the evidence; verify the current state with inspect first; do not replay the script');
 
   await write({ 'result.json': { ...base, warnings: ['nodechange \u76d1\u542c\u4e0d\u53ef\u7528'] } });
   const deaf = summarizeRecord(await read());

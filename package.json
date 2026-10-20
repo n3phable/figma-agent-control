@@ -1,6 +1,6 @@
 {
   "name": "figma-agent-control",
-  "version": "0.7.0-rc",
+  "version": "0.8.0-rc",
   "description": "Figma Agent Control",
   "type": "module",
   "bin": {
@@ -13,12 +13,13 @@
     "bin/",
     "src/",
     "plugin/",
+    "lib/",
     "docs/",
     "README.md"
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
-    "check": "node --check bin/figma-agent-control.mjs && node --check plugin/main.js && node tests/typecheck.mjs"
+    "check": "node --check bin/figma-agent-control.mjs && node --check plugin/main.js && node --check plugin/extract.js && node tests/typecheck.mjs"
   },
   "devDependencies": {
     "@figma/plugin-typings": "1.141.0",

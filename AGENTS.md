@@ -5,6 +5,7 @@ Local trusted Figma automation with persistent evidence and explicit recovery bo
 ## Members
 
 - `bin/`: Command-line dispatch and process output contracts.
+- `lib/`: Plugin-side helpers injected through run libraries.
 - `plugin/`: Figma development-plugin execution and iframe relay templates.
 - `src/`: Host-side command, bridge and evidence modules.
 - `tests/`: Behavioral tests for the implementation in this revision.

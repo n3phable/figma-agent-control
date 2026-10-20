@@ -14,6 +14,8 @@ Figma Agent Control (FAC) connects your local CLI to a Figma Desktop development
 
 - **Keep evidence:** save before-snapshots, failure snapshots, change sets, exported files, execution traces, and optional visual checks. Resume waiting by job ID after a CLI timeout.
 
+- **Recover deliberately:** inspect partial writes, clean up newly created nodes, cancel a stalled run, and review writes whose result is unknown.
+
 - **Export static HTML:** generate nested DOM with embedded assets, compare it in Chrome, identify differences by node, and apply recorded overrides.
 
 ## Requirements
@@ -23,6 +25,8 @@ Figma Agent Control (FAC) connects your local CLI to a Figma Desktop development
 - **Figma Desktop**, with the target file open in Design mode and the development plugin running. Editing requires edit access to that file.
 
 - **Local shell and localhost access** for the agent running the CLI.
+
+- **Google Chrome or Chromium** for HTML comparisons and video frame extraction. Set `FIGMA_AGENT_CONTROL_CHROME` to an executable path if needed. HTML generation with `--no-check` does not require Chrome.
 
 Font discovery searches macOS font directories.
 
@@ -99,8 +103,10 @@ A submitting command waits by default and returns one JSON object. Its stderr re
 | `init`, `connect`, `stop`, `status`, `doctor` | Bind a scope, manage the bridge, and diagnose the connection |
 | `inspect`, `preview`, `variables`, `extract` | Read nodes and variables, export PNGs, or extract HTML inputs |
 | `run` | Execute a trusted script with `--lib`, `--data`, and optional `--expect changed\|unchanged` |
+| `result`, `wait`, `cancel`, `resolve` | Read evidence, wait without replaying, cancel a run, or review an unknown result |
 | `clean` | Recheck and delete eligible nodes left by a failed run, as a separate Undo step |
 | `html`, `html-check` | Generate and compare static HTML, or recheck an existing export |
+| `frames` | Sample MP4/WebM video into a contact sheet, optionally comparing two videos |
 | `image-diff`, `report` | Compare PNGs or summarize job timings, failures, and repeated executions |
 
 Use `figma-agent-control help` for the exact syntax of the installed version. The [agent guide](docs/agent-guide.md) includes complete script examples and recovery procedures.
@@ -126,6 +132,10 @@ Writes take effect as the script runs. After failure, read `instruction` and `ex
 - Contributing: local checks and contribution workflow.
 
 Licensed under the [MIT License](LICENSE). See third-party notices for included material. Maintained by [n3phable](https://github.com/n3phable).
+
+## Motion scripts
+
+Use --lib motion to read, apply and export MotionSpec data through readMotion, applyMotion, exportMotion and motionIssues. See the agent guide for the script workflow.
 
 ## Connection scope
 

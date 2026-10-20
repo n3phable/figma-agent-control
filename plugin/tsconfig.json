@@ -4,5 +4,5 @@
     "module": "preserve", "moduleDetection": "legacy", "target": "es2022", "lib": ["es2022"],
     "types": ["@figma/plugin-typings"], "skipLibCheck": false
   },
-  "files": ["main.js"]
+  "files": ["main.js", "extract.js"]
 }

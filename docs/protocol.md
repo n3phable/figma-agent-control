@@ -2,6 +2,8 @@
 
 [Simplified Chinese](zh_cn/protocol.md)
 
+This document defines the contracts between the CLI, local bridge, plugin iframe (`ui.html`), plugin execution code (`main.js` plus `extract.js`), and host-side HTML export. Keep it aligned with implementation changes. For operating procedures, see the [agent guide](agent-guide.md).
+
 ## Components and data flow
 
 ```text
@@ -43,6 +45,7 @@ The shared directory is `~/.config/figma-agent-control/`, overridden by `FIGMA_A
 |---|---|---|
 | `pairing.json` | `connect` via session | Persistent plugin credential, mode `0600`; exclusive first creation. Corruption gives `PAIRING_INVALID` |
 | `plugin/manifest.json` | `connect` | Generated development manifest, `documentAccess: dynamic-page`, `enablePrivatePluginApi: true`, no Figma-assigned plugin ID |
+| `plugin/main.js` | `connect` | Concatenation of source `plugin/main.js` and `plugin/extract.js` in `PLUGIN_SCRIPTS` order |
 
 Because the manifest has no Figma-assigned ID, private `setPluginData` is unavailable. Namespaced `setSharedPluginData` does not depend on that ID.
 
@@ -70,6 +73,8 @@ The caller must use the CLI role.
 | `cleanOnFail` | Run | Boolean; maps to CLI `--clean-on-fail` |
 | `requestId` | All | Lowercase UUID used as the job ID; the CLI exposes it on `run` |
 | `label` | All | Source name for reports; CLI uses the script basename, or `clean <original-id>` |
+
+The CLI resolves a bare `--lib motion` to its bundled file before submission. The bridge and plugin receive ordinary named source strings and do not distinguish built-in libraries from user libraries.
 
 A repeated request ID returns the original job with HTTP `200` and `reused:true`. Binding, operation, source, libraries, target, depth, nodes, scale, data, effective high-risk reason, expectation, tolerance, islands, cleanup, and names must remain identical or submission returns `400`. Omitted cleanup and `false` are equivalent; an omitted target and an explicitly supplied bound node are not. `label` is not compared. This identity check precedes transient rejection conditions, so a repeated request can still retrieve its original job while disconnected or busy.
 
@@ -179,6 +184,7 @@ Atomic creation of `runs/<job-id>/result.json` is the sole completion commit poi
 | `bindingVerified` | Actually verified file, page, and node |
 | `undoBoundaries` | `before`, `after`, and optionally cleanup `clean` boundary outcomes |
 | `created`, `cleaned`, `cleanFailed` | Failed-script node tracking and cleanup results |
+| `createdAssets` | New surviving collections, variables, and styles; entries `{id,name}` |
 | `deletedExisting` | Existing nodes deleted during a run that also performed cleanup |
 | `warnings`, `binaryErrors` | Evidence/cleanup limitations and binary transport issues |
 | `pluginMs`, `approvalMs`, `finishedAt` | Execution timing excluding approval, approval timing, and landing time |
@@ -205,6 +211,8 @@ If cleanup deleted nodes and original target-page nodes disappeared during execu
 
 Creation tracking excludes other pages and failures after the script body completed, such as serialization failure. New components may not emit CREATE events. Local user edits during execution are indistinguishable from script edits. Existing content moved in from another page is not covered by cleanup protection. Evidence/cleanup errors add warnings while preserving the original script error.
 
+Collections, variables, and styles use before/after ID comparisons rather than node events. `createdAssets` only reports them; neither cleanup path deletes them. Each failure-evidence read has a 15-second timeout. Summary node lists cap at fifty entries with omitted counts.
+
 ### Deferred cleanup: `clean`
 
 `clean <job-id>` constructs an ordinary run, so checkpoint, Undo, unknown-write review, and normal evidence all apply. There is no special plugin operation.
@@ -220,6 +228,8 @@ Per-node checks classify already absent nodes as `gone`; a changed page, name, t
 Before/after snapshots produce `counts.created`, `deleted`, `moved`, `updated`, `bindingOnly`, and `positionOnly`. The last three are mutually exclusive: changed values, bindings only, or layout-induced position changes only.
 
 A move changes parent or falls outside the longest common ordered sibling subsequence. Inserting/deleting a sibling does not mark every other sibling as moved; swapping two siblings marks one. Up to fifty changed/created/deleted/moved nodes are expanded, with `omitted` for the remainder. Position keys are omitted from per-node `keys`.
+
+Explicit depth adds a `limitation`; deeper changes are invisible. Nonempty Motion styles, tracks, and owner-frame timelines are snapshotted when available. An undeclared after-snapshot depth truncation or node-budget overflow makes the change set unavailable. After an execution failure with an oversized after snapshot, both `changes` and the `after` scene can be absent; use inspect.
 
 Only the target subtree is compared. Out-of-target writes through `figma` are not directly observed; direct page-root additions/deletions have the separate `pageRoot` comparison.
 
@@ -256,15 +266,28 @@ Resolve with `resolve <original-id> --inspect <inspection-id> --previous-plugin-
 
 Completions are idempotent when `result.json` already exists, even if the job is absent from current memory. A job neither loaded nor completed on disk gets `409 FOREIGN_JOB`; no evidence is written and the plugin retains its original result for the right project. This also applies to a run resolved before restart, which is intentionally not reloaded. Its stale plugin must be closed and rerun; the reviewed result remains unknown.
 
+### Progress and cancellation
+
+The plugin reports progress one second after receiving a run, then every two seconds when timers can run:
+
+```text
+{seq, phase, elapsedMs, changes?, lastChangeAgoMs?, waiting?, waitingCount?}
+```
+
+Cancellation cannot kill the suspended JavaScript continuation or a host call already in flight. Later proxy access throws, but later direct writes through a previously acquired node are not blocked. A warning records this limit. Stop and rerun the plugin to terminate the continuation. Read-only jobs cannot be cancelled; synchronous work must yield before cancellation can be handled.
+
 ## Bridge endpoints
 
 | Endpoint | Role | Contract |
 |---|---|---|
+| `GET /status` | CLI | Binding, connection, active/unresolved jobs, plugin version, latest twenty jobs, optional progress and cancellation request |
 | `POST /job` | CLI | Submit a job |
 | `GET /result?id=` | CLI | Current-session result; the CLI normally reads evidence from disk |
 | `POST /resolve` | CLI | Resolve an unknown write after inspection |
+| `POST /cancel` | CLI | `200 {cancelled:"before-delivery"}` or `202 {cancelRequested:true}`; otherwise `409 NOT_ACTIVE` / `NOT_RUN` |
 | `POST /shutdown` | CLI | Requires `{force:boolean}`; active queued/running work without force gives `409 ACTIVE_JOB`; otherwise responds `202` before closing |
 | `GET /poll` | Plugin | Claim work, or hold an empty response for up to ten seconds |
+| `GET /heartbeat` | Plugin | Identity probe, lease renewal, job/progress report, or held cancellation channel |
 | `POST /checkpoint` | Plugin | Persist the write-ahead snapshot |
 | `POST /approve` | Plugin | Immutable decision for a high-risk run delivered in this session |
 | `POST /complete` | Plugin | Idempotent completion, first result wins; does not require the current lease |
@@ -280,6 +303,69 @@ The iframe and execution code use postMessage. Each job has a random `channelNon
 Job messages above 65,536 JavaScript string characters, including snapshots and base64, use a `serialized-result` envelope. The iframe falls back to compact failure evidence when the structured portion exceeds about 16 MB, the bridge returns `413`, or the same completion receives three cumulative `400` responses. Other failures do not reset the rejection count. `409 FOREIGN_JOB` never triggers degradation. The compact result retains execution state, verified binding, script-failure cleanup lists, new assets, warnings, and stack.
 
 While a result is awaiting delivery, the iframe sends `/complete` rather than heartbeats. Request deadlines are 15 seconds for polling, three seconds plus one second per 10 MB of completion payload, and three seconds for other requests.
+
+## Motion
+
+[lib/motion.js](../lib/motion.js) runs inside ordinary `run --lib motion` jobs. It adds no bridge operation, and inherits run checkpoints, Undo boundaries, and change sets. Motion is a Beta/private API surface; the manifest enables private API access, but Figma availability remains external to FAC.
+
+### MotionSpec
+
+| Function | Return value |
+|---|---|
+| `readMotion(root = target, {durationRange}?)` | MotionSpec grouped by timeline, with `issues` |
+| `applyMotion(spec = data, root = target)` | `{changes,motion}`; counts `tracksWritten`, `tracksRemoved`, `stylesApplied`, `stylesRemoved`, `durations`, then rereads |
+| `exportMotion(node = target, settings = {format:'WEBM',quality:'LOW'}, {waitSeconds=60,intervalMs=3000,differentFrom}?)` | `{frame,video,attempts,waitedMs}`; video bytes use normal binary landing |
+| `motionIssues(spec, {durationRange=[0.1,0.5],easingTokens=[]}?)` | Issue array; readMotion already includes it |
+
+```json
+{
+  "timelines":[{"id":"12:34","name":"Card entrance","duration":0.6,"nodes":[
+    {"id":"12:35","name":"card","tracks":{"OPACITY":{"base":1,"keys":[[0,0],[0.3,1,"$motion/standard"]]}},
+     "styles":[{"id":"AnimationPresetId:12:40","preset":"Position","at":0.08,"dur":0.3,"easing":"spring(0.3)","props":{"direction":"bottom","distance":24}}]},
+    {"id":"I12:9;1:4","name":"spinner","inherited":true,"tracks":{"ROTATION":{"base":0,"keys":[[0,0],[1,360]]}}}
+  ]}],
+  "refs":{"$motion/standard":"VariableID:12:50"},
+  "issues":[]
+}
+```
+
+- A timeline ID belongs to its top-level frame or Section. Durations and key times are seconds. The root's own timeline is included even when empty; other timelines require motion content.
+
+- Track paths include property names (`OPACITY`, `TRANSLATION_X`), `fills.0`, `strokes.1`, `effects.0.RADIUS`, and component property paths such as `fills.0.properties.<property-id>`.
+
+- Values use numbers, booleans, `[x,y]`, `#RRGGBB` / `#RRGGBBAA`, or unchanged `{type,value}` objects for other kinds. Keys are `[seconds,value,easing?]`.
+
+- Easing controls the segment ending at the keyframe. Supported shorthand includes `linear`, standard ease-in/out/back variants, `hold`, `gentle`, `quick`, `bouncy`, `slow`, `cubic(x1,y1,x2,y2)`, `spring(bounce)`, and `$variable-name`. Unknown forms preserve their raw object. The default manual easing `cubic(0.5,0,0.5,1)` is omitted on read.
+
+- Presets use `{id,preset,at,dur,easing?,props?}`. `preset` comes from `figma.motion.figmaAnimationStyles()`. Default props and delay following the timeline offset are omitted. Custom styles use `{id,style:"@name",at}`. New styles omit `id`.
+
+- `refs` maps `$` / `@` notation to exact IDs; apply tries refs before local names. Duplicate variable names get an `#ID` suffix. Instance sublayers are marked `inherited`.
+
+Apply is declarative: supplied `tracks` or `styles` fully reconcile that field for the listed node, deleting extras and changing only differences. Omitted fields/nodes remain untouched. Changed timeline durations are written. Unchanged input causes no writes, including read-only inherited or component entries.
+
+Video export finds the enclosing top-level frame. It retries `Video export failed`; with `differentFrom`, byte-identical exports also retry. The wait is bounded, and other errors fail immediately. Since video export can lag behind document edits, use `differentFrom` for visible changes and inspect the sampled frames. Omit it for edits intended to preserve appearance.
+
+Issues have `{rule,timeline,node?,message}` and do not modify data:
+
+| Rule | Meaning |
+|---|---|
+| `beyond-timeline` | Keys/presets extend beyond playback/export duration |
+| `first-key-easing` | Easing on the first key has no effect |
+| `static-track` | Fewer than two keys |
+| `track-conflict` | Competing preset/manual property or overlapping same-kind presets |
+| `duration-range` | Active motion outside the configured range; holds/static spans split runs; `null` disables |
+| `idle-tail` | More than 0.5 s and one-quarter of the timeline remains after motion; skipped for unknown-duration custom styles |
+| `raw-easing` | EASING variables exist but a changing segment uses a raw easing; holds/static segments excluded |
+| `inconsistent-easing` | Same preset/type uses different easing |
+| `irregular-stagger` | At least three same-preset/type/duration nodes have uneven offsets |
+
+### Frames
+
+A file is resolved from the working directory. A job ID must be a successful run containing exactly one landed MP4/WebM; invalid sources fail before launching Chrome. GIF is unsupported. MP4 codec support depends on the Chrome build.
+
+Explicit times are deduplicated and sorted, limited to 24, and must fit the video. Default sampling uses eight times from zero to 0.05 seconds before the end. Each time selects the covering frame. Contact-sheet cells are labeled, with at most four per row, or six during comparison; total width is at most 1,600 px. Narrow frames are enlarged to at least 160 px with nearest-neighbor sampling. A comparison cell stacks source and comparison frames and labels changed pixels.
+
+Output is `{source,compare?,width,height,duration,sheet,frames:[{t,file?,compareFile?,changedPixels?,sameSize?}],changed?,layout?,warning?,limitation}`. File paths appear only with dump. Identical video bytes add a warning. Pixel differences use the same `diffPng` definition as run verification. Outputs go to the bound project's `frames/` or a system temporary directory. Success exits `0`; invalid inputs or decoding failure exit `1`.
 
 ## HTML export
 
@@ -464,9 +550,12 @@ Submitting commands wait by default and print a summary; `--full` prints the com
 
 Summary `output` above 16 KiB UTF-8 is replaced with a reading command. Extract output is always summarized by shape/reading command, with separate `extract:{stats,islandsSkipped,warnings}`; at most fifty skipped IDs and twenty warnings of at most 600 characters are expanded, with omitted counts.
 
+`cancel` requests cancellation then waits as `wait` does. Waiting defaults to thirty seconds, configurable to 1–300 seconds:
+
 | `waitStatus` | Meaning |
 |---|---|
 | `completed` | Result landed |
+| `timeout` | Job may still run; progress and wait/cancel guidance are included when available |
 | `needs-review` | Recovery evidence needs the stated review action |
 | `resolved` | Reviewed, but the original execution outcome remains unknown |
 
@@ -478,11 +567,13 @@ HTML and html-check stdout summaries fit within 16 KiB of formatted UTF-8 JSON. 
 | `1` | Failure, failed/unavailable visual verification, skipped/rejected cleanup, skipped explicit islands or incomplete extraction binaries, or reviewed-but-unknown outcome |
 | `2` | Not complete: timeout or review pending. For stop, accepted shutdown has not released the lock after roughly five seconds; check status later |
 
+HTML-specific codes and frames output are defined above. Network errors remain distinct: `SANDBOX_BLOCKED` is denied localhost access, `BRIDGE_DOWN` is an unresponsive session port, `BRIDGE_TIMEOUT` is a request timeout, and `NO_SESSION` is a missing session file.
+
 `report --since` accepts ISO dates/times; a time requires `Z` or an offset, and a date alone is UTC midnight. `jobs.failed` counts `ok:false`; `jobs.verifyFailed` counts successful executions with failed/unavailable visual checks. They are mutually exclusive.
 
-## Extraction ownership
+## Video frame sampling
 
-Read-only extraction runs inside plugin/main.js and shares its document-access helpers.
+`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` samples MP4/WebM in Chrome and writes a labeled contact sheet. The default is eight evenly spaced frames.
 
 ## Connection scope
 
@@ -491,3 +582,15 @@ The bridge uses port 32523. Keep only one project bridge active on the machine. 
 ## Preparation ordering
 
 Target revalidation currently precedes the before-render and later preparation reads. Keep the target unchanged throughout preparation.
+
+## Cancellation boundary
+
+An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
+
+## Background progress
+
+Progress and cancellation delivery still depend on timer-driven heartbeats. Hidden Figma windows can delay them substantially; make the window visible before judging a run stalled.
+
+## Motion rollback values
+
+Rollback reconstructs writes from the prior parsed spec. Inspect variable identities and numeric values after an error.

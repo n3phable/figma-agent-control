@@ -36,6 +36,8 @@ figma-agent-control doctor
 
 - 一个桥接同一时刻只执行一个任务。多个 Agent 应顺序取数，再离线并行分析。
 
+- 面板隐藏后长轮询仍可继续。桥接重启后的重连可能要等被节流的计时器；Figma 也可能限制不可见窗口或后台文件，见[任务迟迟不结束](#任务迟迟不结束)。
+
 - 插件文件变化可能触发 Figma 开发插件重载。面板提示版本过旧时重新运行插件；页脚版本应与 `status.pluginVersion` 一致。
 
 - 结束时，对本次启动且不再需要的桥接运行 `figma-agent-control stop`。它停止本机桥接，文档同步在 Figma 中检查。退出码 `2` 表示仍在收尾，稍后查看 `status`。
@@ -149,6 +151,8 @@ for (const node of target.findAllWithCriteria({ types: ['INSTANCE'] })) {
 | `verify` | 请求过且脚本成功时的前后画面判定 |
 | `pageRoot` | 非页面目标的成功 run 执行后，页面根直接子节点的增减 |
 | `trace` | 最多十个映射后的错误帧 `{file, line, column, source}`；第一项为抛错处 |
+| `created`、`cleaned`、`cleanFailed`、`deletedExisting`、`createdAssets` | 部分写入和清理证据 |
+| `progress` | 结果尚未完成时的最新执行进度 |
 | `resultFile`、`evidence` | 持久化本机证据路径 |
 
 即使目标变更计数为零，`pageRoot` 也可能暴露遗漏的 `appendChild`。它比较前后状态，不判断改动来源：同期协作者或替换 ID 的操作也会出现。删除前先 inspect。
@@ -207,9 +211,25 @@ done
 
 - `deletedExisting` 表示执行期间已有节点消失，同时清理又删了新节点。`detachInstance`、`flatten` 等会替换 ID，让已有内容看起来像新建。先 inspect；若清理删了应保留的内容，可在 Figma 中有意识地 Undo 一次恢复清理步骤，但不会撤销更早的脚本修改。
 
+- `createdAssets` 列出新集合、变量和样式，两种清理都不删除它们。应明确复用或删除，不要重建同名副本。
+
 清理后，已有节点的改名、修改、移动和删除仍然保留。先删后建的脚本经清理后可能留下空位；撤销清理步骤会恢复未完成的替代品。原有改动应单独 inspect 并明确修复。
 
 限制包括：只观察目标页，且只处理脚本自身抛错，不处理之后的序列化失败；新组件可能不发创建事件；运行期间本地用户新建的内容可能被计入，远端协作者事件被排除；从其他页面移入的已有内容不受即时清理保护。监听失败记警告。结束 Undo 边界失败时只列节点，不自动清理。摘要清单各最多 50 项，超出部分给省略计数。
+
+### 任务迟迟不结束
+
+`status.progress` 和等待到期的摘要说明执行阶段：
+
+- `prepare` 包括取目标、快照、写前日志和前图；`approval` 等面板确认；`script` 执行正文；`finish` 收集证据。大目标会拖慢准备和收尾。
+
+- `waiting` 记录代理上的 `figma.*Async` 及支持的命名空间。节点方法如 `exportAsync`、脚本自己的 Promise 不在其中。
+
+- `changes` 增长说明仍有进展，继续等。调用长期停滞时，`cancel <job-id>` 请求取消并等待结果。
+
+- 开始前取消给 `executionStarted:false`。执行中取消走普通失败/清理路径，可取得位置时 trace 指向等待中的调用。
+
+- 取消不能终止所有挂起的 JavaScript 续体。之后经代理访问 `figma` 会抛错，但挂起调用恢复后，仍可能通过此前取得的节点直接写入。要终止该续体，需要关闭并重新运行插件。不要把杀掉 Figma 或全局 Undo 当成通用恢复步骤。
 
 ## 画面验收
 
@@ -243,6 +263,42 @@ figma-agent-control run export.js --depth 1 > out.json 2> receipt.log
 从原始 `result.json` 读取 `.output[].png.file`，路径相对证据目录。交付文件名带上节点 ID，防止重名或空名相互覆盖。
 
 不要把导出内容转成 base64 字符串。任意嵌套的字节值走独立二进制通道：每任务最多 200 项，含画面判定图片在内的 base64 总量最多 48 MB。过大的字符串结果可能丢失整个返回值。大批量降低倍率或拆批。`useAbsoluteBounds:true` 按节点盒子导出，普通预览可能包含盒外投影。
+
+## 动效
+
+使用 `--lib motion` 访问 Figma Motion 的 Beta/private API。生成的 manifest 开启 `enablePrivatePluginApi`；接口能否使用及其行为取决于 Figma 和账户。完整约定见[协议中的 MotionSpec](protocol.md#motionspec)。
+
+```sh
+printf '%s\n' 'return readMotion(target)' > read-motion.js
+printf '%s\n' 'return exportMotion(target)' > export-motion.js
+figma-agent-control run read-motion.js --lib motion --node 12:34 --depth 1 > motion-old.json
+jq '.output | del(.issues)' motion-old.json > motion.json
+```
+
+编辑 `motion.json` 后，用这样的脚本应用：
+
+```js
+// apply-motion.js
+const before = (await exportMotion(target)).video;
+const result = await applyMotion(data);
+try {
+  return { ...result, video: (await exportMotion(target, undefined,
+    { differentFrom: before, waitSeconds: 200 })).video };
+} catch (error) {
+  // 写入已完成，稍后只重试视频导出。
+  return { ...result, exportError: String(error.message) };
+}
+```
+
+先读后改。原样 spec 不产生写入；省略节点或字段则保持原状，新增预设不写 `id`。关键帧为 `[秒,值,缓动?]`，缓动作用于**以该关键帧结束**的一段；第一帧的缓动不生效。优先以 `$name` 使用已有 EASING 变量，自定义样式用 `@name`。
+
+应修正 `beyond-timeline`、`first-key-easing`、`static-track`、`track-conflict`。时长、尾部空闲、原始/不一致缓动、交错间隔等由设计意图决定。`readMotion(target,{durationRange:[0.1,1]})` 可调整时长检查范围。
+
+在快照预算内，写入以顶层画框为目标且不声明浅深度。变更集可记录 `manualKeyframeTracks`、`animationStyles`、`timelines`。组件/变体集本身不能写动效，其子图层可以；实例子图层继承动效、不能直接改，实例本身可以。不要未经授权就 detach 实例来绕过限制。
+
+静态 PNG 不反映关键帧，不要用 `--expect` 验收动效。导出视频并看联系表。视频导出可能落后于修改，或对新画框暂时失败；`exportMotion` 会重试 `Video export failed`，`differentFrom` 还会等待字节变化。应保持画面的修改不要设置 `differentFrom`。套餐可能限制分辨率、帧率和导出参数。
+
+其他开发观察：关键帧不更新静态 `x`/`opacity`；超出时间线的动效可能被接受，但播放会截断；旋转以节点中心为轴，正值逆时针；第一帧之前使用该帧的值。COLOR 关键帧为 RGBA，不是颜色变量别名。依赖 TIMING 变量单位或 Beta 行为前，应在当前编辑器中核验。
 
 ## 导出 HTML
 
@@ -336,10 +392,24 @@ figma-agent-control resolve <original-job-id> --inspect <inspect-job-id> --previ
 
 - 云端同步在 Figma 中检查。
 
+- Motion 需要账户开放 Beta/private API，字体发现当前搜索 macOS 目录；真实 Desktop 验收与自动测试分别记录。
+
 - 插件数据使用命名空间 `setSharedPluginData`，适用于生成的开发插件 manifest。
 
 不要把 `.figma-agent-control/` 提交到版本控制，其中有凭证和设计证据。只交付需要的产物，保留尚未核验的证据，完成后停止本次启动且不再需要的桥接。
 
+## 视频取帧
+
+`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` 在 Chrome 中采样 MP4/WebM，生成带时刻标记的联系表，默认均匀采样八帧。
+
 ## 连接范围
 
 桥接使用端口 32523，同一台机器只保留一个项目桥接运行。全局插件可在桥接重启后重连；连接另一个项目前先停止原项目。
+
+## 取消边界
+
+未交付的 run 可记为未执行。交付后在脚本执行阶段请求取消。准备、确认和写前日志等待使用各自的超时，随后检查返回的执行状态。
+
+## 后台进度
+
+进度与取消送达仍依赖计时器心跳。隐藏的 Figma 窗口可能使它们明显延迟；判断任务停滞前先让窗口可见。

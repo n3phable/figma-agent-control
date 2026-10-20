@@ -36,11 +36,12 @@ export function findChrome(env = process.env) {
   return found;
 }
 
-// doctor calls this each time: an executable that does not exit delays it by at most 3 s and reports a timeout explicitly.
+// doctor calls this each time. A non-exiting executable can delay at most 10 s before CHROME_VERSION_TIMEOUT. Observed --version calls exceed 3 s when Chrome is already running, while rendering still starts normally,
+// so timeout means only that version lookup failed, not that Chrome is unusable.
 /** @param {string} file */
 export async function chromeVersion(file) {
-  try { return (await promisify(execFile)(file, ['--version'], { timeout: 3000 })).stdout.trim(); }
-  catch (error) { throw error.killed ? Error(`${file} --version did not return within 3 s`) : error; }
+  try { return (await promisify(execFile)(file, ['--version'], { timeout: 10000 })).stdout.trim(); }
+  catch (error) { throw error.killed ? fail(`${file} --version did not return within 10 s`, 'CHROME_VERSION_TIMEOUT') : error; }
 }
 
 // -- Cleanup on abnormal exit -------------------------------------------
