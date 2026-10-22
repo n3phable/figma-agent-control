@@ -215,7 +215,8 @@ window.onmessage = async event => {
     catch { pending = { id: active.id, ok: false, executionStarted: active.operation === 'run', error: 'Result could not be parsed; check the current canvas, do not replay the script' }; void tick(); return; }
   }
   if (!channelNonce || message?.channelNonce !== channelNonce || message.id !== active.id) return;
-  if (message.type === 'progress') { const { type, id, channelNonce: omitted, ...rest } = message; progress = rest; return; }
+  // Heartbeat immediately on progress: message events avoid timer throttling, forwarding updates without waiting for the hidden panel's delayed timer.
+  if (message.type === 'progress') { const { type, id, channelNonce: omitted, ...rest } = message; progress = rest; void tick(); return; }
   if (message.type === 'approval-request') {
     review = message;
     $('approval-reason').textContent = message.reason;
@@ -285,6 +286,7 @@ async function tick() {
         active = { id: job.id, operation: job.operation, title: job.label || OPERATION_TEXT[job.operation] || job.operation, nodeId: job.targetNodeId, project, startedAt: Date.now() };
         channelNonce = nextNonce; progress = null;
         parent.postMessage({ pluginMessage: { ...job, channelNonce } }, '*');
+        if (job.operation === 'run') void watchCancel(job.id);
       }
     }
     showCurrentState();
@@ -292,6 +294,17 @@ async function tick() {
   finally {
     polling = false;
     if (again) { again = false; void tick(); }
+  }
+}
+// During run, open a separate cancellation channel alongside tick without blocking uploads or claims. hold=1 heartbeats wait for cancellation, completion or about 10 s;
+// X-Long-Poll immediately continues the chain. Network callbacks forward cancellation promptly even when hidden timers throttle to roughly one minute. Stop on error and let tick recover.
+async function watchCancel(id) {
+  while (active?.id === id && !pending) {
+    const response = await request(route('/heartbeat') + '&hold=1', {}, 15000).catch(() => null);
+    if (!response?.ok) return;
+    const beat = await response.json().catch(() => null);
+    if (beat?.cancel === true && active?.id === id) parent.postMessage({ pluginMessage: { type: 'cancel', id, channelNonce } }, '*');
+    if (!response.headers?.get?.('X-Long-Poll')) return;
   }
 }
 // Report visibility changes immediately so the bridge can extend leases when background timers reduce heartbeat frequency.

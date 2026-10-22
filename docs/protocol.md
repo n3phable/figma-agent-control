@@ -268,11 +268,17 @@ Completions are idempotent when `result.json` already exists, even if the job is
 
 ### Progress and cancellation
 
+Scripts and libraries receive a proxy around `figma`. It forwards access and tracks outstanding methods whose names end in `Async`, including the `variables`, `motion`, `teamLibrary`, `clientStorage`, and `annotations` namespaces. Nodes are returned unchanged, so node async methods are not tracked. Successfully loaded fonts are cached by family/style for the plugin session; failures are not cached.
+
 The plugin reports progress one second after receiving a run, then every two seconds when timers can run:
 
 ```text
 {seq, phase, elapsedMs, changes?, lastChangeAgoMs?, waiting?, waitingCount?}
 ```
+
+Phases are `prepare`, `approval`, `script`, and `finish`. Only script phase has target-page local change counts and pending calls. `waiting` includes up to three earliest calls with `{call,forMs}`; the oldest includes up to 1,000 stack characters. The iframe sends progress immediately in a URL-encoded heartbeat parameter. The bridge maps that stack to `at`, removes the raw stack, adds `reportedAt` and optional `hidden:true`, stores memory state, and writes `progress.json` once per sequence number. Invalid progress is ignored. Status adds `ageMs`.
+
+A separate `/heartbeat?hold=1` channel holds until cancellation, completion, or roughly ten seconds, and uses `X-Long-Poll` for immediate continuation. This avoids panel timer throttling. The plugin's own progress and failure-cleanup timers can still be throttled.
 
 Cancellation cannot kill the suspended JavaScript continuation or a host call already in flight. Later proxy access throws, but later direct writes through a previously acquired node are not blocked. A warning records this limit. Stop and rerun the plugin to terminate the continuation. Read-only jobs cannot be cancelled; synchronous work must yield before cancellation can be handled.
 
@@ -586,10 +592,6 @@ Target revalidation currently precedes the before-render and later preparation r
 ## Cancellation boundary
 
 An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
-
-## Background progress
-
-Progress and cancellation delivery still depend on timer-driven heartbeats. Hidden Figma windows can delay them substantially; make the window visible before judging a run stalled.
 
 ## Motion rollback values
 

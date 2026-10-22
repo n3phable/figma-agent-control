@@ -23,6 +23,8 @@ export const PLUGIN_SCRIPTS = ['main.js', 'extract.js'];
 export const pluginMain = async (dir = assets) => (await Promise.all(PLUGIN_SCRIPTS.map(file => fs.readFile(path.join(dir, file), 'utf8')))).join('\n');
 const OPERATIONS = new Set(['run', 'inspect', 'preview', 'variables', 'extract']);
 const PLUGIN_ROUTES = new Set(['/poll', '/heartbeat', '/checkpoint', '/approve', '/complete']);
+// Progress phases correspond exactly to plugin/main.js phase values; discard unknown phases.
+const PHASES = new Set(['prepare', 'approval', 'script', 'finish']);
 const BINARY_KEY = '__figmaAgentControlBinary';
 // Pixel decoding blocks the event loop: skip summaries above 16 million pixels per image or 32 million per task.
 const PIXEL_LIMIT = 16e6, JOB_PIXEL_LIMIT = 32e6;
@@ -104,7 +106,13 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   const completing = new Map(), checkpoints = new Map(), approvals = new Map(), deliveries = new Map(), waiters = new Set();
   // Keep progress and cancellation in memory by task ID, outside job.json. Heartbeats continually refresh progress, also persisted to runs/<id>/progress.json.
   const progress = /** @type {Map<string, Record<string, unknown> & { seq: number, reportedAt: string }>} */ (new Map()), cancels = /** @type {Set<string>} */ (new Set());
-  const wakePolls = () => { for (const wake of [...waiters]) wake(); };
+  // Pending /poll and hold heartbeats share wakeups for new tasks, cancellation, completion and shutdown, then independently recheck their conditions.
+  const wakeHeld = () => { for (const wake of [...waiters]) wake(); };
+  const hold = () => /** @type {Promise<void>} */ (new Promise(resolve => {
+    const wake = () => { clearTimeout(timer); waiters.delete(wake); resolve(); };
+    const timer = setTimeout(wake, pollHoldMs);
+    waiters.add(wake);
+  }));
   const runDir = (/** @type {string} */ id) => path.join(dir, 'runs', id);
   const optional = async (/** @type {string} */ file) => { try { return await json(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
 
@@ -201,7 +209,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   // During run, the plugin reports progress every 2 s through the heartbeat progress parameter: pending figma async calls (the oldest includes a stack) and target-page change counts.
   // Map stacks to script locations (at), keep them for status and persist progress.json for wait and later inspection. Deduplicate by seq and discard malformed data.
   /** @param {Job} job @param {string | null} raw */
-  function noteProgress(job, raw) {
+  function noteProgress(job, raw, hidden = false) {
     let p;
     try { p = JSON.parse(raw ?? 'null'); } catch { return; }
     if (job.state !== 'running' || !p || typeof p !== 'object' || !Number.isInteger(p.seq) || p.seq === progress.get(job.id)?.seq) return;
@@ -211,8 +219,10 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       try { at = typeof w?.stack === 'string' ? scriptTrace(job, w.stack, true)[0] : undefined; } catch (_) {}
       return { call: String(w?.call ?? '').slice(0, 100), forMs: number(w?.forMs), ...(at ? { at } : {}) };
     });
-    const view = { seq: p.seq, elapsedMs: number(p.elapsedMs), changes: number(p.changes), ...(typeof p.lastChangeAgoMs === 'number' ? { lastChangeAgoMs: number(p.lastChangeAgoMs) } : {}),
-      waiting, waitingCount: number(p.waitingCount), reportedAt: new Date().toISOString() };
+    // Changes and pending calls exist only during script execution. Omit them in other phases so unknown is not mistaken for none.
+    const view = { seq: p.seq, ...(PHASES.has(p.phase) ? { phase: p.phase } : {}), elapsedMs: number(p.elapsedMs),
+      ...(typeof p.changes === 'number' ? { changes: number(p.changes), ...(typeof p.lastChangeAgoMs === 'number' ? { lastChangeAgoMs: number(p.lastChangeAgoMs) } : {}) } : {}),
+      ...(Array.isArray(p.waiting) ? { waiting, waitingCount: number(p.waitingCount) } : {}), ...(hidden ? { hidden: true } : {}), reportedAt: new Date().toISOString() };
     progress.set(job.id, view);
     save(path.join(runDir(job.id), 'progress.json'), view).catch(() => {});
   }
@@ -259,7 +269,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
     Object.assign(job, { state, finishedAt: result.finishedAt });
     unresolved.delete(job.id);
     progress.delete(job.id); cancels.delete(job.id);
-    if (active === job.id) active = null;
+    if (active === job.id) { active = null; wakeHeld(); }
   }
 
   /** @type {() => Promise<void>} */
@@ -299,16 +309,16 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
         if (!lease.ok) return reply(409, { code: lease.code, error: lease.code === 'OPERATION_UNCERTAIN' ? 'The previous operation\'s result is not confirmed yet; repeated execution was blocked' : 'Reconnecting', retryable: lease.code === 'CONNECTION_IN_USE' });
         if (readOnly && current.state === 'running' && claimer !== client) await complete(current, { id: current.id, ok: false, executionStarted: false, error: ABANDONED });
         if (u.pathname === '/heartbeat') {
-          if (current && held === current.id) noteProgress(current, u.searchParams.get('progress'));
+          if (current && held === current.id) noteProgress(current, u.searchParams.get('progress'), u.searchParams.get('visibility') === 'hidden');
+          // hold=1 is the panel's separate cancellation channel for active runs: hold until cancellation, completion or pollHoldMs expiry, then return X-Long-Poll to request immediate continuation.
+          // Network callbacks drive continuation, delivering cancellation promptly even when hidden-window timers are throttled to roughly one minute.
+          const holding = () => !stopping && !!current && current.operation === 'run' && active === current.id && held === current.id && !cancels.has(current.id);
+          if (u.searchParams.get('hold') === '1' && holding() && pollHoldMs > 0) { await hold(); if (holding()) res.setHeader('X-Long-Poll', '1'); }
           return reply(200, { connected: true, active, ...(current && held === current.id && cancels.has(current.id) ? { cancel: true } : {}) });
         }
         const claimable = () => !stopping && active && jobs.get(active)?.state === 'queued' && !deliveries.has(active);
         if (!claimable() && !stopping && pollHoldMs > 0) {
-          await /** @type {Promise<void>} */ (new Promise(resolve => {
-            const wake = () => { clearTimeout(timer); waiters.delete(wake); resolve(); };
-            const timer = setTimeout(wake, pollHoldMs);
-            waiters.add(wake);
-          }));
+          await hold();
           // Keep the lease fresh throughout a pending request. If ownership changed unexpectedly, return as though no task exists.
           if (!connection.owns(client) || !connection.touch(client, active !== null, u.searchParams.get('visibility') || 'visible').ok) return reply(200, null);
           if (!claimable()) { if (!stopping) res.setHeader('X-Long-Poll', '1'); return reply(200, null); }
@@ -353,7 +363,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
           await complete(job, { id: job.id, ok: false, executionStarted: false, error: 'Cancelled before delivery: the job had not reached the plugin; the script did not run' });
           return reply(200, { id: job.id, cancelled: 'before-delivery' });
         }
-        cancels.add(job.id);
+        cancels.add(job.id); wakeHeld();
         return reply(202, { id: job.id, cancelRequested: true });
       }
       if (u.pathname === '/approve') {
@@ -414,7 +424,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
           await save(path.join(runDir(candidate.id), 'job.json'), candidate, true);
           jobs.set(candidate.id, candidate);
         } catch (error) { active = null; throw error; }
-        wakePolls();
+        wakeHeld();
         return reply(202, { id: candidate.id, state: 'queued', evidence: runDir(candidate.id) });
       }
       if (u.pathname === '/resolve') {
@@ -484,7 +494,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   close = () => closing ??= (async () => {
     stopping = true;
     // Release pending long polls with empty responses before cutting connections.
-    wakePolls(); await new Promise(resolve => setImmediate(resolve));
+    wakeHeld(); await new Promise(resolve => setImmediate(resolve));
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
     await Promise.allSettled([...deliveries.values()]);
     await Promise.allSettled([...completing.values()]);

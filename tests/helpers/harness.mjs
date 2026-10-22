@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:os, node:path, node:vm, node:crypto, node:child_process, node:util, node:url, node:timers/promises, ../../src/bridge.mjs, ../../src/project.mjs, ../../src/session.mjs, ../../src/png.mjs.
- * [OUTPUT]: Exports cliFile, pluginSource, createDoc, fakeElement, fakeFigma, harness, writeScript.
- * [POS]: Isolated test fixtures shared by the surrounding contract and integration suites.
+ * [INPUT]: src/bridge start/pluginMain; src/project init/installPlugin; src/session pairingToken; src/png encodePng; node:vm runs the real combined main.js/extract.js and ui.html.
+ * [OUTPUT]: Exports harness(t, options) with temporary cwd/home, bridge, mock document/DOM, errors/requests, CLI and polling controls, injected plugin files, and lifecycle controls; also cliFile, pluginSource, createDoc, fakeFigma, fakeElement, and writeScript. CLI subprocesses use the test-owned home through FIGMA_AGENT_CONTROL_HOME. createDoc emits batched asynchronous CREATE/DELETE nodechange events; fakeFigma creates exportable nodes through it.
+ * [POS]: Shared real-bridge (port 0), real-plugin, mock-Figma fixture. End-to-end tests use harness directly; plugin and generate helpers reuse mock Figma and plugin source, with plugin also using createDoc. options.doc supports alternate mock documents.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs/promises';
@@ -133,8 +133,9 @@ export async function harness(t, { url = 'https://www.figma.com/design/example/T
   let tick;
   // Plugin timers must not keep the process alive: execution progress reschedules every 2 s, including after tests intentionally suspend a script.
   vm.runInNewContext(main, { figma, __html__: html, setTimeout: (fn, ms) => setTimeout(fn, ms).unref(), clearTimeout });
-  vm.runInNewContext(html.match(/<script>([\s\S]*)<\/script>/)[1], { window, parent, crypto, fetch: gatedFetch, AbortSignal, TextEncoder,
-    document: { visibilityState: 'visible', addEventListener() {}, getElementById: element, createElement: () => fakeElement() }, setInterval: callback => { tick = callback; } });
+  // Tests can set document.visibilityState to hidden; every panel request includes it to model an invisible Figma window.
+  const document = { visibilityState: 'visible', addEventListener() {}, getElementById: element, createElement: () => fakeElement() };
+  vm.runInNewContext(html.match(/<script>([\s\S]*)<\/script>/)[1], { window, parent, crypto, fetch: gatedFetch, AbortSignal, TextEncoder, document, setInterval: callback => { tick = callback; } });
   const settle = async () => { while (pending.size) await Promise.all([...pending]); };
   const drive = async promise => {
     resume();
@@ -147,7 +148,7 @@ export async function harness(t, { url = 'https://www.figma.com/design/example/T
     catch (error) { return { code: error.code, json: JSON.parse(error.stdout || 'null'), stderr: error.stderr }; }
   };
   await tick(); await settle();
-  return { cwd, home, bridge, figma, doc, element, errors, requests, tick, settle, drive, cli, html, main, pause, resume,
+  return { cwd, home, bridge, figma, doc, document, element, errors, requests, tick, settle, drive, cli, html, main, pause, resume,
     // Run CLI while pumping the plugin, suitable for submissions that wait for a result by default.
     run: (...args) => drive(cli(...args)),
     close: async () => { closed = true; await bridge.close(); } };

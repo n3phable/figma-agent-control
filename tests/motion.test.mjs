@@ -205,8 +205,12 @@ test('motionIssues detects timeline overflow, single-keyframe tracks, first-keyf
 test('motionIssues aggregates overridable duration ranges per timeline, counts raw easing with EASING variables, detects trailing idle time, and checks preset easing/stagger consistency', () => {
   const long = [{ id: 'a', name: 'A', tracks: { OPACITY: { keys: [[0, 0], [0.8, 1]] }, ROTATION: { keys: [[0, 0], [0.05, 1]] } } }];
   const range = issues(long);
-  assert.deepEqual([rules(range), range[0].message], [['duration-range'], '\u753b\u677f has 2 animation segment(s) outside the common interaction motion duration of 0.1-0.5 s: OPACITY on A: 0.8 s, ROTATION on A: 0.05 s']);
+  assert.deepEqual([rules(range), range[0].message], [['duration-range'], '\u753b\u677f has 2 animation segment(s) outside the common interaction motion duration of 0.1-0.5 s: OPACITY on A: 0.8 s from 0 s, ROTATION on A: 0.05 s from 0 s']);
   assert.deepEqual([rules(issues(long, { durationRange: [0, 1] })), rules(issues(long, { durationRange: null }))], [[], []]);
+  // Measure duration over continuous motion: 0.3 s enter/hold/exit is valid; hold splits intervals; two continuous rotations form one 2 s segment.
+  const segments = issues([{ id: 'a', name: 'A', tracks: { OPACITY: { keys: [[0, 0], [0.3, 1], [1.2, 1], [1.5, 0]] }, SCALE: { keys: [[0, 0], [0.3, 1], [0.6, 2, 'hold'], [0.9, 3]] } } },
+    { id: 'b', name: 'B', tracks: { ROTATION: { keys: [[0, 0], [1, -360, 'linear'], [2, -720, 'linear']] } } }], { duration: 2 });
+  assert.deepEqual([rules(segments), segments[0].message], [['duration-range'], '\u753b\u677f has 1 animation segment(s) outside the common interaction motion duration of 0.1-0.5 s: ROTATION on B: 2 s from 0 s']);
 
   const tokens = issues([{ id: 'a', tracks: { OPACITY: { keys: [[0, 0], [0.2, 1], [0.4, 0, '$motion/standard']] } }, styles: [{ preset: 'Scale', at: 0, dur: 0.2, easing: '$motion/standard' }] }], { duration: 0.4, easingTokens: ['$motion/standard'] });
   assert.deepEqual([rules(tokens), tokens[0].message], [['raw-easing'], '\u753b\u677f has 1 easing(s) not bound to an EASING variable (linear for constant rotation and similar is a valid choice; decide by intent); the file has: $motion/standard']);

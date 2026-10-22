@@ -97,6 +97,8 @@ html.check -> match / attrib / shift / layout / structure / suggest / zoom
 
 Figma 只加载一份 main 脚本。源码按职责分为执行端 [main.js](../../plugin/main.js) 和只读提取 [extract.js](../../plugin/extract.js)，安装时拼接，共享经典脚本全局作用域。extract 契约参与类型检查。
 
+[ui.html](../../plugin/ui.html)串行处理领取/回传 tick，另设挂起心跳取消通道。属于其他项目的结果原样保留，不替换成传输失败。最近任务只存在面板内存中，插件重启后清空。
+
 run 用 `new Function` 编译，因此能触及插件全局变量。新增插件顶层名字应谨慎，脚本必须声明自己的变量。`figma` 代理记录部分异步调用和取消状态，节点保持为原 API 对象。
 
 ## 关键流程

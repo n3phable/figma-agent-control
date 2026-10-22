@@ -99,6 +99,8 @@ The bridge keeps a small set of runtime owners: `active` for the one in-flight s
 
 Figma loads one main script. Source is split into [main.js](../plugin/main.js) for execution and [extract.js](../plugin/extract.js) for read-only extraction, then concatenated at installation. They share a classic-script global scope. The extract contract is referenced during type checking.
 
+[ui.html](../plugin/ui.html) keeps delivery/completion ticks serialized, plus a separate held-heartbeat cancellation channel. It preserves foreign results rather than replacing them with transport failures. Its task history is panel-local and resets when the plugin restarts.
+
 Run scripts are compiled with `new Function`, so plugin globals remain reachable. Keep new top-level plugin names deliberate; scripts should declare their own variables. The `figma` proxy tracks supported async calls and cancellation, while nodes remain original API objects.
 
 ## Key flows

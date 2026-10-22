@@ -322,12 +322,14 @@ const timed = (promise, what) => {
 
 // -- Execution progress and cancellation --------------------------------
 // Scripts can stall in calls that never return (two observed stalls lasted about 27 minutes). Agents need a visible call site and cancellation. Scripts and libraries receive a figma proxy that records pending
-// Track Async calls, start times and call-site stacks for bridge source mapping, along with target-page activity. Report after 1 s of execution, then every 2 s through iframe heartbeats, which throttle to roughly one minute while hidden.
+// *Async calls, start times and call-site stacks for bridge source mapping, alongside target-page activity. After roughly five hidden minutes, plugin timers throttle to about one minute and progress becomes less frequent.
 // The proxy targets an empty object and forwards reads/writes to real figma, avoiding invariants imposed by figma property descriptors. Bind methods back to figma and wrap only namespaces with frequent async calls.
 // Return nodes unchanged because API arguments require the original objects; node-owned async methods such as exportAsync are therefore not tracked.
 // Cancellation immediately rejects the execution race. The failure path still records created and performs cleanOnFail; the error stack uses the oldest pending call's origin.
 // Suspended scripts cannot be externally terminated. Future figma-proxy access throws, but writes through previously obtained nodes cannot be blocked; disclose this in the result.
-const FIRST_PROGRESS_MS = 1000, PROGRESS_MS = 2000, TRACKED = new Set(['variables', 'motion', 'teamLibrary', 'clientStorage', 'annotations']);
+// Hidden-window loadFontAsync calls can take roughly a minute even for already loaded fonts. Loading per text node can therefore take tens of minutes; one successful load per plugin session is sufficient,
+// so return immediately for cached fonts. Do not cache failures; later calls retry normally.
+const FIRST_PROGRESS_MS = 1000, PROGRESS_MS = 2000, TRACKED = new Set(['variables', 'motion', 'teamLibrary', 'clientStorage', 'annotations']), loadedFonts = new Set();
 function watchExecution() {
   const pending = /** @type {Map<number, { call: string, at: number, stack: string }>} */ (new Map());
   let seq = 0, stopped = '', reject = /** @type {(error: unknown) => void} */ (() => {});
@@ -343,11 +345,19 @@ function watchExecution() {
         if (prefix === 'figma' && TRACKED.has(key) && value && typeof value === 'object') { if (!namespaces.has(key)) namespaces.set(key, wrap(value, `figma.${key}`)); return namespaces.get(key); }
         if (typeof value !== 'function') return value;
         if (!key.endsWith('Async')) return value.bind(real);
-        return (/** @type {unknown[]} */ ...args) => {
+        const call = (/** @type {unknown[]} */ ...args) => {
           const id = ++seq, done = () => { pending.delete(id); };
           pending.set(id, { call: `${prefix}.${key}`, at: Date.now(), stack: String(Error().stack ?? '').slice(0, 1000) });
           const result = value.apply(real, args);
           Promise.resolve(result).then(done, done);
+          return result;
+        };
+        if (prefix !== 'figma' || key !== 'loadFontAsync') return call;
+        return (/** @type {FontName} */ font) => {
+          const name = JSON.stringify([font?.family, font?.style]);
+          if (loadedFonts.has(name)) return Promise.resolve();
+          const result = call(font);
+          Promise.resolve(result).then(() => { loadedFonts.add(name); }, () => {});
           return result;
         };
       },
@@ -357,14 +367,13 @@ function watchExecution() {
       getOwnPropertyDescriptor(_, key) { const d = Reflect.getOwnPropertyDescriptor(real, key); return d && { ...d, configurable: true }; }
     });
   };
-  let reports = 0;
   return {
     api: wrap(figma, 'figma'), cancelled,
     // Order pending calls by start time, with the oldest most likely stalled. Include only its stack to keep heartbeat URLs bounded.
-    /** @param {number} started @param {{ changes: number, lastChangeAt: number }} activity */
-    progress(started, activity) {
+    /** @param {{ changes: number, lastChangeAt: number }} activity */
+    progress(activity) {
       const now = Date.now(), waiting = [...pending.values()];
-      return { seq: ++reports, elapsedMs: now - started, changes: activity.changes, ...(activity.lastChangeAt ? { lastChangeAgoMs: now - activity.lastChangeAt } : {}),
+      return { changes: activity.changes, ...(activity.lastChangeAt ? { lastChangeAgoMs: now - activity.lastChangeAt } : {}),
         waiting: waiting.slice(0, 3).map((p, i) => ({ call: p.call, forMs: now - p.at, ...(i ? {} : { stack: p.stack }) })), waitingCount: waiting.length };
     },
     cancel() {
@@ -454,6 +463,11 @@ figma.ui.onmessage = async job => {
   const budget = { size: 0 }, warnings = /** @type {string[]} */ ([]);
   // Failure evidence includes created, optional cleanOnFail cleaned/cleanFailed, and deletedExisting (see watchCreated). scriptFailure retains the script's original thrown value, from compilation or execution.
   let watch = /** @type {ReturnType<typeof watchCreated> | null} */ (null), leftovers = /** @type {Record<string, unknown>} */ ({}), scriptFailure = /** @type {{ error: unknown } | undefined} */ (undefined);
+  // Start run progress on receipt (first report after 1 s, then every 2 s). phase identifies prepare (target, snapshots, write-ahead log), approval (user confirmation),
+  // script (execution plus pending figma calls), or finish (leftovers, after snapshot, result assembly). Synchronous snapshots block progress timers; the panel keeps heartbeating the latest update.
+  let phase = 'prepare', reports = 0, ticker = 0, scriptProgress = /** @type {(() => Record<string, unknown>) | null} */ (null);
+  const report = (/** @type {number} */ ms) => { ticker = setTimeout(() => { send({ type: 'progress', id: job.id, seq: ++reports, phase, elapsedMs: Date.now() - receivedAt, ...scriptProgress?.() }); report(PROGRESS_MS); }, ms); };
+  if (run) report(FIRST_PROGRESS_MS);
   try {
     if (!figma.fileKey) throw Error('Cannot verify the file key; use the development plugin with the private API enabled');
     if (figma.fileKey !== job.binding.fileKey) throw Error('The current file does not match the binding');
@@ -491,7 +505,8 @@ figma.ui.onmessage = async job => {
       if (declaredDepth === null && isTruncated(before)) throw Error(`Before-snapshot truncated (deeper than ${SNAPSHOT_DEPTH} levels); the script did not run. Retarget a shallower node that still covers all writes to keep full-depth evidence; otherwise, ${SCOPE_HINT}`);
       if (job.risk?.level === 'high') {
         const asked = Date.now();
-        try { await requestApproval(job, send); } finally { approvalMs = Date.now() - asked; }
+        phase = 'approval';
+        try { await requestApproval(job, send); } finally { approvalMs = Date.now() - asked; phase = 'prepare'; }
       }
       await saveCheckpoint(job, before, page, send);
       const currentPage = pageOf(target);
@@ -510,11 +525,9 @@ figma.ui.onmessage = async job => {
       try { commitUndo(); undoBoundaries.before = 'committed'; }
       catch (error) { undoBoundaries.before = 'failed'; throw error; }
       watch = watchCreated(page, warnings);
-      const tracker = watchExecution(), startedAt = Date.now(), activity = watch.activity;
+      const tracker = watchExecution(), activity = watch.activity;
       execution = { id: job.id, channelNonce: job.channelNonce, cancel: tracker.cancel };
-      let ticker = 0;
-      const report = (/** @type {number} */ ms) => { ticker = setTimeout(() => { send({ type: 'progress', id: job.id, ...tracker.progress(startedAt, activity()) }); report(PROGRESS_MS); }, ms); };
-      report(FIRST_PROGRESS_MS);
+      phase = 'script'; scriptProgress = () => tracker.progress(activity());
       executionStarted = true;
       let boundaryFailure;
       try {
@@ -523,7 +536,7 @@ figma.ui.onmessage = async job => {
         output = await Promise.race([script, tracker.cancelled]);
       }
       catch (error) { scriptFailure = { error }; }
-      finally { clearTimeout(ticker); execution = null; }
+      finally { execution = null; phase = 'finish'; scriptProgress = null; }
       if (tracker.wasCancelled) warnings.push('A suspended script cannot be terminated from outside: if the call it waits on returns later, the script resumes; further figma access throws, but direct writes through nodes it already holds cannot be blocked. To stop it completely, close and reopen the plugin in Figma');
       // Create history boundaries for success and partial failure alike; never trigger global Undo automatically.
       try { commitUndo(); undoBoundaries.after = 'committed'; }
@@ -600,6 +613,7 @@ figma.ui.onmessage = async job => {
       recovery: executionStarted ? 'The script started running; keep the current state, verify with inspect first, do not replay the script' : 'The script did not run; fix it and resubmit', ...(run ? { undoBoundaries } : {}),
       ...leftovers, ...(warnings.length ? { warnings } : {}) });
   } finally {
+    clearTimeout(ticker);
     watch?.stop();
     busy = false;
   }

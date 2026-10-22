@@ -49,19 +49,34 @@ test('cancel requires the same task channelNonce; a hung Figma call fails immedi
   assert.equal(f.doc.page.children.length, nodes, 'After the suspended script resumes, its next Figma call throws without creating another node');
 });
 
+test('loadFontAsync reuses successful font loads across runs in the same plugin session; failures retry normally', async () => {
+  const f = plugin({ checkpoint: true }), seen = [];
+  f.figma.loadFontAsync = async font => { seen.push(font.style); if (font.style === 'Missing') throw Error('font not found'); };
+  const code = ['Regular', 'Regular', 'Bold', 'Missing'].map(style => `await figma.loadFontAsync({ family: "Inter", style: "${style}" }).catch(() => {});`).join('\n') + '\nreturn 1;';
+  for (let i = 0; i < 2; i++) assert.equal((await f.send({ code })).ok, true);
+  assert.deepEqual(seen, ['Regular', 'Bold', 'Missing', 'Missing']);
+});
+
 test('A hung run exposes progress and source location in status and wait; CLI cancel returns a failure with caller trace, rejects finished tasks, and marks undelivered tasks unexecuted', async t => {
   const h = await harness(t), gate = hang(h.figma);
   const file = await writeScript(h.cwd, 'hang.js', 'const font = { family: "Inter", style: "Regular" };\nawait figma.loadFontAsync(font);\nreturn 1;');
   const id = (await h.cli('run', file, '--no-wait')).json.id;
-  // The plugin reports its first progress update after 1 s of execution; the next heartbeat forwards it to the bridge.
-  const status = await pump(h, (async () => { for (;;) { const s = (await h.cli('status')).json; if (s.progress?.waiting?.length) return s; await delay(100); } })());
+  // Hide the panel and stop advancing its timers after execution starts, as when Figma throttles a hidden window. Messages from main still trigger progress heartbeats, marked hidden.
+  await pump(h, (async () => { while (!gate.release) await delay(20); })());
+  h.document.visibilityState = 'hidden';
+  const status = await (async () => {
+    for (const end = Date.now() + 10000; Date.now() < end; await delay(100)) { const s = (await h.cli('status')).json; if (s.progress?.waiting?.length) return s; }
+    assert.fail('No execution progress received within 10 s');
+  })();
   assert.deepEqual(status.progress.waiting.map(w => [w.call, w.at?.file, w.at?.line]), [['figma.loadFontAsync', 'hang.js', 2]]);
-  assert.equal(status.progress.waitingCount, 1);
+  assert.deepEqual([status.progress.phase, status.progress.waitingCount, status.progress.hidden], ['script', 1, true]);
   const waited = await h.cli('wait', id, '--timeout', '1');
   assert.deepEqual([waited.code, waited.json.waitStatus, waited.json.progress.waiting[0].at.line], [2, 'timeout', 2]);
-  assert.match(waited.json.instruction, /cancel/);
+  assert.match(waited.json.instruction, /cancel.*Figma window was not visible.*about 1 minute longer.*uncover the Figma window/);
 
-  const cancelled = await pump(h, h.cli('cancel', id));
+  // Panel timers remain stopped: hold heartbeats deliver cancellation immediately, and the resulting message triggers persistence of the failure.
+  const cancelled = await h.cli('cancel', id);
+  h.document.visibilityState = 'visible';
   assert.deepEqual([cancelled.code, cancelled.json.ok, cancelled.json.executionStarted], [1, false, true]);
   assert.match(cancelled.json.error, /Aborted by cancel: the script was waiting on figma\.loadFontAsync/);
   assert.deepEqual(cancelled.json.trace.map(f => [f.file, f.line]), [['hang.js', 2]]);
