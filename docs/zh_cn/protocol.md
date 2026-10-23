@@ -268,11 +268,17 @@ pass = expect === "changed" ? changed : !changed
 
 ### 进度与取消
 
+脚本和库拿到的是 `figma` 代理。代理转发访问，并跟踪名称以 `Async` 结尾且尚未完成的方法，包括 `variables`、`motion`、`teamLibrary`、`clientStorage` 和 `annotations` 命名空间。节点原样返回，因此不跟踪节点自身的异步方法。成功加载的字体按 family/style 在插件会话内缓存，失败不缓存。
+
 插件在收到 run 后一秒首次报告进度；计时器可运行时，之后每两秒报告一次：
 
 ```text
 {seq, phase, elapsedMs, changes?, lastChangeAgoMs?, waiting?, waitingCount?}
 ```
+
+阶段为 `prepare`、`approval`、`script` 和 `finish`。只有 script 阶段带目标页本地改动次数与未返回调用。`waiting` 最多列出最早的三个 `{call,forMs}`，最早的一项还带最多 1,000 字符的 stack。iframe 立即把进度放进 URL 编码的心跳参数。桥接把 stack 映射为 `at`，移除原始 stack，追加 `reportedAt` 和可选的 `hidden:true`，保存内存状态，并按每个序号写一次 `progress.json`。无效进度会忽略。Status 另加 `ageMs`。
+
+独立的 `/heartbeat?hold=1` 通道挂起到取消、完成或约十秒后，再用 `X-Long-Poll` 立即续接，避开面板计时器节流。插件自身的进度与失败清理计时器仍可能被节流。
 
 取消无法终止已经挂起的 JavaScript 后续执行，也无法终止已经发出的宿主调用。之后经代理的访问会抛错，但通过此前已取得节点进行的直接写入无法阻止。结果会以警告说明该限制。要终止后续执行，应停止并重新运行插件。读取任务不能取消；同步工作必须先让出控制，取消才有机会被处理。
 
@@ -592,10 +598,6 @@ HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SAN
 ## 取消边界
 
 未交付的 run 可记为未执行。交付后在脚本执行阶段请求取消。准备、确认和写前日志等待使用各自的超时，随后检查返回的执行状态。
-
-## 后台进度
-
-进度与取消送达仍依赖计时器心跳。隐藏的 Figma 窗口可能使它们明显延迟；判断任务停滞前先让窗口可见。
 
 ## 动效回滚值
 

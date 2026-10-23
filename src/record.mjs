@@ -262,7 +262,9 @@ export async function waitForResult(cwd, id, timeoutSeconds = DEFAULT_TIMEOUT_SE
     if (record.resolution) return { ...record, waitStatus: 'resolved' };
     if (record.recovery) return { ...record, waitStatus: 'needs-review' };
     const remaining = timeoutSeconds * 1000 - (clock.now() - started);
-    if (remaining <= 0) return { ...record, waitStatus: 'timeout', instruction: 'Wait timed out; the job state still needs checking; keep the plugin running and read status; do not replay the script. For a running run, check progress: if it stays on the same call for a long time, keep waiting with wait, or stop it with cancel' };
+    // Hidden Figma windows throttle plugin timers and some async calls to roughly once a minute in observed behavior. This commonly explains stalls; first suggest making the window visible.
+    const hidden = record.progress?.hidden ? '; progress was reported while the Figma window was not visible: after about 5 minutes covered or minimized, plugin timers and calls such as loadFontAsync each take about 1 minute longer; ask the user to uncover the Figma window (it need not be in the foreground, just not fully covered)' : '';
+    if (remaining <= 0) return { ...record, waitStatus: 'timeout', instruction: `Wait timed out; the job state still needs checking; keep the plugin running and read status; do not replay the script. For a running run, check progress: if it stays on the same call for a long time, keep waiting with wait, or stop it with cancel${hidden}` };
     await clock.sleep(Math.min(POLL_MS, remaining));
   }
 }

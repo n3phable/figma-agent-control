@@ -219,7 +219,13 @@ done
 
 ### 任务迟迟不结束
 
+不可见或最小化的 Figma 窗口可能严重限制计时器和宿主调用。`connectionState:BACKGROUND` 与 `progress.hidden:true` 是提示；在判断脚本卡死前先让窗口可见。
+
 `status.progress` 和等待到期的摘要说明执行阶段：
+
+```json
+{"phase":"script","elapsedMs":372000,"changes":132,"waitingCount":1,"ageMs":4000,"waiting":[{"call":"figma.loadFontAsync","forMs":360000,"at":{"file":"edit.js","line":52,"source":"await figma.loadFontAsync(font);"}}]}
+```
 
 - `prepare` 包括取目标、快照、写前日志和前图；`approval` 等面板确认；`script` 执行正文；`finish` 收集证据。大目标会拖慢准备和收尾。
 
@@ -230,6 +236,8 @@ done
 - 开始前取消给 `executionStarted:false`。执行中取消走普通失败/清理路径，可取得位置时 trace 指向等待中的调用。
 
 - 取消不能终止所有挂起的 JavaScript 续体。之后经代理访问 `figma` 会抛错，但挂起调用恢复后，仍可能通过此前取得的节点直接写入。要终止该续体，需要关闭并重新运行插件。不要把杀掉 Figma 或全局 Undo 当成通用恢复步骤。
+
+进度计时器和失败清理本身也会被节流。挂起心跳的取消通道不依赖面板计时器，但同步长循环必须先让出控制。
 
 ## 画面验收
 
@@ -409,7 +417,3 @@ figma-agent-control resolve <original-job-id> --inspect <inspect-job-id> --previ
 ## 取消边界
 
 未交付的 run 可记为未执行。交付后在脚本执行阶段请求取消。准备、确认和写前日志等待使用各自的超时，随后检查返回的执行状态。
-
-## 后台进度
-
-进度与取消送达仍依赖计时器心跳。隐藏的 Figma 窗口可能使它们明显延迟；判断任务停滞前先让窗口可见。

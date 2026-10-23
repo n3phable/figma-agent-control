@@ -23,16 +23,17 @@ const script = template.match(/<script>([\s\S]*)<\/script>/)[1]
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 // fileKey is main's hello reply, normally read from figma.fileKey; null means main has not replied.
+// run opens a concurrent hold=1 heartbeat cancellation channel, recorded in holds and queued under hold; calls tracks only the serial tick sequence.
 function plugin({ visibility = 'visible', fileKey = 'example' } = {}) {
-  const calls = [], toMain = [], queues = new Map(), elements = new Map(), listeners = {}, window = {};
+  const calls = [], holds = [], toMain = [], queues = new Map(), elements = new Map(), listeners = {}, window = {};
   const el = id => { if (!elements.has(id)) elements.set(id, fakeElement({ hidden: id === 'approval' })); return elements.get(id); };
   const document = { visibilityState: visibility, getElementById: el, createElement: () => fakeElement(), addEventListener: (type, fn) => { listeners[type] = fn; } };
   let tick, interval;
   async function fetch(url, options = {}) {
-    const { origin, pathname, searchParams } = new URL(url);
-    calls.push({ origin, path: pathname, query: Object.fromEntries(searchParams), headers: new Headers(options.headers), timeoutMs: options.signal?.timeoutMs,
+    const { origin, pathname, searchParams } = new URL(url), key = searchParams.get('hold') === '1' ? 'hold' : pathname;
+    (key === 'hold' ? holds : calls).push({ origin, path: pathname, query: Object.fromEntries(searchParams), headers: new Headers(options.headers), timeoutMs: options.signal?.timeoutMs,
       body: options.body === undefined ? undefined : JSON.parse(options.body) });
-    const reply = await (queues.get(pathname)?.shift() ?? {});
+    const reply = await (queues.get(key)?.shift() ?? {});
     if (reply instanceof Error) throw reply;
     const status = reply.status ?? 200;
     return { ok: status >= 200 && status < 300, status, headers: new Headers({ ...(reply.session ? { 'X-Figma-Session': reply.session, 'X-Figma-Binding': JSON.stringify(reply.binding ?? BINDING) } : {}), ...reply.headers }), json: async () => reply.body ?? null };
@@ -44,7 +45,7 @@ function plugin({ visibility = 'visible', fileKey = 'example' } = {}) {
   // UI asks main for the current file on startup; afterward toMain records only task-related messages.
   if (fileKey !== null) { assert.deepEqual(toMain, [{ type: 'hello' }]); toMain.length = 0; window.onmessage({ data: { pluginMessage: { type: 'file', fileKey } } }); }
   return {
-    calls, toMain, interval, el,
+    calls, holds, toMain, interval, el,
     reply: (path, ...replies) => queues.set(path, [...(queues.get(path) ?? []), ...replies]),
     trigger: () => tick(),
     tick: async () => { await tick(); await flush(); },
@@ -160,6 +161,22 @@ test('X-Long-Poll empty responses immediately renew polling without a tick; ordi
   await f.tick();
   assert.deepEqual(f.paths(3), ['/poll', '/poll']);
   assert.deepEqual(f.toMain.at(-1), { ...job, channelNonce: f.toMain.at(-1).channelNonce }, 'A task received by renewed polling still reaches main');
+});
+
+test('run opens a cancellation hold heartbeat channel, renews X-Long-Poll immediately, forwards cancel then stops; read-only tasks do not', async () => {
+  const f = plugin();
+  f.reply('hold', { headers: { 'X-Long-Poll': '1' } }, { headers: { 'X-Long-Poll': '1' } }, { body: { connected: true, active: 'job-1', cancel: true } });
+  f.reply('/poll', { body: { id: 'job-1', operation: 'run' } });
+  await f.tick();
+  for (let i = 0; i < 5; i++) await flush();
+  const { channelNonce } = f.toMain[0];
+  assert.deepEqual(f.holds.map(c => [c.path, c.query.job, c.timeoutMs]), Array(3).fill(['/heartbeat', 'job-1', 15000]));
+  assert.deepEqual(f.toMain.slice(1), [{ type: 'cancel', id: 'job-1', channelNonce }]);
+  assert.deepEqual(f.paths(), ['/poll'], 'The serial tick request sequence is unaffected');
+  const g = plugin();
+  await claim(g, { id: 'job-2', operation: 'inspect' });
+  await flush();
+  assert.equal(g.holds.length, 0);
 });
 
 test('Accept results only for the current task and channel credentials; previous credentials expire with the task', async () => {

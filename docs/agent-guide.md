@@ -219,7 +219,13 @@ Limits matter: creation tracking observes only the target page and only script-t
 
 ### Stalled jobs
 
+An invisible or minimized Figma window can throttle timers and host calls heavily. `connectionState: BACKGROUND` and `progress.hidden: true` are useful signals. Make the window visible before assuming the script is dead.
+
 `status.progress` and a timed-out wait report the phase:
+
+```json
+{"phase":"script","elapsedMs":372000,"changes":132,"waitingCount":1,"ageMs":4000,"waiting":[{"call":"figma.loadFontAsync","forMs":360000,"at":{"file":"edit.js","line":52,"source":"await figma.loadFontAsync(font);"}}]}
+```
 
 - `prepare` covers target resolution, snapshots, checkpoint, and before rendering; `approval` waits for the panel; `script` runs the body; `finish` collects evidence. Large targets can make preparation or finishing slow.
 
@@ -228,6 +234,8 @@ Limits matter: creation tracking observes only the target page and only script-t
 - Growing `changes` indicates progress. Keep waiting. If a call remains stuck, `cancel <job-id>` requests cancellation and waits for its result.
 
 - Cancellation cannot terminate an already suspended JavaScript continuation. Future accesses through the `figma` proxy throw, but direct writes through node objects already obtained can still occur if the pending call returns. Closing and reopening the plugin is required to terminate that continuation. Do not kill Figma or trigger global Undo as a generic recovery step.
+
+Progress timers and failure cleanup can themselves be throttled. The held-heartbeat cancellation channel does not depend on the panel's timer, but a synchronous loop must yield before the plugin can handle anything.
 
 ## Visual verification
 
@@ -407,7 +415,3 @@ The bridge uses port 32523. Keep only one project bridge active on the machine. 
 ## Cancellation boundary
 
 An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
-
-## Background progress
-
-Progress and cancellation delivery still depend on timer-driven heartbeats. Hidden Figma windows can delay them substantially; make the window visible before judging a run stalled.
