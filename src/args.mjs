@@ -40,9 +40,9 @@ export const COMMANDS = {
     + 'a hung call cannot be stopped from outside, see warnings in the result', positionals: [1, 1], options: { timeout: { type: 'string' }, full: { type: 'boolean' } } },
   resolve: { usage: 'resolve <original-job-id> --inspect <inspect-job-id> --previous-plugin-stopped: after verification, end the unresolved wait without replaying the script', positionals: [1, 1],
     options: { inspect: { type: 'string' }, 'previous-plugin-stopped': { type: 'boolean' } } },
-  frames: { usage: 'frames <video.webm|.mp4|run-id> [--at <seconds,seconds,...>] [--count <2-24>] [--compare <video|run-id>]: sample video in Chrome and produce a timestamped PNG contact sheet, using 8 evenly spaced frames by default; '
-    + '--compare samples another video at the same times and compares each frame, with source above comparison in each cell; a job ID must identify a successful run returning exactly one video', positionals: [1, 1],
-    options: { at: { type: 'string' }, count: { type: 'string' }, compare: { type: 'string' } } },
+  frames: { usage: 'frames <video.webm|.mp4|run-job-id> [--at <s,s,...>] [--count <2-24>] [--compare <video|run-job-id>] [--dump]: extract frames at given times in Chrome and tile them into one contact-sheet PNG with time labels (default: 8 evenly spaced frames); '
+    + '--compare extracts another video at the same times and compares frame by frame, each cell showing the source on top and the comparison below; --dump also saves every frame at original size as a separate PNG for measuring positions and picking colors; a job ID must be a successful run whose return value holds exactly one video', positionals: [1, 1],
+    options: { at: { type: 'string' }, count: { type: 'string' }, compare: { type: 'string' }, dump: { type: 'boolean' } } },
   'image-diff': { usage: 'image-diff <before.png|preview-job-id> <after.png|preview-job-id> [--threshold <0-255>] [--expect changed|unchanged]', positionals: [2, 2],
     options: { threshold: { type: 'string' }, expect: { type: 'string' } } },
   report: { usage: 'report [--since <ISO-time>]: summary of job durations, gaps and repeated runs (default: last 24 hours; a date alone means UTC midnight)', positionals: [0, 0], options: { since: { type: 'string' } } },
@@ -92,12 +92,12 @@ const expect = value => {
 /** @typedef {{ node?: string | string[], name?: string[], lib?: string[], island?: string[], data?: string, depth?: string, expect?: string, tolerance?: string, scale?: string,
  *   'request-id'?: string, 'high-risk'?: string, 'clean-on-fail'?: boolean, timeout?: string, 'no-wait'?: boolean, full?: boolean, force?: boolean, inspect?: string,
  *   'previous-plugin-stopped'?: boolean, threshold?: string, since?: string, from?: string[], out?: string, overrides?: string, 'no-check'?: boolean, budget?: string,
- *   zoom?: string, at?: string, count?: string, compare?: string }} Values */
+ *   zoom?: string, at?: string, count?: string, compare?: string, dump?: boolean }} Values */
 // Normalized options, read by bin according to the command.
 /** @typedef {{ targetNodeId?: string, nodes?: string[], names?: string[], snapshotDepth?: number, timeoutSeconds?: number, threshold?: number, expect?: string, tolerance?: number,
  *   scale?: number, requestId?: string, risk?: { level: 'high', reason: string }, cleanOnFail?: true, islands?: string[], libFiles?: string[], dataFile?: string, since?: string,
  *   inspectId?: string, previousPluginStopped?: true, force?: true, full?: true, noWait?: true,
- *   fromIds?: string[], outDir?: string, overridesFile?: string, noCheck?: true, budgetSeconds?: number, zoomId?: string, atSeconds?: number[], frameCount?: number, compareSource?: string }} Options */
+ *   fromIds?: string[], outDir?: string, overridesFile?: string, noCheck?: true, budgetSeconds?: number, zoomId?: string, atSeconds?: number[], frameCount?: number, compareSource?: string, dump?: true }} Options */
 /** @param {string[]} argv @returns {{ command: string, positionals: string[], options: Options }} */
 export function parse(argv) {
   const [first = 'help', ...rest] = argv;
@@ -165,6 +165,7 @@ export function parse(argv) {
   }
   if (v.count !== undefined) o.frameCount = integer(v.count, 2, 24, '--count must be an integer 2-24');
   if (v.compare !== undefined) o.compareSource = v.compare;
+  if (v.dump) o.dump = true;
   if (v.data !== undefined) o.dataFile = v.data;
   // Accept ISO format only: timestamps require Z or a time-zone offset; date-only values mean midnight UTC, never a guessed local time zone.
   if (v.since !== undefined) {

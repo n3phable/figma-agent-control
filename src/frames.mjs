@@ -81,8 +81,14 @@ const SHEET = labels => `(() => {
   return c.toDataURL('image/png').split(',')[1];
 })()`;
 
-/** @param {string} cwd @param {string} sourceValue @param {{ atSeconds?: number[], frameCount?: number, compareSource?: string }} [options] @param {{ timeout?: number }} [chromeOptions] */
-export async function frames(cwd, sourceValue, { atSeconds, frameCount = DEFAULT_COUNT, compareSource } = {}, invocationDir = process.cwd(), chromeOptions = {}) {
+/** @param {string} file @param {Buffer} bytes Write a temporary file then rename, preventing readers from seeing a partial PNG. */
+async function save(file, bytes) {
+  const temp = `${file}.${process.pid}.tmp`;
+  await fs.writeFile(temp, bytes, { mode: 0o600 }); await fs.rename(temp, file);
+}
+
+/** @param {string} cwd @param {string} sourceValue @param {{ atSeconds?: number[], frameCount?: number, compareSource?: string, dump?: boolean }} [options] @param {{ timeout?: number }} [chromeOptions] */
+export async function frames(cwd, sourceValue, { atSeconds, frameCount = DEFAULT_COUNT, compareSource, dump = false } = {}, invocationDir = process.cwd(), chromeOptions = {}) {
   const files = [await source(cwd, sourceValue, invocationDir), ...(compareSource !== undefined ? [await source(cwd, compareSource, invocationDir)] : [])];
   const bytes = await Promise.all(files.map(file => fs.readFile(file)));
   const browser = await launch(chromeOptions);
@@ -105,14 +111,21 @@ export async function frames(cwd, sourceValue, { atSeconds, frameCount = DEFAULT
     // Write .figma-agent-control/frames only inside bound projects; otherwise use the system temporary directory, like image-diff.
     let dir = path.join(os.tmpdir(), 'figma-agent-control-frames');
     try { await fs.access(path.join(root(cwd), 'binding.json')); dir = path.join(root(cwd), 'frames'); } catch { /* Not a project directory.*/ }
-    const sheet = path.join(dir, `${bytes.map(b => hash(b).slice(0, 12)).join('-')}-${hash(times.join(',')).slice(0, 8)}.png`), temp = `${sheet}.${process.pid}.tmp`;
+    const sheet = path.join(dir, `${bytes.map(b => hash(b).slice(0, 12)).join('-')}-${hash(times.join(',')).slice(0, 8)}.png`);
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    await fs.writeFile(temp, sheetBytes, { mode: 0o600 }); await fs.rename(temp, sheet);
+    await save(sheet, sheetBytes);
+    // --dump writes original-size frames into the directory named after the contact sheet. Filenames use sample times; comparison frames add -compare.
+    const dumped = dump ? sheet.slice(0, -'.png'.length) : null;
+    if (dumped) {
+      await fs.mkdir(dumped, { recursive: true, mode: 0o700 });
+      await Promise.all(shots.flatMap((set, k) => set.map((b64, i) => save(path.join(dumped, `${times[i].toFixed(3)}s${k ? '-compare' : ''}.png`), Buffer.from(b64, 'base64')))));
+    }
     return { source: files[0], ...(files[1] ? { compare: files[1] } : {}), width: meta[0].width, height: meta[0].height, duration: Math.round(duration * 1000) / 1000, sheet,
-      frames: times.map((t, i) => ({ t, ...(diffs ? { changedPixels: diffs[i].changedPixels, sameSize: diffs[i].sameSize } : {}) })),
+      frames: times.map((t, i) => ({ t, ...(dumped ? { file: path.join(dumped, `${t.toFixed(3)}s.png`), ...(files[1] ? { compareFile: path.join(dumped, `${t.toFixed(3)}s-compare.png`) } : {}) } : {}),
+        ...(diffs ? { changedPixels: diffs[i].changedPixels, sameSize: diffs[i].sameSize } : {}) })),
       ...(diffs ? { changed: diffs.some(d => !d.sameSize || d.changedPixels > 0), layout: 'Each cell shows the source on top and the comparison below; the delta in each label is the number of changed pixels at that time' } : {}),
       // Figma video export can lag edits, returning the previous video immediately after a change. Byte-identical videos often indicate this; report it explicitly.
       ...(bytes[1]?.equals(bytes[0]) ? { warning: 'The two videos are byte-identical: if the motion was changed in between, the post-change export may still be the old one (Figma video export lags behind edits, observed up to several minutes); use differentFrom of exportMotion to wait until the export reflects the change, then compare' } : {}),
-      limitation: 'Each sample uses the frame covering that time, limited by export frame rate. Contact-sheet frames scale down to fit; use --at with one time for original-size detail' };
+      limitation: 'Each time takes the frame covering it, so precision is limited by the export frame rate; at most 24 times per call, split denser sampling across several --at calls; frames in the contact sheet are scaled down to fit the width, for original size use --dump or --at with a single time' };
   } finally { await browser.close(); }
 }

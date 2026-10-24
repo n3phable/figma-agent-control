@@ -217,7 +217,7 @@ test('run --lib resolves bare names to bundled lib/<name>.js, preserves mixed lo
   assert.deepEqual([libName(motion), libName(local), libName('scripts/motion.js')], ['lib:motion', 'outer.js', 'motion.js'], 'Traces name bundled libraries lib:<name> to distinguish same-named scripts');
 });
 
-test('frames parses, deduplicates and sorts up to 24 --at times; --count (2-24) is exclusive and --compare is preserved', () => {
+test('frames parses, deduplicates, and sorts up to 24 --at times; --count (2-24) is exclusive, --compare is preserved, and --dump is a flag', () => {
   assert.deepEqual(opts('frames', 'a.webm', '--at', '0.5, 0,.25,0.5').atSeconds, [0, 0.25, 0.5]);
   for (const bad of ['', '1,', 'a', '1s', '0.1.2']) assert.throws(() => parse(['frames', 'a.webm', '--at', bad]), /--at needs comma-separated seconds/, JSON.stringify(bad));
   assert.throws(() => parse(['frames', 'a.webm', '--at', Array.from({ length: 25 }, (_, i) => i).join(',')]), /--at takes at most 24 times/);
@@ -225,6 +225,7 @@ test('frames parses, deduplicates and sorts up to 24 --at times; --count (2-24) 
   for (const bad of ['1', '25', '2.5']) assert.throws(() => parse(['frames', 'a.webm', '--count', bad]), /--count must be an integer 2-24/, bad);
   assert.throws(() => parse(['frames', 'a.webm', '--at', '0', '--count', '3']), /--at cannot be combined with --count/);
   assert.equal(opts('frames', 'a.webm', '--compare', ID).compareSource, ID);
+  assert.deepEqual([opts('frames', 'a.webm', '--dump').dump, opts('frames', 'a.webm').dump], [true, undefined]);
 });
 
 // ── resolve ─────────────────────────────────────────────────────────────
