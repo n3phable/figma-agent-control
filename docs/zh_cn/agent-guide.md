@@ -298,6 +298,12 @@ try {
 }
 ```
 
+```sh
+figma-agent-control run export-motion.js --lib motion --node 12:34 --timeout 120 > video-old.json
+figma-agent-control run apply-motion.js --lib motion --node 12:34 --data motion.json --timeout 300 > applied.json
+figma-agent-control frames <before-video-job-id> --compare <after-video-job-id> --dump
+```
+
 先读后改。原样 spec 不产生写入；省略节点或字段则保持原状，新增预设不写 `id`。关键帧为 `[秒,值,缓动?]`，缓动作用于**以该关键帧结束**的一段；第一帧的缓动不生效。优先以 `$name` 使用已有 EASING 变量，自定义样式用 `@name`。
 
 应修正 `beyond-timeline`、`first-key-easing`、`static-track`、`track-conflict`。时长、尾部空闲、原始/不一致缓动、交错间隔等由设计意图决定。`readMotion(target,{durationRange:[0.1,1]})` 可调整时长检查范围。
@@ -406,10 +412,6 @@ figma-agent-control resolve <original-job-id> --inspect <inspect-job-id> --previ
 
 不要把 `.figma-agent-control/` 提交到版本控制，其中有凭证和设计证据。只交付需要的产物，保留尚未核验的证据，完成后停止本次启动且不再需要的桥接。
 
-## 视频取帧
-
-`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` 在 Chrome 中采样 MP4/WebM，生成带时刻标记的联系表，默认均匀采样八帧。
-
 ## 连接范围
 
 桥接使用端口 32523，同一台机器只保留一个项目桥接运行。全局插件可在桥接重启后重连；连接另一个项目前先停止原项目。
@@ -417,3 +419,7 @@ figma-agent-control resolve <original-job-id> --inspect <inspect-job-id> --previ
 ## 取消边界
 
 未交付的 run 可记为未执行。交付后在脚本执行阶段请求取消。准备、确认和写前日志等待使用各自的超时，随后检查返回的执行状态。
+
+## 取帧文件名
+
+--dump 使用取整后的采样时刻保存原尺寸 PNG，例如 0.300s.png。不同采样时刻舍入到同一毫秒可能重名，一次调用中应避免这种组合。

@@ -296,6 +296,12 @@ try {
 }
 ```
 
+```sh
+figma-agent-control run export-motion.js --lib motion --node 12:34 --timeout 120 > video-old.json
+figma-agent-control run apply-motion.js --lib motion --node 12:34 --data motion.json --timeout 300 > applied.json
+figma-agent-control frames <before-video-job-id> --compare <after-video-job-id> --dump
+```
+
 Read before editing. An unchanged spec performs no writes. Omitted nodes and keys stay untouched; new presets omit `id`. Keyframes are `[seconds, value, easing?]`, with easing on the segment **ending** at that keyframe. Easing on the first key has no effect. Prefer existing EASING variables through `$name`; custom styles use `@name`.
 
 Fix `beyond-timeline`, `first-key-easing`, `static-track`, and `track-conflict` findings. Treat duration, idle-tail, raw/inconsistent easing, and stagger findings as design judgments. `readMotion(target, {durationRange: [0.1, 1]})` adjusts the duration check.
@@ -404,10 +410,6 @@ The flag is an assertion that the previous plugin has actually stopped. The insp
 
 Keep `.figma-agent-control/` out of version control. It includes credentials and design evidence. Deliver only the required result artifacts, retain unreviewed evidence, and stop bridges you started when their work is complete.
 
-## Video frame sampling
-
-`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` samples MP4/WebM in Chrome and writes a labeled contact sheet. The default is eight evenly spaced frames.
-
 ## Connection scope
 
 The bridge uses port 32523. Keep only one project bridge active on the machine. The globally installed plugin can reconnect after a bridge restart; stop the previous project before connecting another.
@@ -415,3 +417,7 @@ The bridge uses port 32523. Keep only one project bridge active on the machine. 
 ## Cancellation boundary
 
 An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
+
+## Frame dump filenames
+
+--dump writes original-size PNGs using rounded sample times such as 0.300s.png. Distinct times rounding to the same millisecond can collide; avoid such pairs in one invocation.

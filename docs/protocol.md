@@ -31,6 +31,7 @@ All paths in this table are relative to `.figma-agent-control/`:
 | `runs/<job-id>/` | Bridge/session | Job evidence; directory mode `0700` |
 | `recoveries/<id>/` | Session | Archived stale lock and takeover report |
 | `diffs/` | `image-diff` | PNG comparison artifacts |
+| `frames/` | `frames` | Video contact sheets and optional original-size frames |
 | `check/<extract-job-id>/` | HTML commands | Rendered comparison evidence |
 
 A lock is stale only when checking its PID returns `ESRCH`. Takeover first exclusively creates `bridge.lock.takeover`, rereads the lock, and archives it only if unchanged. An empty lock may be between creation and PID write: `connect`, `stop` without a session, and `doctor` treat it as occupied and never delete it. A live PID is occupied even if the operating system reused it; the diagnostic gives a manual inspection path.
@@ -367,6 +368,8 @@ Issues have `{rule,timeline,node?,message}` and do not modify data:
 
 ### Frames
 
+`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>] [--dump]` samples MP4/WebM in Chrome without connecting to Figma.
+
 A file is resolved from the working directory. A job ID must be a successful run containing exactly one landed MP4/WebM; invalid sources fail before launching Chrome. GIF is unsupported. MP4 codec support depends on the Chrome build.
 
 Explicit times are deduplicated and sorted, limited to 24, and must fit the video. Default sampling uses eight times from zero to 0.05 seconds before the end. Each time selects the covering frame. Contact-sheet cells are labeled, with at most four per row, or six during comparison; total width is at most 1,600 px. Narrow frames are enlarged to at least 160 px with nearest-neighbor sampling. A comparison cell stacks source and comparison frames and labels changed pixels.
@@ -577,10 +580,6 @@ HTML-specific codes and frames output are defined above. Network errors remain d
 
 `report --since` accepts ISO dates/times; a time requires `Z` or an offset, and a date alone is UTC midnight. `jobs.failed` counts `ok:false`; `jobs.verifyFailed` counts successful executions with failed/unavailable visual checks. They are mutually exclusive.
 
-## Video frame sampling
-
-`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` samples MP4/WebM in Chrome and writes a labeled contact sheet. The default is eight evenly spaced frames.
-
 ## Connection scope
 
 The bridge uses port 32523. Keep only one project bridge active on the machine. The globally installed plugin can reconnect after a bridge restart; stop the previous project before connecting another.
@@ -596,3 +595,7 @@ An undelivered run can be marked unexecuted. Once delivered, request cancellatio
 ## Motion rollback values
 
 Rollback reconstructs writes from the prior parsed spec. Inspect variable identities and numeric values after an error.
+
+## Frame dump filenames
+
+--dump writes original-size PNGs using rounded sample times such as 0.300s.png. Distinct times rounding to the same millisecond can collide; avoid such pairs in one invocation.

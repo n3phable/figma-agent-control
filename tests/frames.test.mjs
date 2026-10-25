@@ -85,4 +85,14 @@ describe('Frame sampling and contact sheets (requires Chrome)', { skip: chrome ?
     assert.equal(r.warning, undefined);
     await assert.rejects(frames(cwd, SLIDE_48, { atSeconds: [0, 2] }, cwd, opts()), /--at exceeds the video duration of 1\.033 s: 2/);
   });
+
+  test('--dump saves original-size frames beside the sheet and suffixes comparison frames with -compare, allowing pixel displacement measurement', async t => {
+    const cwd = await project(t), r = await frames(cwd, SLIDE_48, { atSeconds: [0, 0.5], compareSource: SLIDE_24, dump: true }, cwd, opts());
+    assert.deepEqual(r.frames.map(f => [path.relative(r.sheet.slice(0, -4), f.file), path.basename(f.compareFile)]), [['0.000s.png', '0.000s-compare.png'], ['0.500s.png', '0.500s-compare.png']]);
+    // Leftmost block column: both start at 0; at 0.5 s the 48 px clip moves about 24 px and the 24 px clip about 12 px.
+    const left = async file => { const png = decodePng(await fs.readFile(file)); assert.deepEqual([png.width, png.height], [64, 32]); return Array.from({ length: 64 }, (_, x) => x).find(x => png.data[(16 * 64 + x) * 4] < 128); };
+    const [a0, b0, a1, b1] = await Promise.all(r.frames.flatMap(f => [left(f.file), left(f.compareFile)]));
+    assert.deepEqual([a0, b0], [0, 0]);
+    assert.ok(Math.abs(a1 - 24) <= 2 && Math.abs(b1 - 12) <= 2, JSON.stringify([a1, b1]));
+  });
 });

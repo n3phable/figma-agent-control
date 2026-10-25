@@ -31,6 +31,7 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 | `runs/<job-id>/` | 桥接/session | 任务证据；目录权限 `0700` |
 | `recoveries/<id>/` | session | 归档的陈旧锁与接管报告 |
 | `diffs/` | `image-diff` | PNG 比对产物 |
+| `frames/` | `frames` | 视频联系表与可选的原尺寸静帧 |
 | `check/<extract-job-id>/` | HTML 命令 | 渲染比对证据 |
 
 只有检查 PID 返回 `ESRCH` 时，锁才被视为陈旧。接管时先独占创建 `bridge.lock.takeover`，复读原锁，只有内容未变才归档。空锁可能处于创建与写入 PID 之间：`connect`、无会话时的 `stop` 和 `doctor` 都把它视为已占用，绝不删除。存活的 PID 一律视为占用，即使操作系统可能复用了它；诊断会给出人工检查步骤。
@@ -373,6 +374,8 @@ Apply 是声明式写入：列出的节点只要提供 `tracks` 或 `styles`，�
 
 ### 静帧提取
 
+`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>] [--dump]` 在 Chrome 中从 MP4/WebM 采样，不连接 Figma。
+
 文件相对于工作目录解析。任务 ID 必须指向成功的 run，且返回值中恰好有一个已落盘的 MP4/WebM；无效来源在启动 Chrome 前失败。不支持 GIF，MP4 编解码支持取决于 Chrome 构建。
 
 显式时刻会去重排序，最多 24 个，且必须在视频时长内。默认从零到结束前 0.05 秒均匀取八个时刻，每个时刻选择覆盖它的那一帧。联系表格子带时间标注，每行最多四格，对照时最多六格，总宽不超过 1,600 px。窄帧以最近邻放大到至少 160 px。对照格把源帧和对照帧上下排列，并标注变化像素。
@@ -583,10 +586,6 @@ HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SAN
 
 `report --since` 接受 ISO 日期/时间；带时间时必须提供 `Z` 或时区偏移，只有日期则按 UTC 零点处理。`jobs.failed` 统计 `ok:false`；`jobs.verifyFailed` 统计执行成功但画面核验失败/不可用的任务，两者互斥。
 
-## 视频取帧
-
-`frames <video|run-id> [--at <seconds,...>] [--count <2-24>] [--compare <video|run-id>]` 在 Chrome 中采样 MP4/WebM，生成带时刻标记的联系表，默认均匀采样八帧。
-
 ## 连接范围
 
 桥接使用端口 32523，同一台机器只保留一个项目桥接运行。全局插件可在桥接重启后重连；连接另一个项目前先停止原项目。
@@ -602,3 +601,7 @@ HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SAN
 ## 动效回滚值
 
 回滚从先前解析的 spec 重建写入。报错后应检查变量身份与数值。
+
+## 取帧文件名
+
+--dump 使用取整后的采样时刻保存原尺寸 PNG，例如 0.300s.png。不同采样时刻舍入到同一毫秒可能重名，一次调用中应避免这种组合。
