@@ -57,6 +57,8 @@ return { id: target.id, previous, name: target.name };
 printf '%s' '{"name":"Account card"}' | figma-agent-control run rename.js --node 12:34 --data /dev/stdin
 ```
 
+复用 helper 时使用 `--lib helpers.js`。每个库在单独的外层作用域运行，先给的在最外层；正文中的同名声明可以遮蔽它。裸库名选择内置库，例如 `--lib motion` 或 `--lib prototype`。
+
 参数使用 `--data file.json`。少量参数可通过管道或 heredoc 传给 `/dev/stdin`；可移植 shell 脚本中避免 `--data <(...)`。输入会记入 `job.json`。相关批量修改应在一个脚本里遍历输入数组，而不是每个节点提交一个任务。
 
 ### 选择目标
@@ -99,6 +101,7 @@ manifest 使用 `documentAccess: "dynamic-page"`。FAC 会在任务开始前加�
 | 给已弃用的 `backgroundStyleId` 赋值 | `await node.setFillStyleIdAsync(id)` |
 | `setRangeTextStyleId()` / `setRangeFillStyleId()` | 对应的 `Async` 方法 |
 | 给 `vectorNetwork` 赋值 | `await node.setVectorNetworkAsync(network)` |
+| 给 `reactions` 赋值 | `await node.setReactionsAsync(reactions)`，或使用 prototype 库 |
 | 读取、遍历、导出其他页面或插入它的子节点 | 先 `await page.loadAsync()` |
 | `figma.root.findAll*`、`findOne`、`findWidgetNodesByWidgetId` 或 `figma.on('documentchange', ...)` | 先 `await figma.loadAllPagesAsync()`；能限定页面时优先页面遍历与 `page.on('nodechange', ...)` |
 
@@ -156,6 +159,8 @@ for (const node of target.findAllWithCriteria({ types: ['INSTANCE'] })) {
 | `resultFile`、`evidence` | 持久化本机证据路径 |
 
 即使目标变更计数为零，`pageRoot` 也可能暴露遗漏的 `appendChild`。它比较前后状态，不判断改动来源：同期协作者或替换 ID 的操作也会出现。删除前先 inspect。
+
+内置库的帧名是 `lib:motion` 或 `lib:prototype`，用户库用文件名。动态生成代码导致 `trace[0].source` 不可信时，查看 `result.json` 中原始 `stack`；无法映射时摘要回退到原始 stack 的前 500 字符。
 
 | 退出码 | 含义 | 行动 |
 |---|---|---|
@@ -314,6 +319,39 @@ figma-agent-control frames <before-video-job-id> --compare <after-video-job-id> 
 
 其他开发观察：关键帧不更新静态 `x`/`opacity`；超出时间线的动效可能被接受，但播放会截断；旋转以节点中心为轴，正值逆时针；第一帧之前使用该帧的值。COLOR 关键帧为 RGBA，不是颜色变量别名。依赖 TIMING 变量单位或 Beta 行为前，应在当前编辑器中核验。
 
+## 原型
+
+用 `--lib prototype` 读写 reactions 与页面流程起点。优先绑定页面，因为可达性和死路检查需要页面根。完整格式见[PrototypeSpec](protocol.md#prototypespec)。
+
+```sh
+printf '%s\n' 'return readPrototype(target)' > read-prototype.js
+printf '%s\n' 'return applyPrototype(data)' > apply-prototype.js
+figma-agent-control run read-prototype.js --lib prototype --depth 1 > prototype-old.json
+jq '.output | {flows, nodes, overlays}' prototype-old.json > prototype.json
+# 编辑 prototype.json 后再应用。
+figma-agent-control run apply-prototype.js --lib prototype --data prototype.json > applied.json
+```
+
+- 修改 `nodes[].reactions` 与 `flows`。列出的节点按 spec 对齐，`[]` 清空连线；省略的节点不动。省略 `flows` 保留当前起点，包括 Figma 自动新增的起点。`overlays` 只读；targets、frames、edges、issues 是派生信息，应用时忽略。
+
+- 连线是 `{on,do:[动作]}`。示例为 `click`、`after 0.8`、`{navigate:"12:34"}`、`transition:"smart-animate 0.3 ease-out"`。库内时间以秒计。原型弹簧使用 `spring(mass,stiffness,damping)`，不同于 Motion 的 `spring(bounce)`。
+
+- navigate/swap/overlay 目标须为同页顶层画框，即页面或 Section 的直接子节点。scroll 目标在源画框内；change-to 目标在同一变体集内。overlay 的 `position` 要求 Figma 中设为 Manual。
+
+- 实例和实例子图层可写 reactions；子图层写入为按 trigger 与主组件合并的覆盖。Section 与组件集本身没有 `setReactionsAsync`。
+
+- 写入时保持 Figma 在前台。后台 `setReactionsAsync` 曾出现超时。拒绝后库会尝试回滚；先读错误并 inspect，再决定是否重试。
+
+- `drag` 要求 Smart Animate，URL 动作接受 click/after；多个动作、变量动作、条件分支可能受套餐限制。
+
+- 顶层画框首次有出向连线时，Figma 可能自动加流程起点。库在连线之后写显式 `flows`，确保请求的集合最终生效。
+
+- 与本次写入有关的 `error` 在写前拒绝。Smart Animate 图层不匹配、不可达、死路等 warning 按设计判断。
+
+- 核验返回的 `changes` 和重读的 `prototype`。浅页面快照可能看不到深层连线变化。`--expect` 不验证交互效果，真实点击仍需在 Figma 中测试。
+
+`variables` 将原型的 `prototypeRefs` 与视觉属性的 `bindings` 分开报告。删变量前两者都要检查。
+
 ## 导出 HTML
 
 `html` 生成固定尺寸、资源内联的 HTML，并与同一次 extract 的参考 PNG 比较。比对需要 Chrome；`--no-check` 只生成。[HTML 协议](protocol.md#html-导出)定义清单与诊断。
@@ -405,6 +443,10 @@ figma-agent-control resolve <original-job-id> --inspect <inspect-job-id> --previ
 - Plugin API 操作在当前 Figma 文件中进行；处理另一个文件时使用独立绑定。
 
 - 云端同步在 Figma 中检查。
+
+- 原型播放在 Figma 中通过人工或已授权的 UI 自动化验证。浮层设置、Sticky 和演示设备在 Prototype 面板配置；overlay 动作位置使用 Manual 模式。
+
+- HTML 输出为固定尺寸的静态嵌套 DOM。通过 `data-node` 查节点，SVG 岛和参考裁图替换对应子树。响应式行为和原型交互由使用该产物的应用实现。
 
 - Motion 需要账户开放 Beta/private API，字体发现当前搜索 macOS 目录；真实 Desktop 验收与自动测试分别记录。
 

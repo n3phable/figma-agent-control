@@ -18,6 +18,8 @@ Figma Agent Control (FAC) connects your local CLI to a Figma Desktop development
 
 - **Export static HTML:** generate nested DOM with embedded assets, compare it in Chrome, identify differences by node, and apply recorded overrides.
 
+- **Work with motion and prototypes:** read and apply declarative specs through bundled libraries; export motion video and inspect frame contact sheets. Motion uses Figma's Beta/private APIs and depends on their availability.
+
 ## Requirements
 
 - **Node.js 22 or newer.** The runtime has no npm dependencies. Development dependencies are pinned in the lockfile.
@@ -109,6 +111,13 @@ A submitting command waits by default and returns one JSON object. Its stderr re
 | `frames` | Sample MP4/WebM video into a contact sheet, optionally comparing two videos |
 | `image-diff`, `report` | Compare PNGs or summarize job timings, failures, and repeated executions |
 
+```sh
+figma-agent-control html --node 12:34 --out out
+figma-agent-control run read-motion.js --node 12:34 --lib motion
+figma-agent-control run read-prototype.js --lib prototype
+figma-agent-control frames <video-job-id> --dump
+```
+
 Use `figma-agent-control help` for the exact syntax of the installed version. The [agent guide](docs/agent-guide.md) includes complete script examples and recovery procedures.
 
 ## Trust and limitations
@@ -118,6 +127,8 @@ Use `figma-agent-control help` for the exact syntax of the installed version. Th
 The bridge listens on `127.0.0.1`, uses separate CLI and plugin credentials, checks the plugin version, and records a before snapshot before each write. For an unknown write result, inspect the target and resolve the job before another write. Use `--high-risk <reason>` when execution needs confirmation in the plugin panel.
 
 Writes take effect as the script runs. After failure, read `instruction` and `executionStarted`, inspect the partial changes, and use cleanup for eligible newly created nodes. Existing-node changes persist. Keep `.figma-agent-control/` local: it contains design evidence and session credentials.
+
+HTML exports are fixed-size static replicas. Validate prototype clicks and cloud synchronization in Figma. See the [agent guide](docs/agent-guide.md#limits) and security policy for the operating details.
 
 ## Documentation and development
 
@@ -132,10 +143,6 @@ Writes take effect as the script runs. After failure, read `instruction` and `ex
 - Contributing: local checks and contribution workflow.
 
 Licensed under the [MIT License](LICENSE). See third-party notices for included material. Maintained by [n3phable](https://github.com/n3phable).
-
-## Motion scripts
-
-Use --lib motion to read, apply and export MotionSpec data through readMotion, applyMotion, exportMotion and motionIssues. See the agent guide for the script workflow.
 
 ## Connection scope
 

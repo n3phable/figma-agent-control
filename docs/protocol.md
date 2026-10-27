@@ -376,6 +376,67 @@ Explicit times are deduplicated and sorted, limited to 24, and must fit the vide
 
 Output is `{source,compare?,width,height,duration,sheet,frames:[{t,file?,compareFile?,changedPixels?,sameSize?}],changed?,layout?,warning?,limitation}`. File paths appear only with dump. Identical video bytes add a warning. Pixel differences use the same `diffPng` definition as run verification. Outputs go to the bound project's `frames/` or a system temporary directory. Success exits `0`; invalid inputs or decoding failure exit `1`.
 
+## Prototypes
+
+[lib/prototype.js](../lib/prototype.js) runs through `--lib prototype`, using ordinary run evidence and Undo boundaries. Snapshots already include `reactions` and page `flowStartingPoints`.
+
+### PrototypeSpec
+
+| Function | Return value |
+|---|---|
+| `readPrototype(root = target)` | Reactions in the subtree, page flows, targets, interaction graph, and issues |
+| `applyPrototype(spec = data, root = target)` | `{changes,prototype}`, with `changes:{nodes,flows,flowsAdded}` and reread data |
+| `prototypeIssues(spec, root = target)` | Async issue array; it reads targets, variants, layers, and variables |
+
+```json
+{
+  "root":{"id":"12:1","name":"Flows","type":"PAGE"},"page":"12:1",
+  "flows":[{"nodeId":"12:10","name":"Sign in"}],
+  "nodes":[{"id":"12:12","name":"button","frame":"12:10","reactions":[
+    {"on":"click","do":[{"navigate":"12:20","transition":"smart-animate 0.3 ease-out","resetScroll":true}]}
+  ]}],
+  "targets":{"12:20":{"name":"Home","frame":"12:20"}},
+  "frames":{"12:10":"Login","12:20":"Home"},"overlays":{},
+  "edges":[{"from":"12:12","fromFrame":"12:10","on":"click","nav":"navigate","to":"12:20","toFrame":"12:20"}],
+  "issues":[]
+}
+```
+
+Nodes contain only those with reactions. Their `frame` is the enclosing top-level frame directly below a page or Section. Instance sublayers can expose inherited reactions; writes create trigger-based overrides.
+
+| Syntax | Forms |
+|---|---|
+| `on` | `click`, `hover`, `press`, `drag`, `media-end`; `after seconds`, `mouse-enter seconds`, `mouse-leave seconds`, `mouse-up seconds`, `mouse-down seconds`, `media-hit seconds`; `key DEVICE code,code` |
+| `do` | `"back"`, `"close"`, `{url,newTab?}`, or one node verb: `navigate`, `swap`, `overlay`, `scroll-to`, `change-to` with target ID |
+| Node action options | `transition`, `position:[x,y]`, `resetScroll`, `resetComponents`, `resetVideo` |
+| Directionless transition | `dissolve\|smart-animate\|scroll-animate seconds easing` |
+| Directional transition | `move-in\|move-out\|push\|slide-in\|slide-out left\|right\|top\|bottom seconds easing [match]` |
+| Easing | Standard easing names, `cubic(x1,y1,x2,y2)`, or `spring(mass,stiffness,damping)` |
+
+The library uses seconds for timeout/delay values. Unknown triggers, transitions, and actions preserve raw objects, including variable and conditional actions. Nested conditional node actions still participate in graph checks. Deprecated trigger version keys are not written. Prototype spring objects use mass/stiffness/damping, not Motion bounce or initialVelocity.
+
+Read values are rounded to three decimals; comparison uses four to accommodate float32 storage. `targets` includes names/frame IDs, `missing:true`, or another page's name. `frames`, `targets`, `edges`, and `issues` are informational and ignored on apply. `overlays` reads the target's placement, background, and outside-click behavior; changes are rejected with instructions to use Figma's Prototype panel.
+
+Apply reconciles reactions for listed nodes; an empty array clears them, omitted nodes remain untouched, and duplicate node entries fail. It validates all syntax, node capabilities, read-only overlays, and named flows before writing. Error-level issues relevant to the requested edits reject the whole apply before mutation. Only changed nodes receive `setReactionsAsync`, and writes use `actions` rather than the deprecated singular `action`.
+
+Flows are written last because Figma can add a flow when a top-level frame first gains an outgoing reaction. Explicit `flows` replaces that final set; omission preserves auto-added flows and reports them in `flowsAdded`. On rejection, the library attempts to restore earlier reactions in reverse order and then original flows. Errors explain known invalid combinations and background-window failures; inspect the result of rollback before retrying. Plan restrictions can reject multiple actions, SET_VARIABLE, or CONDITIONAL.
+
+Issues have `{rule,level,node?,message}`:
+
+| Rule | Level | Meaning |
+|---|---|---|
+| `target-missing` | error | Missing source or destination |
+| `target-other-page` | error | Destination is on another page |
+| `not-top-level` | error | Navigate/swap/overlay destination is not a top-level FRAME, or navigation targets the source frame |
+| `scroll-outside` | error | Scroll destination lies outside the source frame |
+| `change-to-not-variant` | error | Destination is outside the source's variant set |
+| `overlay-position` | error | Position supplied for a non-Manual overlay |
+| `variable-type` | error | Missing variable or incompatible assignment type |
+| `flow-invalid` | error | Missing, duplicate, or invalid top-level flow target |
+| `smart-animate-unmatched` | warning | Fewer than half the layers match by name and hierarchy path |
+| `unreachable` | warning | Participating top-level frame unreachable from flows; page-root reads only |
+| `dead-end` | warning | No navigation/overlay/back/close/link exit; page-root reads only; outside-click-close overlays exempt |
+
 ## HTML export
 
 `html` generates self-contained HTML from extracts and compares it with the same extracts' reference images. `html-check` rechecks existing pages. Generation and comparison run in the CLI process; only `html --node` submits bridge jobs. Chrome is required for comparison, configurable through `FIGMA_AGENT_CONTROL_CHROME`; `html --no-check` does not need it.

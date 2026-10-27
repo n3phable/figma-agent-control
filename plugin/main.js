@@ -72,7 +72,7 @@ const KEYS = [
   'primaryAxisAlignItems', 'counterAxisAlignItems', 'layoutAlign', 'layoutGrow', 'layoutPositioning', 'layoutWrap',
   'itemSpacing', 'counterAxisSpacing', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
   'minWidth', 'maxWidth', 'minHeight', 'maxHeight', 'constraints', 'clipsContent',
-  'overflowDirection', 'numberOfFixedChildren', 'scrollBehavior', 'reactions', 'flowStartingPoints',
+  'overflowDirection', 'numberOfFixedChildren', 'reactions', 'flowStartingPoints',
   'textAutoResize', 'textTruncation', 'maxLines', 'characters', 'fontSize', 'fontName', 'lineHeight', 'letterSpacing',
   'textAlignHorizontal', 'textAlignVertical', 'paragraphIndent', 'paragraphSpacing', 'hasMissingFont',
   'fills', 'strokes', 'strokeWeight', 'strokeAlign', 'effects', 'cornerRadius',
@@ -193,25 +193,32 @@ async function render(node, scale, budget) {
 }
 
 // -- Local variables ----------------------------------------------------
-// Read-only collections, alias-resolved default-mode values, and binding counts within the target subtree.
-// Variable aliases { type: 'VARIABLE_ALIAS', id } can occur in variable values and node boundVariables.
+// Read-only collections, alias-resolved default-mode values and reference counts within the target subtree. Node boundVariables count as bindings; reaction references count as prototypeRefs:
+// bindings affect rendered appearance, while prototype references apply only during presentation. Separate counts clarify whether a variable is safe to delete.
+// Variable aliases { type: 'VARIABLE_ALIAS', id } occur in variable values, node boundVariables, conditions and reaction values; SET_VARIABLE actions refer through variableId.
 /** @param {unknown} value @returns {value is VariableAlias} */
 const isAlias = value => !!value && typeof value === 'object' && prop(value, 'type') === 'VARIABLE_ALIAS' && typeof prop(value, 'id') === 'string';
 /** @param {BaseNode} target */
 async function localVariables(target) {
   const collections = await figma.variables.getLocalVariableCollectionsAsync(), variables = await figma.variables.getLocalVariablesAsync();
-  const byId = new Map(variables.map(v => [v.id, v])), byCollection = new Map(collections.map(c => [c.id, c])), counts = /** @type {Map<string, number>} */ (new Map());
+  const byId = new Map(variables.map(v => [v.id, v])), byCollection = new Map(collections.map(c => [c.id, c]));
+  const counts = /** @type {Map<string, number>} */ (new Map()), prototypeRefs = /** @type {Map<string, number>} */ (new Map());
   let scanned = 0, truncated = false;
-  /** @param {unknown} value */
-  const count = value => {
+  /** @param {unknown} value @param {Map<string, number>} into */
+  const count = (value, into) => {
     if (!value || typeof value !== 'object') return;
-    if (isAlias(value)) { counts.set(value.id, (counts.get(value.id) || 0) + 1); return; }
-    for (const item of Object.values(value)) count(item);
+    /** @param {string} id */
+    const add = id => into.set(id, (into.get(id) || 0) + 1);
+    if (isAlias(value)) { add(value.id); return; }
+    if (prop(value, 'type') === 'SET_VARIABLE' && typeof prop(value, 'variableId') === 'string') add(prop(value, 'variableId'));
+    // Returned reactions include deprecated action (= actions[0]) and actions. Count actions only to avoid duplicate references.
+    for (const [key, item] of Object.entries(value)) if (key !== 'action') count(item, into);
   };
   /** @param {BaseNode} node */
   const visit = node => {
     if (truncated || ++scanned > 50000) { truncated = true; return; }
-    count('boundVariables' in node ? node.boundVariables : undefined);
+    count('boundVariables' in node ? node.boundVariables : undefined, counts);
+    count('reactions' in node ? node.reactions : undefined, prototypeRefs);
     for (const child of ('children' in node && node.children) || []) visit(child);
   };
   visit(target);
@@ -231,10 +238,10 @@ async function localVariables(target) {
       const raw = defaultValue(v), value = resolve(v);
       return { id: v.id, name: v.name, collectionId: v.variableCollectionId, collection: byCollection.get(v.variableCollectionId)?.name ?? null, type: v.resolvedType,
         value: value ?? null, ...(v.resolvedType === 'COLOR' && hex(value) ? { hex: hex(value) } : {}), ...(isAlias(raw) ? { aliasOf: raw.id } : {}),
-        scopes: v.scopes, bindings: counts.get(v.id) || 0 };
+        scopes: v.scopes, bindings: counts.get(v.id) || 0, prototypeRefs: prototypeRefs.get(v.id) || 0 };
     }),
     bindingScope: { nodeId: target.id, scannedNodes: Math.min(scanned, 50000), truncated },
-    limitation: 'Lists local variables only, with default-mode values (following aliases up to 10 levels); bindings counts only boundVariables on nodes in the target subtree'
+    limitation: 'Local variables only, using default-mode values with aliases followed up to 10 levels; bindings counts target-subtree boundVariables, while prototypeRefs counts references in target-subtree reactions'
   };
 }
 

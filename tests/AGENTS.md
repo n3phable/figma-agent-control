@@ -31,6 +31,7 @@ Behavioral tests for the implementation in this revision.
 - `plugin.test.mjs`: Tests for plugin behavior in this revision.
 - `png.test.mjs`: Tests for png behavior in this revision.
 - `project-session.test.mjs`: Tests for project session behavior in this revision.
+- `prototype.test.mjs`: Tests for prototype behavior in this revision.
 - `record.test.mjs`: Tests for record behavior in this revision.
 - `smoke.test.mjs`: Tests for smoke behavior in this revision.
 - `typecheck.mjs`: Run the local pinned TypeScript checker for available environments.

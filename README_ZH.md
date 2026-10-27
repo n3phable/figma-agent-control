@@ -18,6 +18,8 @@ Figma Agent Control（FAC）通过 localhost 桥接，把本地 CLI 连接到 Fi
 
 - **导出静态 HTML：** 生成嵌入资源的嵌套 DOM，在 Chrome 中比图，按节点定位差异，并应用有记录的 overrides。
 
+- **处理动效与原型：** 通过内置库读取和应用声明式配置，导出动效视频，并查看取帧联系表。动效依赖 Figma 的 Beta/私有 API，需要这些接口可用。
+
 ## 环境要求
 
 - **Node.js 22 或更新版本。** 运行时没有 npm 依赖，开发依赖的版本锁定在 lockfile 中。
@@ -109,6 +111,13 @@ figma-agent-control stop
 | `frames` | 从 MP4/WebM 视频取帧生成联系表，可选对比两段视频 |
 | `image-diff`, `report` | 比较 PNG，或汇总任务耗时、失败与重复执行 |
 
+```sh
+figma-agent-control html --node 12:34 --out out
+figma-agent-control run read-motion.js --node 12:34 --lib motion
+figma-agent-control run read-prototype.js --lib prototype
+figma-agent-control frames <video-job-id> --dump
+```
+
 使用 `figma-agent-control help` 查看已安装版本的准确语法。[Agent 使用指南](docs/zh_cn/agent-guide.md) 提供完整脚本示例和恢复步骤。
 
 ## 信任边界与限制
@@ -118,6 +127,8 @@ figma-agent-control stop
 桥接监听 `127.0.0.1`，分别验证 CLI 与插件凭证，检查插件版本，并在每次写入前记录快照。写入结果未知时，先 inspect 目标并 resolve 原任务，再执行下一次写入。需要用户在插件面板确认的操作使用 `--high-risk <reason>`。
 
 写入随脚本执行逐步生效。失败后先读 `instruction` 和 `executionStarted`，检查部分改动，再清理符合条件的本次新建节点。已有节点的修改留待明确修复。`.figma-agent-control/` 保存在本机，其中包含设计证据和会话凭证。
+
+HTML 导出为固定尺寸的静态复刻页面。原型点击与云端同步在 Figma 中验证。操作细节见 [Agent 使用指南](docs/zh_cn/agent-guide.md#限制)和安全政策。
 
 ## 文档与开发
 
@@ -132,10 +143,6 @@ figma-agent-control stop
 - 参与贡献：本地检查与贡献流程。
 
 本项目采用 [MIT License](LICENSE)。所含材料的说明见第三方声明。由 [n3phable](https://github.com/n3phable) 维护。
-
-## 动效脚本
-
-使用 --lib motion，通过 readMotion、applyMotion、exportMotion 和 motionIssues 读取、应用并导出 MotionSpec；脚本流程见使用指南。
 
 ## 连接范围
 

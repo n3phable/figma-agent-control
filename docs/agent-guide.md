@@ -57,6 +57,8 @@ return { id: target.id, previous, name: target.name };
 printf '%s' '{"name":"Account card"}' | figma-agent-control run rename.js --node 12:34 --data /dev/stdin
 ```
 
+Use `--lib helpers.js` for reusable helpers. Each library executes in a separate outer scope; earlier libraries are outermost, and declarations in the body can shadow them. A bare library name selects a bundled library, such as `--lib motion` or `--lib prototype`.
+
 Use `--data file.json` for parameters. `/dev/stdin` supports a pipe or heredoc without another file; avoid `--data <(...)` in portable shell scripts. Input data is recorded in `job.json`. Batch related changes in one script with an input array instead of submitting one job per node.
 
 ### Choosing a target
@@ -99,6 +101,7 @@ The manifest uses `documentAccess: "dynamic-page"`. FAC loads the target page be
 | Assigning deprecated `backgroundStyleId` | `await node.setFillStyleIdAsync(id)` |
 | `setRangeTextStyleId()` / `setRangeFillStyleId()` | Their `Async` forms |
 | Assigning `vectorNetwork` | `await node.setVectorNetworkAsync(network)` |
+| Assigning `reactions` | `await node.setReactionsAsync(reactions)`, or use the prototype library |
 | Reading/traversing/exporting another page, or inserting its children | First `await page.loadAsync()` |
 | `figma.root.findAll*`, `findOne`, `findWidgetNodesByWidgetId`, or `figma.on('documentchange', ...)` | First `await figma.loadAllPagesAsync()`; prefer page-local traversal and `page.on('nodechange', ...)` when possible |
 
@@ -156,6 +159,8 @@ Read `instruction` first, then the evidence needed to choose the next action:
 | `resultFile`, `evidence` | Paths to durable local evidence |
 
 `pageRoot` can reveal a missing `appendChild`, even when the target's change counts are zero. It is a before/after comparison, not attribution: concurrent collaborators and operations that replace IDs can also appear. Inspect before deleting anything.
+
+Bundled library frames are named `lib:motion` or `lib:prototype`; user libraries use their filenames. If dynamically generated code makes `trace[0].source` misleading, inspect the raw `stack` in `result.json`. The summary falls back to its first 500 characters when no frame can be mapped.
 
 | Exit code | Meaning | Action |
 |---|---|---|
@@ -312,6 +317,39 @@ Static PNG exports do not show keyframes, so do not use `--expect` for motion. E
 
 Additional observed Motion behavior: keyframes do not update static `x`/`opacity`; animation beyond the timeline is accepted but truncated in playback; rotation uses the node center and positive values rotate counterclockwise; values before the first key equal that key's value. COLOR keyframe values are RGBA rather than color-variable aliases. Verify TIMING-variable units and Beta API details in the current editor before depending on them.
 
+## Prototypes
+
+Use `--lib prototype` to read and apply reactions and page flow starting points. Prefer a bound page: reachability and dead-end checks require a page root. See [PrototypeSpec](protocol.md#prototypespec).
+
+```sh
+printf '%s\n' 'return readPrototype(target)' > read-prototype.js
+printf '%s\n' 'return applyPrototype(data)' > apply-prototype.js
+figma-agent-control run read-prototype.js --lib prototype --depth 1 > prototype-old.json
+jq '.output | {flows, nodes, overlays}' prototype-old.json > prototype.json
+# Edit prototype.json before applying.
+figma-agent-control run apply-prototype.js --lib prototype --data prototype.json > applied.json
+```
+
+- Edit `nodes[].reactions` and `flows`. Listed nodes are reconciled; `[]` clears reactions. Omitted nodes stay untouched. Omitted `flows` preserves current flows, including any Figma adds automatically. `overlays` is read-only; derived targets, frames, edges, and issues are ignored on apply.
+
+- A reaction is `{on, do: [actions]}`. Examples include `click`, `after 0.8`, `{navigate: "12:34"}`, and `transition: "smart-animate 0.3 ease-out"`. Times are seconds in the library. Prototype springs use `spring(mass,stiffness,damping)`, unlike Motion's `spring(bounce)`.
+
+- Navigate/swap/overlay targets must be top-level frames on the same page, directly under a page or Section. Scroll targets stay within the source frame; change-to targets stay in the same variant set. Overlay `position` requires Manual placement in Figma.
+
+- Reactions can be written to instances and instance sublayers; the latter are overrides merged by trigger with their main component. Sections and component sets do not expose `setReactionsAsync`.
+
+- Keep Figma in the foreground for writes. Background `setReactionsAsync` calls have been observed to time out. The library attempts rollback after rejection; read the error and inspect before deciding to retry.
+
+- `drag` requires Smart Animate, and URL actions accept click/after triggers. Multiple actions, variable actions, and conditionals may be plan-limited.
+
+- Figma may add a flow when a top-level frame first gets an outgoing reaction. The library writes explicit `flows` after reactions so the requested set wins.
+
+- `error` findings relevant to the requested write are rejected before writing. Warnings such as unmatched Smart Animate layers, unreachable frames, and dead ends need design judgment.
+
+- Validate the returned `changes` and reread `prototype`. A shallow page snapshot can miss deep reaction changes. `--expect` does not verify prototype behavior; test actual clicks in Figma.
+
+`variables` reports `prototypeRefs` separately from visual-property `bindings`. Check both before deleting a variable.
+
 ## Exporting HTML
 
 `html` generates fixed-size, self-contained HTML and compares it with a reference PNG from the same extract. Chrome is required for comparison; `--no-check` only generates. The [HTML protocol](protocol.md#html-export) defines the manifest and diagnostics.
@@ -403,6 +441,10 @@ The flag is an assertion that the previous plugin has actually stopped. The insp
 - Plugin API operations work within the current Figma file. Use a separate binding to work in another file.
 
 - Check cloud synchronization in Figma.
+
+- Test prototype playback in Figma, manually or through authorized UI automation. Configure overlay settings, Sticky behavior and presentation devices in the Prototype panel. Overlay action position uses Manual placement.
+
+- HTML exports contain fixed-size static nested DOM. Find nodes by `data-node`; SVG islands and reference crops replace their subtrees. Build responsive behavior and prototype interactions in the consuming application.
 
 - Motion requires the account's Beta/private APIs. Font discovery currently searches macOS directories; live Desktop acceptance is recorded separately from automated tests.
 
