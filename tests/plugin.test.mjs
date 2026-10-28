@@ -519,7 +519,7 @@ test('Named preview still validates resolved-node binding scope before exporting
   assert.deepEqual(exported, []);
 });
 
-test('variables reads local default-mode values through aliases and counts bindings only within the target subtree', async () => {
+test('variables follows aliases from default-mode values, counts bindings only in the target subtree, and tracks prototype references separately', async () => {
   const f = plugin(), { doc } = f;
   const collection = { id: 'C1', name: '\u8bed\u4e49', modes: [{ modeId: 'm1', name: '\u6df1\u8272' }, { modeId: 'm2', name: '\u6d45\u8272' }], defaultModeId: 'm2' };
   const base = { id: 'V1', name: 'base/white', variableCollectionId: 'C1', resolvedType: 'COLOR', scopes: ['ALL_FILLS'],
@@ -528,10 +528,13 @@ test('variables reads local default-mode values through aliases and counts bindi
   f.figma.variables = { getLocalVariableCollectionsAsync: async () => [collection], getLocalVariablesAsync: async () => [base, alias] };
   doc.swatch.boundVariables = { fills: [{ type: 'VARIABLE_ALIAS', id: 'V2' }] };
   doc.frame.boundVariables = { width: { type: 'VARIABLE_ALIAS', id: 'V1' } };
+  // prototypeRefs separately counts SET_VARIABLE variableId and condition aliases; readbacks mirror action/actions[0], so count only once.
+  const set = { type: 'SET_VARIABLE', variableId: 'V1', variableValue: { type: 'VARIABLE_ALIAS', resolvedType: 'COLOR', value: { type: 'VARIABLE_ALIAS', id: 'V2' } } };
+  doc.swatch.reactions = [{ trigger: { type: 'ON_CLICK' }, action: set, actions: [set] }];
   const r = await f.send({ operation: 'variables', targetNodeId: '1:4' });
   assert.equal(r.ok, true, r.error);
-  assert.deepEqual(r.output.variables.map(v => [v.id, v.collection, v.hex, v.aliasOf ?? null, v.bindings]),
-    [['V1', '\u8bed\u4e49', '#FFFFFF0D', null, 0], ['V2', '\u8bed\u4e49', '#FFFFFF0D', 'V1', 1]]);
+  assert.deepEqual(r.output.variables.map(v => [v.id, v.collection, v.hex, v.aliasOf ?? null, v.bindings, v.prototypeRefs]),
+    [['V1', '\u8bed\u4e49', '#FFFFFF0D', null, 0, 1], ['V2', '\u8bed\u4e49', '#FFFFFF0D', 'V1', 1, 1]]);
   assert.deepEqual(r.output.bindingScope, { nodeId: '1:4', scannedNodes: 1, truncated: false });
   assert.deepEqual(f.events, []);
 });

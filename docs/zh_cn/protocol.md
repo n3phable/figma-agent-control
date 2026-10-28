@@ -382,6 +382,67 @@ Apply 是声明式写入：列出的节点只要提供 `tracks` 或 `styles`，�
 
 输出为 `{source,compare?,width,height,duration,sheet,frames:[{t,file?,compareFile?,changedPixels?,sameSize?}],changed?,layout?,warning?,limitation}`。只有 dump 时才给出逐帧文件路径。视频字节相同会追加警告。像素差异沿用 run 画面核验的 `diffPng` 定义。输出写入绑定项目的 `frames/`，或系统临时目录。成功退出 `0`；无效输入或解码失败退出 `1`。
 
+## 原型
+
+[lib/prototype.js](../../lib/prototype.js) 通过 `--lib prototype` 执行，使用普通 run 证据和 Undo 边界。快照已经包含 `reactions` 与页面 `flowStartingPoints`。
+
+### PrototypeSpec
+
+| 函数 | 返回值 |
+|---|---|
+| `readPrototype(root = target)` | 子树内 reactions、页面流程起点、目标、交互图和问题 |
+| `applyPrototype(spec = data, root = target)` | `{changes,prototype}`，包含 `changes:{nodes,flows,flowsAdded}` 与重读数据 |
+| `prototypeIssues(spec, root = target)` | 异步问题数组；会读取目标、变体、图层和变量 |
+
+```json
+{
+  "root":{"id":"12:1","name":"Flows","type":"PAGE"},"page":"12:1",
+  "flows":[{"nodeId":"12:10","name":"Sign in"}],
+  "nodes":[{"id":"12:12","name":"button","frame":"12:10","reactions":[
+    {"on":"click","do":[{"navigate":"12:20","transition":"smart-animate 0.3 ease-out","resetScroll":true}]}
+  ]}],
+  "targets":{"12:20":{"name":"Home","frame":"12:20"}},
+  "frames":{"12:10":"Login","12:20":"Home"},"overlays":{},
+  "edges":[{"from":"12:12","fromFrame":"12:10","on":"click","nav":"navigate","to":"12:20","toFrame":"12:20"}],
+  "issues":[]
+}
+```
+
+nodes 只包含有 reactions 的节点。其 `frame` 是直接位于页面或 Section 之下的所属顶层画框。实例内部图层可以读出继承连线，写入会形成按触发方式区分的覆盖。
+
+| 语法 | 形式 |
+|---|---|
+| `on` | `click`、`hover`、`press`、`drag`、`media-end`；`after seconds`、`mouse-enter seconds`、`mouse-leave seconds`、`mouse-up seconds`、`mouse-down seconds`、`media-hit seconds`；`key DEVICE code,code` |
+| `do` | `"back"`、`"close"`、`{url,newTab?}`，或带目标 ID 的单个节点动词：`navigate`、`swap`、`overlay`、`scroll-to`、`change-to` |
+| 节点动作选项 | `transition`、`position:[x,y]`、`resetScroll`、`resetComponents`、`resetVideo` |
+| 无方向过渡 | `dissolve\|smart-animate\|scroll-animate seconds easing` |
+| 有方向过渡 | `move-in\|move-out\|push\|slide-in\|slide-out left\|right\|top\|bottom seconds easing [match]` |
+| 缓动 | 标准缓动名、`cubic(x1,y1,x2,y2)`，或 `spring(mass,stiffness,damping)` |
+
+超时与延迟值以秒计。未知触发、过渡和动作保留原对象，包括变量与条件动作。嵌套条件内的节点动作仍参与交互图检查。不写已弃用的触发版本键。原型弹簧对象使用 mass/stiffness/damping，不使用 Motion 的 bounce 或 initialVelocity。
+
+读取值保留三位小数；比较使用四位，以适应 float32 存储。`targets` 包含名称/画框 ID、`missing:true` 或其他页面名。`frames`、`targets`、`edges` 和 `issues` 只供说明，apply 时忽略。`overlays` 读取目标的定位、背景和点外关闭行为；修改会被拒绝，并指引到 Figma 的 Prototype 面板操作。
+
+Apply 同步列出节点的 reactions；空数组清空，未列出的节点不动，重复节点条目会失败。写入前校验全部语法、节点能力、只读浮层设置和具名流程。与本次改动相关的 error 级问题会在任何修改前拒绝整个 apply。只有变化的节点才调用 `setReactionsAsync`，并统一写 `actions`，不写已弃用的单数 `action`。
+
+最后才写 flows，因为顶层画框首次获得出向 reaction 时，Figma 可能自动增加流程起点。显式 `flows` 替换最终集合；省略时保留自动新增，并在 `flowsAdded` 中报告。被拒绝后，库先尝试按逆序恢复此前 reactions，再恢复原 flows。错误会解释已知无效组合和后台窗口失败；重试前应检查回滚结果。套餐限制可能拒绝多动作、SET_VARIABLE 或 CONDITIONAL。
+
+问题形状为 `{rule,level,node?,message}`：
+
+| 规则 | 级别 | 含义 |
+|---|---|---|
+| `target-missing` | error | 源节点或目标不存在 |
+| `target-other-page` | error | 目标位于其他页面 |
+| `not-top-level` | error | Navigate/swap/overlay 目标不是顶层 FRAME，或导航目标就是源画框 |
+| `scroll-outside` | error | 滚动目标位于源画框之外 |
+| `change-to-not-variant` | error | 目标不属于源节点的变体集 |
+| `overlay-position` | error | 给非 Manual 浮层提供了 position |
+| `variable-type` | error | 变量不存在，或赋值类型不兼容 |
+| `flow-invalid` | error | 流程目标不存在、重复，或不是合法顶层目标 |
+| `smart-animate-unmatched` | warning | 按名称和层级路径匹配到的图层不足一半 |
+| `unreachable` | warning | 参与交互的顶层画框无法从流程起点到达；只在页面根读取时检查 |
+| `dead-end` | warning | 没有导航/浮层/back/close/链接出口；只在页面根读取时检查；点外关闭的浮层豁免 |
+
 ## HTML 导出
 
 `html` 根据 extract 生成自包含 HTML，并与同一次 extract 的参考图比对。`html-check` 重新检查已有页面。生成与比图都在 CLI 进程运行；只有 `html --node` 提交桥接任务。比图需要 Chrome，可通过 `FIGMA_AGENT_CONTROL_CHROME` 配置；`html --no-check` 不需要 Chrome。

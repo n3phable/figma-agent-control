@@ -8,7 +8,9 @@ Plugin-side helpers injected through run libraries.
 
 - `env.d.ts`: Type declarations for injected script values.
 - `motion.js`: Read, apply, export and inspect declarative motion specifications.
+- `prototype.js`: Read, validate and apply reactions and flow starts.
 - `tsconfig.json`: Supporting source or configuration used by this module.
+- `tsconfig.prototype.json`: Supporting source or configuration used by this module.
 
 ## Contract maintenance
 

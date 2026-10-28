@@ -101,6 +101,8 @@ Figma loads one main script. Source is split into [main.js](../plugin/main.js) f
 
 [ui.html](../plugin/ui.html) keeps delivery/completion ticks serialized, plus a separate held-heartbeat cancellation channel. It preserves foreign results rather than replacing them with transport failures. Its task history is panel-local and resets when the plugin restarts.
 
+[Motion](../lib/motion.js) and [prototype](../lib/prototype.js) are injected libraries, not plugin operations. Their declarations occupy separate nested scopes inside `run`, and their writes inherit checkpoints, Undo, change sets, and evidence. They validate declarative input before mutation and record inverse operations for rollback attempts. Library errors identify the failed operation and any rollback outcome.
+
 Run scripts are compiled with `new Function`, so plugin globals remain reachable. Keep new top-level plugin names deliberate; scripts should declare their own variables. The `figma` proxy tracks supported async calls and cancellation, while nodes remain original API objects.
 
 ## Key flows
@@ -191,6 +193,7 @@ Runtime executes `.mjs`/`.js` source directly; JSDoc is checked with lockfile-pi
 | [Host tsconfig](https://github.com/n3phable/figma-agent-control/blob/main/tsconfig.json) | Node modules and shared extract contract, without Figma globals |
 | [Plugin tsconfig](../plugin/tsconfig.json) | Classic-script main/extract with Figma globals, without Node APIs |
 | [Motion tsconfig](../lib/tsconfig.json) | Motion helper with injected target/data declarations |
+| [Prototype tsconfig](../lib/tsconfig.prototype.json) | Separate prototype scope, matching nested runtime library isolation |
 
 The [extract contract](../src/html/extract-contract.d.ts) distinguishes plugin byte arrays, transport placeholders, and landed files. External JSON and dynamic API field access still require assertions; types alone cannot validate real Figma behavior. The optional `node tests/contract-samples.mjs <runs-directory>` checks explicitly supplied extract evidence against the type contract. It does not require or ship a private corpus.
 

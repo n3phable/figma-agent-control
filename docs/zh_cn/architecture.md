@@ -99,6 +99,8 @@ Figma 只加载一份 main 脚本。源码按职责分为执行端 [main.js](../
 
 [ui.html](../../plugin/ui.html)串行处理领取/回传 tick，另设挂起心跳取消通道。属于其他项目的结果原样保留，不替换成传输失败。最近任务只存在面板内存中，插件重启后清空。
 
+[Motion](../../lib/motion.js) 和 [prototype](../../lib/prototype.js) 作为库注入普通 run。它们的声明在 run 的独立嵌套作用域中，写入继承 checkpoint、Undo、变更集和证据。库先校验声明式输入，再记录反操作以尝试回滚；库的错误信息会指出失败操作及回滚结果。
+
 run 用 `new Function` 编译，因此能触及插件全局变量。新增插件顶层名字应谨慎，脚本必须声明自己的变量。`figma` 代理记录部分异步调用和取消状态，节点保持为原 API 对象。
 
 ## 关键流程
@@ -191,6 +193,7 @@ overrides 是唯一支持的手工修正入口。文件先整体校验，basis �
 | [主机 tsconfig](https://github.com/n3phable/figma-agent-control/blob/main/tsconfig.json) | Node 模块与共享提取契约，不注入 Figma 全局 |
 | [插件 tsconfig](../../plugin/tsconfig.json) | 带 Figma 全局的经典脚本 main/extract，不允许 Node API |
 | [Motion tsconfig](../../lib/tsconfig.json) | Motion 库与注入的 target/data 声明 |
+| [Prototype tsconfig](../../lib/tsconfig.prototype.json) | 独立 prototype 作用域，对应运行时嵌套库隔离 |
 
 [提取契约](../../src/html/extract-contract.d.ts)区分插件字节、传输占位和落盘文件。外部 JSON 和动态 API 字段仍需断言，类型不能单独验证真实 Figma 行为。可选 `node tests/contract-samples.mjs <runs-directory>` 检查明确提供的提取证据，不需要或附带私有语料。
 

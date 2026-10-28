@@ -30,6 +30,7 @@ This skill defines the working order and recovery rules. Read the [agent guide](
 | Write across a larger page/Section | Keep the correct ancestor and declare depth, often 2; state that deeper changes are absent from evidence |
 | Visible edits or visual-preserving refactors | `--expect changed` or `unchanged` on the smallest relevant target; avoid page-wide exports |
 | Motion | `--lib motion`: read spec, edit data, apply, then inspect exported video with `frames`; no static `--expect` |
+| Prototypes | `--lib prototype`: prefer a bound page, read spec, edit reactions/flows, apply, inspect returned issues; keep Figma foreground and test actual clicks separately |
 | Delete-then-create work | `--clean-on-fail`, understanding that deleted originals will not be restored |
 | Reusable helpers/parameters | Repeated `--lib` plus `--data`; small JSON can use `/dev/stdin` |
 | Related batch edits | One script looping over an input array |
@@ -81,5 +82,7 @@ Save recurring script sequences and stop at the first nonzero status. An unfinis
 ## Export and deliver
 
 Use `html --node <frame-id> --out <directory>` for static HTML, roughly ten frames per batch. Follow the returned full-batch resume instruction. Put corrections only in an overrides file; do not hand-edit generated HTML or hide systematic defects with reference crops. Review geometry, fonts, text correspondence, and remaining visual blocks as described in the [HTML guide](../../docs/agent-guide.md#exporting-html).
+
+Validate in proportion to the edit: preview/pixel checks for appearance, change sets and readback for structure, video for motion, and Figma playback for prototype behavior. State what changed, what was checked, and what remains unverified. Check cloud synchronization in Figma.
 
 Keep `.figma-agent-control/` out of version control; it contains design evidence and credentials. Retain unreviewed jobs and deliver only needed artifacts. Stop bridges started for the task when they are no longer needed. `report --since <ISO-time>` can summarize the session.
