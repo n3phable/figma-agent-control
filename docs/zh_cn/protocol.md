@@ -17,6 +17,8 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
                                                                       Figma document
 ```
 
+桥接监听 `127.0.0.1`，使用 `32523`–`32530` 中第一个可用端口。每个项目最多运行一个桥接，由 `bridge.lock` 保证；同时最多有一个在途任务。实际端口写入 `session.json`。
+
 插件的全部 HTTP 请求都经过 iframe。没有任务时，`/poll` 最多挂起十秒；任务到达后立即唤醒。挂起后返回的空响应带有 `X-Long-Poll`，触发下一次请求立即发起。这条由网络回调驱动的请求链避开了面板计时器节流。首次轮询、握手重试、普通心跳、结果回传重试、错误恢复和面板刷新还使用一个 750 ms 计时器。隐藏面板的计时器可能被大幅节流，因此重连可能比稳定连接后的轮询慢。执行端返回结果后，iframe 会立即回传。
 
 ## 项目目录
@@ -47,6 +49,9 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 | `pairing.json` | `connect` 经 session | 持久化插件凭证，权限 `0600`；首次创建具有独占性；内容损坏时报 `PAIRING_INVALID` |
 | `plugin/manifest.json` | `connect` | 生成的开发插件清单，含 `documentAccess: dynamic-page`、`enablePrivatePluginApi: true`，没有 Figma 分配的插件 ID |
 | `plugin/main.js` | `connect` | 按 `PLUGIN_SCRIPTS` 顺序拼接源码 `plugin/main.js` 与 `plugin/extract.js` |
+| `plugin/ui.html` | `connect` | 注入候选端口、插件凭证与插件版本后的模板 |
+
+桥接生成插件文件内容，`connect` 只安装内容发生变化的文件。固定候选端口段与共享配对凭证，使同版本下各项目生成的文件完全相同。绑定与项目名通过已认证响应的响应头下发，不写进插件文件。
 
 由于清单没有 Figma 分配的 ID，私有 `setPluginData` 不可用。带命名空间的 `setSharedPluginData` 不依赖该 ID。
 
@@ -647,10 +652,6 @@ HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SAN
 
 `report --since` 接受 ISO 日期/时间；带时间时必须提供 `Z` 或时区偏移，只有日期则按 UTC 零点处理。`jobs.failed` 统计 `ok:false`；`jobs.verifyFailed` 统计执行成功但画面核验失败/不可用的任务，两者互斥。
 
-## 连接范围
-
-桥接使用端口 32523，同一台机器只保留一个项目桥接运行。全局插件可在桥接重启后重连；连接另一个项目前先停止原项目。
-
 ## 准备阶段顺序
 
 当前目标复核发生在前图导出及后续准备读取之前。准备期间保持目标不变。
@@ -666,3 +667,11 @@ HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SAN
 ## 取帧文件名
 
 --dump 使用取整后的采样时刻保存原尺寸 PNG，例如 0.300s.png。不同采样时刻舍入到同一毫秒可能重名，一次调用中应避免这种组合。
+
+## 发现探测
+
+桥接身份通过心跳请求探测。这些请求仍经过普通租约路径，发现完成后应复核连接状态。
+
+## 待回传结果与端口变化
+
+发现过程按当前文件选择桥接。有待回传结果时保持原项目可用。

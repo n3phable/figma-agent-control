@@ -398,7 +398,7 @@ test('/status reports session, connection, active/unresolved tasks, binding, plu
 });
 
 // -- Occupied ports -------------------------------------------------------
-test('Occupied ports report EADDRINUSE and a remedy, release the lock, and leave the original listener unaffected', OPTIONS, async t => {
+test('Occupied ports report EADDRINUSE with a remedy and release the lock without disrupting the listener; candidates advance until all are occupied', OPTIONS, async t => {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'figma-agent-control-bridge-'));
   t.after(() => fs.rm(cwd, { recursive: true, force: true }));
   await init(cwd, FIGMA_URL);
@@ -410,8 +410,22 @@ test('Occupied ports report EADDRINUSE and a remedy, release the lock, and leave
   assert.equal(listener.listening, true);
   assert.equal(await exists(path.join(root(cwd), 'bridge.lock')), false);
   assert.equal(await exists(path.join(root(cwd), 'session.json')), false);
-  const bridge = await start(cwd, 0, { pluginToken: 'a'.repeat(64) });
-  await bridge.close();
+  // Skip occupied candidate ports. Plugin configuration and manifest include the full range, keeping generated files identical across projects; report the range if all are occupied.
+  const bridge = await start(cwd, port, { pluginToken: 'a'.repeat(64), ports: [port, 0] });
+  // Close explicitly: t.after runs in registration order, so directory cleanup would otherwise precede bridge shutdown.
+  try {
+  assert.notEqual(bridge.port, port);
+  const config = JSON.parse(bridge.plugin['ui.html'].match(/const config = (\{.*\});/)[1]);
+  assert.deepEqual(config.ports, [port, bridge.port]);
+  assert.deepEqual(JSON.parse(bridge.plugin['manifest.json']).networkAccess.devAllowedDomains, [`http://localhost:${port}`, `http://localhost:${bridge.port}`]);
+  assert.equal((await json(path.join(root(cwd), 'session.json'))).port, bridge.port);
+  const other = await fs.mkdtemp(path.join(os.tmpdir(), 'figma-agent-control-bridge-'));
+  t.after(() => fs.rm(other, { recursive: true, force: true }));
+  await init(other, FIGMA_URL);
+  await assert.rejects(start(other, port, { pluginToken: 'a'.repeat(64), ports: [port, bridge.port] }),
+    error => error.code === 'EADDRINUSE' && error.message.includes(`${port}-${bridge.port}`) && error.message.includes('figma-agent-control stop'));
+  assert.equal(await exists(path.join(root(other), 'bridge.lock')), false);
+  } finally { await bridge.close(); }
 });
 
 // -- Missing plugin templates ---------------------------------------------

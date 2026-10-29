@@ -33,7 +33,7 @@ Figma Desktop: ui.html (iframe relay)
 | Iframe | Network relay, connection/approval/status UI | Cannot access the document |
 | Execution code | Plugin API access, snapshots, scripts, reads, and exports | Sends no HTTP requests; relays through the iframe |
 
-The split follows Figma's plugin environment. The iframe offers the full browser fetch/visibility behavior needed for timeouts and long polling; document execution remains in the plugin runtime. The generated manifest allows only the localhost development port 32523, uses dynamic-page access, and enables private plugin APIs for functionality such as Motion. Motion availability follows the current Figma version and account access.
+The split follows Figma's plugin environment. The iframe offers the full browser fetch/visibility behavior needed for timeouts and long polling; document execution remains in the plugin runtime. The generated manifest allows only the candidate localhost development ports, uses dynamic-page access, and enables private plugin APIs for functionality such as Motion. Motion availability follows the current Figma version and account access.
 
 ### Credentials and versions
 

@@ -17,6 +17,8 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
                                                                       Figma document
 ```
 
+The bridge listens on `127.0.0.1`, using the first available port in `32523`–`32530`. Each project has at most one bridge, enforced by `bridge.lock`, and one active job. The actual port is recorded in `session.json`.
+
 All plugin HTTP traffic goes through the iframe. `/poll` holds an empty request for up to ten seconds and wakes immediately when a job arrives. A held empty response carries `X-Long-Poll`, causing an immediate next request. This network-driven chain avoids panel timer throttling. Initial polling, handshake retries, ordinary heartbeats, completion retries, error recovery, and panel refresh also use a 750 ms timer. Hidden-panel timers may be heavily throttled, so reconnection can be slower than steady-state polling. Results are sent immediately when received from the execution code.
 
 ## Project directory
@@ -47,6 +49,9 @@ The shared directory is `~/.config/figma-agent-control/`, overridden by `FIGMA_A
 | `pairing.json` | `connect` via session | Persistent plugin credential, mode `0600`; exclusive first creation. Corruption gives `PAIRING_INVALID` |
 | `plugin/manifest.json` | `connect` | Generated development manifest, `documentAccess: dynamic-page`, `enablePrivatePluginApi: true`, no Figma-assigned plugin ID |
 | `plugin/main.js` | `connect` | Concatenation of source `plugin/main.js` and `plugin/extract.js` in `PLUGIN_SCRIPTS` order |
+| `plugin/ui.html` | `connect` | Template with candidate ports, plugin credential, and plugin version injected |
+
+The bridge generates plugin contents; `connect` installs only changed files. A fixed candidate port range and shared pairing credential make the generated files identical across projects at the same version. Bindings and project names arrive in authenticated response headers instead of being embedded in the plugin.
 
 Because the manifest has no Figma-assigned ID, private `setPluginData` is unavailable. Namespaced `setSharedPluginData` does not depend on that ID.
 
@@ -641,10 +646,6 @@ HTML-specific codes and frames output are defined above. Network errors remain d
 
 `report --since` accepts ISO dates/times; a time requires `Z` or an offset, and a date alone is UTC midnight. `jobs.failed` counts `ok:false`; `jobs.verifyFailed` counts successful executions with failed/unavailable visual checks. They are mutually exclusive.
 
-## Connection scope
-
-The bridge uses port 32523. Keep only one project bridge active on the machine. The globally installed plugin can reconnect after a bridge restart; stop the previous project before connecting another.
-
 ## Preparation ordering
 
 Target revalidation currently precedes the before-render and later preparation reads. Keep the target unchanged throughout preparation.
@@ -660,3 +661,11 @@ Rollback reconstructs writes from the prior parsed spec. Inspect variable identi
 ## Frame dump filenames
 
 --dump writes original-size PNGs using rounded sample times such as 0.300s.png. Distinct times rounding to the same millisecond can collide; avoid such pairs in one invocation.
+
+## Discovery probes
+
+Discovery checks bridge identity using heartbeat requests. These requests still follow the normal lease path; recheck connection state after discovery.
+
+## Pending results and port changes
+
+Discovery selects a bridge by the current file. Keep the original project available while a result is pending.

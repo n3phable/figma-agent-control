@@ -33,7 +33,7 @@ Figma Desktop: ui.html（iframe 中继）
 | iframe | 网络中继、连接/确认/状态面板 | 不能访问文档 |
 | 执行端 | Plugin API、快照、脚本、读取和导出 | 不发送 HTTP，通过 iframe 中继 |
 
-这种拆分遵循 Figma 插件环境。iframe 提供超时、可见性和长轮询所需的完整浏览器能力；文档操作留在插件运行时。生成的 manifest 只允许localhost 开发端口 32523，使用 dynamic-page，并为 Motion 等功能开启 private plugin API。Motion 的可用性随当前 Figma 版本和账户权限而定。
+这种拆分遵循 Figma 插件环境。iframe 提供超时、可见性和长轮询所需的完整浏览器能力；文档操作留在插件运行时。生成的 manifest 只允许候选 localhost 开发端口，使用 dynamic-page，并为 Motion 等功能开启 private plugin API。Motion 的可用性随当前 Figma 版本和账户权限而定。
 
 ### 凭证与版本
 

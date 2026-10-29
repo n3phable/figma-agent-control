@@ -14,38 +14,41 @@ import { fakeElement } from './helpers/harness.mjs';
 // -- Fixtures -------------------------------------------------------------
 // Match bridge injection by replacing only the configuration placeholder line. Queue mock fetch responses by path, defaulting to 200 + null.
 const MiB = 1024 * 1024;
-const config = { port: 1234, token: 'plugin-token', version: 'v-test-0001' };
+// ports is the candidate range: the real plugin uses eight ports from 32523; this fixture defaults to one unless a multiport case overrides it.
+const config = { ports: [1234], token: 'plugin-token', version: 'v-test-0001' };
 // Binding is not in plugin configuration: the bridge sends X-Figma-Binding, while one global plugin installation serves all projects.
 const BINDING = { fileKey: 'example', nodeId: '1:2' };
 const template = await fs.readFile(new URL('../plugin/ui.html', import.meta.url), 'utf8');
-const script = template.match(/<script>([\s\S]*)<\/script>/)[1]
-  .replace('const config = SESSION_CONFIG;', () => `const config = ${JSON.stringify(config)};`);
+const build = (/** @type {typeof config} */ cfg) => template.match(/<script>([\s\S]*)<\/script>/)[1]
+  .replace('const config = SESSION_CONFIG;', () => `const config = ${JSON.stringify(cfg)};`);
+const script = build(config);
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 // fileKey is main's hello reply, normally read from figma.fileKey; null means main has not replied.
 // run opens a concurrent hold=1 heartbeat cancellation channel, recorded in holds and queued under hold; calls tracks only the serial tick sequence.
-function plugin({ visibility = 'visible', fileKey = 'example' } = {}) {
-  const calls = [], holds = [], toMain = [], queues = new Map(), elements = new Map(), listeners = {}, window = {};
+// probe=1 discovery heartbeats are recorded in probes and consume probe responses in config.ports order; default binding matches the current file, so the first port wins.
+function plugin({ visibility = 'visible', fileKey = 'example', ports } = {}) {
+  const calls = [], holds = [], probes = [], toMain = [], queues = new Map(), elements = new Map(), listeners = {}, window = {};
   const el = id => { if (!elements.has(id)) elements.set(id, fakeElement({ hidden: id === 'approval' })); return elements.get(id); };
   const document = { visibilityState: visibility, getElementById: el, createElement: () => fakeElement(), addEventListener: (type, fn) => { listeners[type] = fn; } };
   let tick, interval;
   async function fetch(url, options = {}) {
-    const { origin, pathname, searchParams } = new URL(url), key = searchParams.get('hold') === '1' ? 'hold' : pathname;
-    (key === 'hold' ? holds : calls).push({ origin, path: pathname, query: Object.fromEntries(searchParams), headers: new Headers(options.headers), timeoutMs: options.signal?.timeoutMs,
+    const { origin, pathname, searchParams } = new URL(url), key = searchParams.get('hold') === '1' ? 'hold' : searchParams.get('probe') === '1' ? 'probe' : pathname;
+    (key === 'hold' ? holds : key === 'probe' ? probes : calls).push({ origin, path: pathname, query: Object.fromEntries(searchParams), headers: new Headers(options.headers), timeoutMs: options.signal?.timeoutMs,
       body: options.body === undefined ? undefined : JSON.parse(options.body) });
-    const reply = await (queues.get(key)?.shift() ?? {});
+    const reply = await (queues.get(key)?.shift() ?? (key === 'probe' ? { headers: { 'X-Figma-Binding': JSON.stringify(BINDING) } } : {}));
     if (reply instanceof Error) throw reply;
     const status = reply.status ?? 200;
     return { ok: status >= 200 && status < 300, status, headers: new Headers({ ...(reply.session ? { 'X-Figma-Session': reply.session, 'X-Figma-Binding': JSON.stringify(reply.binding ?? BINDING) } : {}), ...reply.headers }), json: async () => reply.body ?? null };
   }
-  vm.runInNewContext(script, { window, document, crypto, TextEncoder, fetch,
+  vm.runInNewContext(ports ? build({ ...config, ports }) : script, { window, document, crypto, TextEncoder, fetch,
     parent: { postMessage: message => toMain.push(structuredClone(message.pluginMessage)) },
     AbortSignal: { timeout: ms => ({ timeoutMs: ms }) },
     setInterval: (fn, ms) => { tick = fn; interval = ms; } });
   // UI asks main for the current file on startup; afterward toMain records only task-related messages.
   if (fileKey !== null) { assert.deepEqual(toMain, [{ type: 'hello' }]); toMain.length = 0; window.onmessage({ data: { pluginMessage: { type: 'file', fileKey } } }); }
   return {
-    calls, holds, toMain, interval, el,
+    calls, holds, probes, toMain, interval, el,
     reply: (path, ...replies) => queues.set(path, [...(queues.get(path) ?? []), ...replies]),
     trigger: () => tick(),
     tick: async () => { await tick(); await flush(); },
@@ -196,22 +199,25 @@ test('Accept results only for the current task and channel credentials; previous
 // -- Polling and visibility -----------------------------------------------
 test('tick serializes concurrent triggers into one rerun, merging visibility changes with the latest state', async () => {
   const f = plugin();
+  // The first tick discovers the bridge asynchronously; only later requests start synchronously.
+  await f.tick();
+  assert.deepEqual(f.paths(), ['/poll']);
   const hold = () => { let release; f.reply('/poll', new Promise(resolve => { release = resolve; })); return () => release({}); };
   let release = hold();
   const first = f.trigger();
   f.trigger(); f.trigger();
-  assert.deepEqual(f.paths(), ['/poll']);
+  assert.deepEqual(f.paths(1), ['/poll']);
   release();
   await first; await flush();
-  assert.deepEqual(f.paths(), ['/poll', '/poll']);
+  assert.deepEqual(f.paths(1), ['/poll', '/poll']);
 
   release = hold();
   const second = f.trigger();
   await f.setVisibility('hidden');
-  assert.equal(f.calls.length, 3);
+  assert.equal(f.calls.length, 4);
   release();
   await second; await flush();
-  assert.deepEqual(f.calls.map(c => [c.path, c.query.visibility]).slice(2), [['/poll', 'visible'], ['/poll', 'hidden']]);
+  assert.deepEqual(f.calls.map(c => [c.path, c.query.visibility]).slice(3), [['/poll', 'visible'], ['/poll', 'hidden']]);
 });
 
 test('Visibility changes immediately heartbeat without waiting for a tick, including startup while hidden', async () => {
@@ -454,6 +460,33 @@ test('The footer shows the injected status.pluginVersion before file discovery a
   f.reply('/poll', { status: 409, body: { code: 'PLUGIN_OUTDATED' } });
   await f.tick();
   assert.deepEqual([f.state(), f.el('plugin-version').textContent], ['Reopen the plugin', config.version]);
+});
+
+test('Multiport discovery probes once per port, selects the current-file binding, falls back to the first responder, and retries each tick when none respond', async () => {
+  const f = plugin({ ports: [1234, 1235, 1236] });
+  const header = binding => ({ headers: { 'X-Figma-Binding': JSON.stringify(binding) } });
+  f.reply('probe', new TypeError('Failed to fetch'), header({ fileKey: 'other', nodeId: '1:1' }), header(BINDING));
+  await f.tick();
+  assert.deepEqual(f.probes.map(c => c.origin), ['http://localhost:1234', 'http://localhost:1235', 'http://localhost:1236']);
+  for (const probe of f.probes) assert.deepEqual([probe.path, probe.query.file, probe.query.job, probe.timeoutMs], ['/heartbeat', 'example', undefined, 1500], 'Probes do not include the held task');
+  assert.deepEqual(f.calls.map(c => [c.origin, c.path]), [['http://localhost:1236', '/poll']], 'Connect to the bridge bound to the current file');
+  await f.tick();
+  assert.equal(f.probes.length, 3, 'Stop probing after finding a bridge');
+
+  // A stopped bridge releases its port on connection failure; search again next tick. With no responder, suggest connect without ordinary requests.
+  f.reply('/poll', new TypeError('Failed to fetch'));
+  await f.tick();
+  f.reply('probe', new TypeError('a'), new TypeError('b'), new TypeError('c'));
+  await f.tick();
+  assert.equal(f.state(), 'Waiting for bridge');
+  assert.match(f.detail(), /figma-agent-control connect/);
+  assert.equal(f.calls.length, 3, 'No ordinary requests without a bridge');
+  // If only another project's bridge is online, use it so check-target displays the mismatch; rediscover every few seconds while mismatched.
+  f.reply('probe', header({ fileKey: 'other', nodeId: '1:1' }), new TypeError('b'), new TypeError('c'));
+  f.reply('/poll', { session: 'S9', binding: { fileKey: 'other', nodeId: '1:1', project: 'project-b' } });
+  await f.tick();
+  assert.deepEqual(f.calls.at(-1).origin, 'http://localhost:1234');
+  assert.deepEqual(f.toMain.at(-1), { type: 'check-target', binding: { fileKey: 'other', nodeId: '1:1', project: 'project-b' } });
 });
 
 test('Network failures distinguish automatic recovery from manual checks, retaining and retrying active results without reexecution', async () => {

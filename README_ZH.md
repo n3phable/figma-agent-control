@@ -144,10 +144,6 @@ HTML 导出为固定尺寸的静态复刻页面。原型点击与云端同步在
 
 本项目采用 [MIT License](LICENSE)。所含材料的说明见第三方声明。由 [n3phable](https://github.com/n3phable) 维护。
 
-## 连接范围
-
-桥接使用端口 32523，同一台机器只保留一个项目桥接运行。全局插件可在桥接重启后重连；连接另一个项目前先停止原项目。
-
 ## 当前命令用法
 
 运行 `figma-agent-control help` 查看此版本可用命令。核心命令为 init、connect、stop、status、doctor、run、inspect、preview、variables、result、wait、resolve、image-diff 和 report。等待超时不代表可以重放写入。
