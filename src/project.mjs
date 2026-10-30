@@ -33,7 +33,7 @@ export async function save(file, value, compact = false) {
 }
 
 // -- Global plugin ------------------------------------------------------
-// The bridge uses one fixed port, so only one project bridge can run at a time. One global plugin and pairing credential are shared; binding metadata arrives in bridge responses.
+// Plugin configuration contains only candidate ports. Projects can run concurrent bridges, and the plugin selects the port for its current file. One global installation and pairing credential serve all projects; bridges return binding metadata in responses.
 // Per-project installation would leave duplicate plugin names in Figma. FIGMA_AGENT_CONTROL_HOME is only for tests or location overrides.
 export const pluginHome = () => process.env.FIGMA_AGENT_CONTROL_HOME || path.join(os.homedir(), '.config', 'figma-agent-control');
 // Write changed content only: development-plugin file changes trigger Figma hot reload, so unchanged content should not interrupt a running plugin.

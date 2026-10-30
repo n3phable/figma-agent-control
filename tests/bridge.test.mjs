@@ -36,7 +36,7 @@ test('CLI and plugin credentials are not interchangeable; missing or incorrect c
   const ui = b.bridge.plugin['ui.html'];
   assert.equal(await exists(path.join(b.dir, 'plugin')), false, 'connect installs plugins globally, not inside the project');
   const config = JSON.parse(ui.match(/const config = (\{.*\});/)[1]);
-  assert.deepEqual([config.token, config.version, config.port], [b.pairing, version, b.bridge.port]);
+  assert.deepEqual([config.token, config.version, config.ports], [b.pairing, version, [b.bridge.port]], 'Candidate port 0 is replaced with the actual port');
   assert.equal((await fs.stat(path.join(b.home, 'pairing.json'))).mode & 0o777, 0o600);
   assert.equal(await exists(path.join(b.dir, 'pairing.json')), false, 'The project directory does not store pairing credentials');
 });
@@ -409,7 +409,7 @@ test('Global plugins embed pluginToken without project pairing files; identical 
   // Close explicitly: t.after runs in registration order, so directory cleanup would otherwise precede bridge shutdown.
   try { assert.deepEqual(second.plugin, plugin, 'Switching projects leaves plugin files unchanged, avoiding a Figma reload on install'); }
   finally { await second.close(); }
-  assert.deepEqual(JSON.parse(plugin['ui.html'].match(/const config = (\{.*\});/)[1]), { port, token, version: first.version });
+  assert.deepEqual(JSON.parse(plugin['ui.html'].match(/const config = (\{.*\});/)[1]), { ports: [port], token, version: first.version });
   assert.equal(await exists(path.join(root(a), 'pairing.json')), false);
   await assert.rejects(start(a, 0, { pluginToken: 'not-a-token', pollHoldMs: 0 }), /Invalid plugin pairing token/);
   const again = await start(a, 0, { pluginToken: token, pollHoldMs: 0 });

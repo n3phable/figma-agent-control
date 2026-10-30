@@ -144,10 +144,6 @@ HTML exports are fixed-size static replicas. Validate prototype clicks and cloud
 
 Licensed under the [MIT License](LICENSE). See third-party notices for included material. Maintained by [n3phable](https://github.com/n3phable).
 
-## Connection scope
-
-The bridge uses port 32523. Keep only one project bridge active on the machine. The globally installed plugin can reconnect after a bridge restart; stop the previous project before connecting another.
-
 ## Available command syntax
 
 Run `figma-agent-control help` for the commands in this revision. Core commands are init, connect, stop, status, doctor, run, inspect, preview, variables, result, wait, resolve, image-diff and report. A timeout does not authorize replaying a write.

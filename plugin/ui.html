@@ -63,6 +63,9 @@ let progress = null;
 let serverSessionId = null, targetIssue = null, targetFound = false, completeRejects = 0;
 // main supplies fileKey; null means unknown and prevents polling. project identifies the current bridge's project.
 let fileKey = null, project = '';
+// Projects can run concurrent bridges on successive config.ports. port is the connected bridge, or null until found;
+// bound means it serves the current file. Otherwise rescan every few seconds until the matching bridge appears.
+let port = null, bound = false, lastScan = 0;
 let review = null, deciding = false;
 $('hide-panel').onclick = () => parent.postMessage({ pluginMessage: { type: 'hide-ui' } }, '*');
 $('target-name').onclick = () => parent.postMessage({ pluginMessage: { type: 'focus-target' } }, '*');
@@ -92,6 +95,7 @@ function connectionError(message, response, code) {
   return error;
 }
 function showConnectionError(error) {
+  if (error.code === 'NO_BRIDGE') return showState("Waiting for bridge", "No local bridge is running. Run figma-agent-control connect in the project directory.", 'idle');
   if (error.code === 'PLUGIN_OUTDATED') return showState("Reopen the plugin", "The tool was updated. Close the plugin and run it again.", 'danger');
   if (error.code === 'FOREIGN_JOB') return showState("Waiting for original project", `The current task belongs to project ${active?.project || "(unknown)"}. Run figma-agent-control connect there to return the result automatically. If no longer needed, close and reopen the plugin; the task will be treated as having an unknown result.`, 'warn');
   if (error.code === 'PAIRING_MISMATCH') return showState("Plugin credentials do not match", "This is not the current local Figma Agent Control installation; it may be an older per-project plugin with the same name. Run the plugin for the manifest printed by figma-agent-control connect, then remove the old plugin.", 'danger');
@@ -126,13 +130,34 @@ function showRecent() {
     return row;
   }));
 }
-const route = path => path + '?client=' + client + '&visibility=' + (document.visibilityState === 'hidden' ? 'hidden' : 'visible')
-  + '&file=' + encodeURIComponent(fileKey) + (active ? '&job=' + encodeURIComponent(active.id) : '');
+const route = (path, job = active) => path + '?client=' + client + '&visibility=' + (document.visibilityState === 'hidden' ? 'hidden' : 'visible')
+  + '&file=' + encodeURIComponent(fileKey) + (job ? '&job=' + encodeURIComponent(job.id) : '');
+// Find the bridge bound to this file by probing each candidate once without the active task, avoiding FOREIGN_JOB reports in other projects. Match binding headers to the current file;
+// Choose the lowest matching port. If none match, use the first responding bridge so normal requests can show outdated-version, pairing or wrong-file diagnostics.
+async function locate() {
+  lastScan = Date.now();
+  const answers = await Promise.all(config.ports.map(async candidate => {
+    try {
+      const response = await fetch('http://localhost:' + candidate + route('/heartbeat', null) + '&probe=1', { headers, signal: AbortSignal.timeout(1500) });
+      let binding = null;
+      try { binding = JSON.parse(response.headers.get('X-Figma-Binding')); } catch {}
+      return { candidate, match: response.ok && binding?.fileKey === fileKey };
+    } catch { return null; }
+  }));
+  const alive = answers.filter(Boolean), found = alive.find(answer => answer.match) ?? alive[0];
+  port = found?.candidate ?? null;
+  bound = Boolean(found?.match);
+  if (port === null) throw connectionError("No local bridge is running", null, 'NO_BRIDGE');
+}
 const hello = () => parent.postMessage({ pluginMessage: { type: 'hello' } }, '*');
 const randomNonce = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
 // The bridge holds long polls for up to 10 s, so /poll permits 15 s. /complete scales with body size (see tick); other requests allow 3 s.
 async function request(path, options = {}, timeoutMs = 3000) {
-  const response = await fetch('http://localhost:' + config.port + path, { ...options, headers, signal: AbortSignal.timeout(timeoutMs) });
+  if (port === null || (!bound && Date.now() - lastScan > 5000)) await locate();
+  let response;
+  // Release an unreachable port so the next request rediscovers the bridge, which may have restarted elsewhere or stopped.
+  try { response = await fetch('http://localhost:' + port + path, { ...options, headers, signal: AbortSignal.timeout(timeoutMs) }); }
+  catch (error) { port = null; throw error; }
   // Recheck that the bound target belongs to the open file after a bridge restart.
   const session = response.ok && response.headers?.get?.('X-Figma-Session');
   // One global plugin receives binding/project metadata through headers; the panel updates when the bridge switches projects.
@@ -140,6 +165,7 @@ async function request(path, options = {}, timeoutMs = 3000) {
     serverSessionId = session;
     let binding = null;
     try { binding = JSON.parse(response.headers.get('X-Figma-Binding')); } catch {}
+    bound = binding?.fileKey === fileKey;
     project = typeof binding?.project === 'string' ? binding.project : '';
     $('project').textContent = project;
     $('project').hidden = !project;

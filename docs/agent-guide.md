@@ -452,10 +452,6 @@ The flag is an assertion that the previous plugin has actually stopped. The insp
 
 Keep `.figma-agent-control/` out of version control. It includes credentials and design evidence. Deliver only the required result artifacts, retain unreviewed evidence, and stop bridges you started when their work is complete.
 
-## Connection scope
-
-The bridge uses port 32523. Keep only one project bridge active on the machine. The globally installed plugin can reconnect after a bridge restart; stop the previous project before connecting another.
-
 ## Cancellation boundary
 
 An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
@@ -463,3 +459,7 @@ An undelivered run can be marked unexecuted. Once delivered, request cancellatio
 ## Frame dump filenames
 
 --dump writes original-size PNGs using rounded sample times such as 0.300s.png. Distinct times rounding to the same millisecond can collide; avoid such pairs in one invocation.
+
+## Pending results and port changes
+
+Discovery selects a bridge by the current file. Keep the original project available while a result is pending.

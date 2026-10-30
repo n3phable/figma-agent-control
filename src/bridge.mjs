@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Imports node:http, node:fs/promises, node:path, node:crypto, node:url, ./project.mjs, ./connection.mjs, ./session.mjs, ./png.mjs, ./record.mjs.
- * [OUTPUT]: Exports DEFAULT_PORT, PLUGIN_SCRIPTS, pluginMain, start.
+ * [OUTPUT]: Exports DEFAULT_PORT, PORT_RANGE, DEFAULT_PORTS, PLUGIN_SCRIPTS, pluginMain, start.
  * [POS]: Owns authenticated CLI/plugin transport, single-job delivery and durable outcomes.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -16,6 +16,10 @@ import { pngSize, imageStats, diffPng } from './png.mjs';
 import { changeSet, scriptTrace } from './record.mjs';
 
 export const DEFAULT_PORT = 32523;
+// Projects may each run a bridge concurrently: when the default port is occupied, try successive ports up to PORT_RANGE. The full range enters plugin configuration, keeping generated files byte-identical across projects;
+// ui.html locates the bridge for the current file. Explicit ports, including test port 0, do not advance.
+export const PORT_RANGE = 8;
+export const DEFAULT_PORTS = Array.from({ length: PORT_RANGE }, (_, i) => DEFAULT_PORT + i);
 const assets = fileURLToPath(new URL('../plugin/', import.meta.url));
 // Source scripts are split by responsibility, but Figma accepts one main: concatenate them in this order into a shared global scope and hash the assembled content for versioning.
 export const PLUGIN_SCRIPTS = ['main.js', 'extract.js'];
@@ -84,8 +88,10 @@ const POLL_HOLD_MS = 10000;
 // A plugin task belongs to another project, since the global plugin serves all projects: retain the result in the plugin until its original bridge returns.
 const FOREIGN_JOB = { code: 'FOREIGN_JOB', error: 'The plugin holds a job from another project; run connect in that project to deliver its result before this project\'s jobs can be claimed' };
 
-/** @param {string} cwd @param {number} [port] @param {{ pluginToken?: string, pollHoldMs?: number } & Parameters<typeof createConnection>[0]} [options] */
-export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs = POLL_HOLD_MS, ...connectionOptions } = {}) {
+/** @param {string} cwd @param {number} [port] @param {{ pluginToken?: string, pollHoldMs?: number, ports?: number[] } & Parameters<typeof createConnection>[0]} [options] */
+export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs = POLL_HOLD_MS, ports, ...connectionOptions } = {}) {
+  // ports supplies candidate listen ports for tests. By default, DEFAULT_PORT expands to the full range; other ports are tried alone.
+  const candidates = ports ?? (port === DEFAULT_PORT ? DEFAULT_PORTS : [port]);
   const dir = root(cwd), binding = await readBinding(cwd);
   if (!/^[a-f0-9]{64}$/.test(pluginToken ?? '')) throw Error('Invalid plugin pairing token');
   const tokens = { cli: crypto.randomBytes(32).toString('hex'), plugin: pluginToken };
@@ -465,16 +471,20 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   const { lock, recovered } = await acquireLock(dir);
   try {
     for (const job of await unfinishedOperations(dir, binding.id)) { jobs.set(job.id, job); if (job.operation === 'run') unresolved.add(job.id); }
-    await /** @type {Promise<void>} */ (new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); }));
+    for (const candidate of candidates) {
+      port = candidate;
+      try { await /** @type {Promise<void>} */ (new Promise((resolve, reject) => { server.once('error', reject); server.listen(candidate, '127.0.0.1', resolve); })); break; }
+      catch (error) { if (error.code !== 'EADDRINUSE' || candidate === candidates.at(-1)) throw error; }
+    }
     // Listening on TCP makes address() return AddressInfo; only pipes return strings.
     port = /** @type {import('node:net').AddressInfo} */ (server.address()).port;
-    // Plugin configuration contains only port, credentials and version, keeping generated files identical across projects using the same port and version.
-    const config = { port, token: tokens.plugin, version };
+    // Plugin config includes only candidate ports, credentials and version: all projects sharing a range/version generate identical files. Test port 0 is replaced with the actual assigned port.
+    const config = { ports: candidates.map(p => p || port), token: tokens.plugin, version };
     // Replace only the script's placeholder line, leaving matching words inside comments alone.
     const ui = uiTemplate.replace('const config = SESSION_CONFIG;', () => `const config = ${JSON.stringify(config)};`);
     if (ui === uiTemplate) throw Error('Plugin UI template is missing the config placeholder');
     const manifest = { name: 'Figma Agent Control', api: '1.0.0', main: 'main.js', ui: 'ui.html', editorType: ['figma'], documentAccess: 'dynamic-page',
-      enablePrivatePluginApi: true, networkAccess: { allowedDomains: ['none'], devAllowedDomains: [`http://localhost:${port}`] } };
+      enablePrivatePluginApi: true, networkAccess: { allowedDomains: ['none'], devAllowedDomains: config.ports.map(p => `http://localhost:${p}`) } };
     plugin = { 'manifest.json': JSON.stringify(manifest, null, 2) + '\n', 'main.js': main, 'ui.html': ui };
     sessionTouched = true;
     await save(path.join(dir, 'session.json'), { port, token: tokens.cli, sessionId, pid: process.pid });
@@ -483,7 +493,9 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
     await new Promise(resolve => server.close(resolve));
     if (sessionTouched) await fs.rm(path.join(dir, 'session.json'), { force: true });
     await lock.close(); await fs.unlink(path.join(dir, 'bridge.lock'));
-    if (error.code === 'EADDRINUSE') throw Object.assign(Error(`Port ${port} is in use: it may be another project's figma-agent-control bridge (run figma-agent-control stop in that directory, or press Ctrl-C in its terminal), or another program (check with lsof -nP -iTCP:${port})`), { code: 'EADDRINUSE' });
+    if (error.code === 'EADDRINUSE') throw Object.assign(Error(candidates.length > 1
+      ? `Port ${candidates[0]}-${candidates.at(-1)} are all in use: at most ${candidates.length} project bridges can run at once. Run figma-agent-control stop in unused project directories. Another application may own the port; inspect it with lsof -nP -iTCP:${candidates[0]}-${candidates.at(-1)})`
+      : `Port ${port} is in use: it may be another project's figma-agent-control bridge (run figma-agent-control stop in that directory, or press Ctrl-C in its terminal), or another program (check with lsof -nP -iTCP:${port})`), { code: 'EADDRINUSE' });
     throw error;
   }
 
