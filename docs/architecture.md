@@ -120,12 +120,14 @@ CLI submits -> bridge validates and persists queued job
             -> delivery persists running before handing off
             -> plugin compiles and verifies target
             -> before snapshot -> optional approval -> durable checkpoint
-            -> target revalidation -> before render
+            -> before render/assets -> final synchronous recheck
             -> Undo boundary -> script -> Undo boundary
             -> after snapshot/render and result serialization
             -> bridge lands files -> atomic result.json
             -> CLI record reader summarizes outcome
 ```
+
+A durable checkpoint precedes execution. The final verification follows the last preparation await and does not yield before calling the script, reducing the chance that delayed approval or exports leave a stale target unchecked.
 
 The original script outcome is separate from evidence availability. A completed script can have an unavailable after snapshot or failed visual expectation. Those are not invitations to replay. Failed scripts expose partial changes and eligible new nodes; optional cleanup is a separate Undo step and cannot restore earlier deletions or edits.
 
@@ -140,6 +142,8 @@ Late results can still land for recovered jobs. Results belonging to another pro
 ### Progress and cancellation
 
 The execution proxy tracks outstanding `figma.*Async` calls and supported namespaces, retaining their call-site stack. Progress carries preparation/approval/script/finish phase, elapsed time, page-local changes, and the oldest pending calls. The bridge maps stack locations to script/library files and persists `progress.json` for a timed-out CLI.
+
+Cancellation before the script begins records nonexecution. During execution it fails the execution race and follows the normal partial-write path. It cannot stop a pending host call or every continuation: later access through the proxy throws, but a previously obtained node can still be written directly. Closing/rerunning the plugin terminates that continuation. The system exposes this limitation instead of claiming transactional cancellation.
 
 ### Extraction and HTML
 

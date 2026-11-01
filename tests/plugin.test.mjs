@@ -146,6 +146,23 @@ test('Without explicit depth, snapshots exceeding 2000 nodes or truncating are r
 });
 
 // -- Approval, checkpoints, and revalidation -------------------------------
+test('Edits during before-render or asset reads preserve the original checkpoint and fail final revalidation', async () => {
+  for (const render of [true, false]) {
+    const f = plugin(), gate = Promise.withResolvers(), entered = Promise.withResolvers();
+    const owner = render ? f.doc.frame : f.figma.variables, key = render ? 'exportAsync' : 'getLocalVariableCollectionsAsync', original = owner[key];
+    owner[key] = (...args) => { entered.resolve(); return gate.promise.then(() => original(...args)); };
+    const job = f.start({ code: 'figma.mark("script"); target.name = "\u8986\u76d6\u7f16\u8f91";', ...(render ? { expect: 'changed' } : {}) });
+    await entered.promise;
+    f.doc.frame.name = '\u5e76\u53d1\u7f16\u8f91';
+    gate.resolve();
+    const r = await job.done;
+    assert.deepEqual([r.ok, r.executionStarted, f.doc.frame.name], [false, false, '\u5e76\u53d1\u7f16\u8f91']);
+    assert.equal(f.checkpoints[0].before.name, '\u753b\u677f');
+    assert.match(r.error, /Target changed/);
+    assert.deepEqual(f.events, ['checkpoint']);
+  }
+});
+
 test('High-risk tasks show the panel for approval before checkpointing or execution, ignore forged replies, and do not execute when denied', async () => {
   const f = plugin();
   const job = f.start({ targetNodeId: '1:3', risk: { level: 'high', reason: '\u6539\u5199\u6807\u9898' }, libs: [{ name: 'helper', code: 'const suffix = "!";' }], code: 'target.characters = "\u9ad8\u98ce\u9669" + suffix;' });
@@ -312,7 +329,7 @@ test('A second task arriving during execution is discarded without snapshot, exe
 // -- Visual verification --------------------------------------------------
 const paintRed = 'figma.mark("script"); target.fills = [{ type: "SOLID", visible: true, opacity: 1, color: { r: 1, g: 0, b: 0 } }]; return "\u5b8c\u6210";';
 
-test('expect exports the before image after revalidation and before the Undo boundary, then exports after script execution, exactly once each', async () => {
+test('expect exports the before image once before final revalidation/Undo and the after image once after the script', async () => {
   const f = plugin();
   trackExports(f, f.doc.swatch);
   const r = await f.send({ targetNodeId: '1:4', expect: 'changed', code: paintRed });

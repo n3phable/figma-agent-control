@@ -109,6 +109,8 @@ The plugin follows this order:
 
 7. Export a before image if `expect` is set. For cleanup, collect IDs already on the target page. For non-page targets, record direct page-root children.
 
+8. Record existing local collections, variables, and styles. After the final preparation `await`, recheck file, target, scope, page, and snapshot. Do not yield between that recheck and invoking the script.
+
 9. Commit an Undo boundary, listen for target-page node changes, enter the script phase, set `executionStarted:true`, evaluate libraries and body, and commit the closing Undo boundary. Boundary failures are reported, not automatically undone. A script failure records created nodes and optionally cleans them after a successful closing boundary.
 
 10. Capture the after snapshot and, if requested, after image. Compare page-root children for successful non-page-target runs. A too-large after snapshot makes the change set unavailable; a failed after export makes visual verification unavailable. Neither changes the script's own outcome.
@@ -284,6 +286,8 @@ The plugin reports progress one second after receiving a run, then every two sec
 
 Phases are `prepare`, `approval`, `script`, and `finish`. Only script phase has target-page local change counts and pending calls. `waiting` includes up to three earliest calls with `{call,forMs}`; the oldest includes up to 1,000 stack characters. The iframe sends progress immediately in a URL-encoded heartbeat parameter. The bridge maps that stack to `at`, removes the raw stack, adds `reportedAt` and optional `hidden:true`, stores memory state, and writes `progress.json` once per sequence number. Invalid progress is ignored. Status adds `ageMs`.
 
+`POST /cancel {id}` accepts only the active run. Before delivery it records a nonexecuted result. After delivery it wakes the held heartbeat and repeatedly returns `cancel:true`; the iframe forwards the matching job ID and nonce. During preparation or approval, cancellation ends waiting with `executionStarted:false`; late reads or acknowledgements cannot resume execution. During the script, it ends the execution race as a failure, with the oldest pending call as error context, and follows ordinary failure evidence and cleanup.
+
 A separate `/heartbeat?hold=1` channel holds until cancellation, completion, or roughly ten seconds, and uses `X-Long-Poll` for immediate continuation. This avoids panel timer throttling. The plugin's own progress and failure-cleanup timers can still be throttled.
 
 Cancellation cannot kill the suspended JavaScript continuation or a host call already in flight. Later proxy access throws, but later direct writes through a previously acquired node are not blocked. A warning records this limit. Stop and rerun the plugin to terminate the continuation. Read-only jobs cannot be cancelled; synchronous work must yield before cancellation can be handled.
@@ -311,6 +315,8 @@ Every request supplies `X-Session-Token`. Plugin routes additionally require `X-
 ## Plugin messages
 
 The iframe and execution code use postMessage. Each job has a random `channelNonce`; mismatched IDs or nonces are ignored.
+
+Messages include `hello`/`file`, `approval-request`/`approval-ack`, `checkpoint`/`checkpoint-ack`, `progress`, `cancel`, `check-target`/`target-info`, `focus-target`, `resize`, and `hide-ui`. The iframe obtains the file key before polling or heartbeats. Target focus switches page, selects, and scrolls the target into view; it is disabled while a job is executing.
 
 Job messages above 65,536 JavaScript string characters, including snapshots and base64, use a `serialized-result` envelope. The iframe falls back to compact failure evidence when the structured portion exceeds about 16 MB, the bridge returns `413`, or the same completion receives three cumulative `400` responses. Other failures do not reset the rejection count. `409 FOREIGN_JOB` never triggers degradation. The compact result retains execution state, verified binding, script-failure cleanup lists, new assets, warnings, and stack.
 
@@ -645,14 +651,6 @@ HTML and html-check stdout summaries fit within 16 KiB of formatted UTF-8 JSON. 
 HTML-specific codes and frames output are defined above. Network errors remain distinct: `SANDBOX_BLOCKED` is denied localhost access, `BRIDGE_DOWN` is an unresponsive session port, `BRIDGE_TIMEOUT` is a request timeout, and `NO_SESSION` is a missing session file.
 
 `report --since` accepts ISO dates/times; a time requires `Z` or an offset, and a date alone is UTC midnight. `jobs.failed` counts `ok:false`; `jobs.verifyFailed` counts successful executions with failed/unavailable visual checks. They are mutually exclusive.
-
-## Preparation ordering
-
-Target revalidation currently precedes the before-render and later preparation reads. Keep the target unchanged throughout preparation.
-
-## Cancellation boundary
-
-An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
 
 ## Motion rollback values
 

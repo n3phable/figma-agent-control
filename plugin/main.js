@@ -4,7 +4,7 @@
  * [POS]: Figma sandbox executor for bound reads and trusted writes, with approval, checkpoints and Undo boundaries.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
-// ui.html relays bridge-built jobs; /poll adds binding and the iframe adds channelNonce. Declare only fields read by the plugin.
+// Tasks relayed by ui.html: bridge buildJob supplies fields, /poll adds binding, and ui.html adds channelNonce. Declare only fields read by the plugin.
 /** @typedef {{ id: string, operation: string, channelNonce: string, binding: { fileKey: string, nodeId: string }, targetNodeId?: string, nodes?: string[], names?: string[],
  *   snapshotDepth?: number, scale?: number, islands?: string[], expect?: string, code: string, libs?: { name: string, code: string }[], data?: unknown,
  *   risk?: { level: string, reason?: string }, scriptHash?: string, cleanOnFail?: boolean }} Job */
@@ -19,7 +19,7 @@ let boundNodeId = null;
 let checkpointWaiter = null;
 /** @type {Waiter | null} */
 let approvalWaiter = null;
-// The currently executing run: cancellation must match its task ID and channelNonce.
+// Active run from receipt through script completion, including preparation and approval; cancel must match task ID and channelNonce.
 /** @type {{ id: string, channelNonce: string, cancel(): void } | null} */
 let execution = null;
 // Web components often have nested wrappers; cover typical component trees without increasing the total node budget.
@@ -340,7 +340,9 @@ const FIRST_PROGRESS_MS = 1000, PROGRESS_MS = 2000, TRACKED = new Set(['variable
 function watchExecution() {
   const pending = /** @type {Map<number, { call: string, at: number, stack: string }>} */ (new Map());
   let seq = 0, stopped = '', reject = /** @type {(error: unknown) => void} */ (() => {});
+  let cancellation = /** @type {Error | null} */ (null);
   const cancelled = /** @type {Promise<never>} */ (new Promise((_, no) => { reject = no; }));
+  cancelled.catch(() => {});
   /** @param {any} real @param {string} prefix @returns {any} */
   const wrap = (real, prefix) => {
     const namespaces = /** @type {Map<string, unknown>} */ (new Map());
@@ -375,7 +377,9 @@ function watchExecution() {
     });
   };
   return {
-    api: wrap(figma, 'figma'), cancelled,
+    api: wrap(figma, 'figma'),
+    /** @template T @param {Promise<T>} promise */
+    wait(promise) { return cancellation ? Promise.reject(cancellation) : Promise.race([promise, cancelled]); },
     // Order pending calls by start time, with the oldest most likely stalled. Include only its stack to keep heartbeat URLs bounded.
     /** @param {{ changes: number, lastChangeAt: number }} activity */
     progress(activity) {
@@ -383,13 +387,14 @@ function watchExecution() {
       return { changes: activity.changes, ...(activity.lastChangeAt ? { lastChangeAgoMs: now - activity.lastChangeAt } : {}),
         waiting: waiting.slice(0, 3).map((p, i) => ({ call: p.call, forMs: now - p.at, ...(i ? {} : { stack: p.stack }) })), waitingCount: waiting.length };
     },
-    cancel() {
+    cancel(phase = 'script') {
       if (stopped) return;
       const oldest = pending.values().next().value;
-      const error = Error(oldest ? `Aborted by cancel: the script was waiting on ${oldest.call}, which had not returned after ${Math.round((Date.now() - oldest.at) / 1000)} s`
+      const error = Error(phase !== 'script' ? `Cancelled before execution: the script did not run (${phase})` : oldest ? `Aborted by cancel: the script was waiting on ${oldest.call}, which had not returned after ${Math.round((Date.now() - oldest.at) / 1000)} s`
         : 'Aborted by cancel: the script was not waiting on a figma async call; it may be waiting on a node async method (e.g. exportAsync) or on its own Promise');
       if (oldest) try { error.stack = oldest.stack; } catch (_) { /* Omit location if stack is read-only.*/ }
       stopped = 'The job was cancelled; the script can no longer call figma';
+      cancellation = error;
       reject(error);
     },
     get wasCancelled() { return stopped !== ''; }
@@ -473,6 +478,10 @@ figma.ui.onmessage = async job => {
   // Start run progress on receipt (first report after 1 s, then every 2 s). phase identifies prepare (target, snapshots, write-ahead log), approval (user confirmation),
   // script (execution plus pending figma calls), or finish (leftovers, after snapshot, result assembly). Synchronous snapshots block progress timers; the panel keeps heartbeating the latest update.
   let phase = 'prepare', reports = 0, ticker = 0, scriptProgress = /** @type {(() => Record<string, unknown>) | null} */ (null);
+  const tracker = run ? watchExecution() : null;
+  if (tracker) execution = { id: job.id, channelNonce: job.channelNonce, cancel: () => tracker.cancel(phase) };
+  /** @template T @param {Promise<T>} promise */
+  const prepare = promise => tracker ? tracker.wait(promise) : promise;
   const report = (/** @type {number} */ ms) => { ticker = setTimeout(() => { send({ type: 'progress', id: job.id, seq: ++reports, phase, elapsedMs: Date.now() - receivedAt, ...scriptProgress?.() }); report(PROGRESS_MS); }, ms); };
   if (run) report(FIRST_PROGRESS_MS);
   try {
@@ -482,7 +491,7 @@ figma.ui.onmessage = async job => {
     // Compile first: syntax errors return before snapshots, approval or writes, preserving executionStarted false.
     let program = null;
     if (run) try { program = compile(job); } catch (error) { scriptFailure = { error }; throw error; }
-    const targetId = job.targetNodeId ?? job.binding.nodeId, candidate = await figma.getNodeByIdAsync(targetId);
+    const targetId = job.targetNodeId ?? job.binding.nodeId, candidate = await prepare(figma.getNodeByIdAsync(targetId));
     if (candidate === null && job.operation === 'inspect') {
       send({ id: job.id, ok: false, executionStarted: false, targetMissing: true, missingNodeId: targetId, fileVerified: figma.fileKey,
         error: 'Queried the original target in the bound file; the node no longer exists. Verify against the original job and the canvas', recovery: 'Keep the missing-node evidence; do not replay the original script' });
@@ -491,9 +500,9 @@ figma.ui.onmessage = async job => {
     target = /** @type {SceneNode | PageNode} */ (inBinding(candidate, targetId, job.binding.nodeId));
     page = pageOf(target);
     if (!page) throw Error('Target is not inside a page');
-    await page.loadAsync();
+    await prepare(page.loadAsync());
     // extract loads pages without switching: html may submit up to 100 extracts, which must not repeatedly move the user's view.
-    if (job.operation !== 'extract') await figma.setCurrentPageAsync(page);
+    if (job.operation !== 'extract') await prepare(figma.setCurrentPageAsync(page));
     before = snapshot();
     let output;
     if (job.operation === 'inspect') { output = before; ancestors = ancestry(target); }
@@ -508,39 +517,39 @@ figma.ui.onmessage = async job => {
       }
       send({ id: job.id, ok: true, images, bindingVerified: { fileKey: figma.fileKey, pageId: page.id, nodeId: target.id } });
       return;
-    } else if (run) {
+    } else if (run && tracker) {
       if (declaredDepth === null && isTruncated(before)) throw Error(`Before-snapshot truncated (deeper than ${SNAPSHOT_DEPTH} levels); the script did not run. Retarget a shallower node that still covers all writes to keep full-depth evidence; otherwise, ${SCOPE_HINT}`);
       if (job.risk?.level === 'high') {
         const asked = Date.now();
         phase = 'approval';
-        try { await requestApproval(job, send); } finally { approvalMs = Date.now() - asked; phase = 'prepare'; }
+        try { await prepare(requestApproval(job, send)); } finally { approvalMs = Date.now() - asked; phase = 'prepare'; }
       }
-      await saveCheckpoint(job, before, page, send);
-      const currentPage = pageOf(target);
-      if (figma.fileKey !== job.binding.fileKey || target.removed || !within(target, job.binding.nodeId) || currentPage?.id !== page.id || JSON.stringify(snapshot()) !== JSON.stringify(before)) throw Error('Target changed while waiting for the snapshot; the script did not run. Run inspect again');
+      await prepare(saveCheckpoint(job, before, page, send));
       // Export the before image outside the Undo boundary. Export is read-only, and failure means the script has not executed.
       /** @type {{ before: string, after?: string, error?: string } | null} */
-      const renders = job.expect ? { before: await render(target, job.scale, budget) } : null;
+      const renders = job.expect ? { before: await prepare(render(target, job.scale, budget)) } : null;
       // cleanOnFail records existing target-page IDs before the boundary. Preserve new nodes that are themselves preexisting or contain existing layers, such as figma.group results, to avoid deleting original content.
       // Covers only the target page; existing nodes moved from other pages into new nodes are absent from the protection list.
       const existing = job.cleanOnFail ? new Set(page.findAll().map(node => node.id)) : null;
       // For non-page targets, synchronously record direct page children at low cost: create* without appendChild leaves new nodes at page root, outside the target change set. Page targets already cover them.
       const rootChildren = (/** @type {PageNode} */ p) => p.children.map(({ id, name, type }) => ({ id, name, type })), rootBefore = target.type === 'PAGE' ? null : rootChildren(page);
-      const assetsBefore = await localAssets().catch(error => { warnings.push('Cannot read variables and styles before execution; created variables and styles cannot be listed if the script fails: ' + String(error)); return null; });
+      const assetsBefore = await prepare(localAssets().catch(error => { warnings.push('Cannot read variables and styles before execution; created variables and styles cannot be listed if the script fails: ' + String(error)); return null; }));
+      // Revalidate after the last await and do not yield before invoking the script, keeping write-ahead evidence aligned with the actual starting state.
+      const currentPage = pageOf(target);
+      if (figma.fileKey !== job.binding.fileKey || target.removed || !within(target, job.binding.nodeId) || currentPage?.id !== page.id || JSON.stringify(snapshot()) !== JSON.stringify(before)) throw Error('Target changed while waiting for the snapshot; the script did not run. Run inspect again');
       if (typeof figma.commitUndo !== 'function') throw Error('This environment does not support Undo boundaries; the script did not run');
       const commitUndo = figma.commitUndo.bind(figma);
       try { commitUndo(); undoBoundaries.before = 'committed'; }
       catch (error) { undoBoundaries.before = 'failed'; throw error; }
       watch = watchCreated(page, warnings);
-      const tracker = watchExecution(), activity = watch.activity;
-      execution = { id: job.id, channelNonce: job.channelNonce, cancel: tracker.cancel };
+      const activity = watch.activity;
       phase = 'script'; scriptProgress = () => tracker.progress(activity());
       executionStarted = true;
       let boundaryFailure;
       try {
         const script = /** @type {Promise<unknown>} */ (/** @type {Function} */ (program)(tracker.api, target, job.data ?? null));
         script.catch(() => {});
-        output = await Promise.race([script, tracker.cancelled]);
+        output = await tracker.wait(script);
       }
       catch (error) { scriptFailure = { error }; }
       finally { execution = null; phase = 'finish'; scriptProgress = null; }
@@ -620,6 +629,10 @@ figma.ui.onmessage = async job => {
       recovery: executionStarted ? 'The script started running; keep the current state, verify with inspect first, do not replay the script' : 'The script did not run; fix it and resubmit', ...(run ? { undoBoundaries } : {}),
       ...leftovers, ...(warnings.length ? { warnings } : {}) });
   } finally {
+    if (execution?.id === job.id) execution = null;
+    // Clear waiters after preparation cancellation; late replies are ignored without leaving timeouts or releasing another task.
+    if (approvalWaiter && approvalWaiter.id === job.id) approvalWaiter.finish({ approved: false });
+    if (checkpointWaiter && checkpointWaiter.id === job.id) checkpointWaiter.finish({ ok: false });
     clearTimeout(ticker);
     watch?.stop();
     busy = false;

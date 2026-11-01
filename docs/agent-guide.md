@@ -238,6 +238,8 @@ An invisible or minimized Figma window can throttle timers and host calls heavil
 
 - Growing `changes` indicates progress. Keep waiting. If a call remains stuck, `cancel <job-id>` requests cancellation and waits for its result.
 
+- Cancellation before script execution gives `executionStarted: false`. Cancellation during execution follows the normal failure/cleanup path and points the trace at the pending call when available.
+
 - Cancellation cannot terminate an already suspended JavaScript continuation. Future accesses through the `figma` proxy throw, but direct writes through node objects already obtained can still occur if the pending call returns. Closing and reopening the plugin is required to terminate that continuation. Do not kill Figma or trigger global Undo as a generic recovery step.
 
 Progress timers and failure cleanup can themselves be throttled. The held-heartbeat cancellation channel does not depend on the panel's timer, but a synchronous loop must yield before the plugin can handle anything.
@@ -451,10 +453,6 @@ The flag is an assertion that the previous plugin has actually stopped. The insp
 - Store plugin data with namespaced `setSharedPluginData`, which works with the generated development manifest.
 
 Keep `.figma-agent-control/` out of version control. It includes credentials and design evidence. Deliver only the required result artifacts, retain unreviewed evidence, and stop bridges you started when their work is complete.
-
-## Cancellation boundary
-
-An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
 
 ## Frame dump filenames
 

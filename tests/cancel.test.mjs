@@ -25,6 +25,43 @@ const hang = figma => {
   return gate;
 };
 
+test('Cancellation ends preparation immediately; late target, render, or asset reads cannot permit writes, and a new task can run', async () => {
+  for (const stage of ['target', 'render', 'assets']) {
+    const f = plugin(), entered = Promise.withResolvers(), gate = Promise.withResolvers();
+    const owner = stage === 'target' ? f.figma : stage === 'render' ? f.doc.frame : f.figma.variables;
+    const key = stage === 'target' ? 'getNodeByIdAsync' : stage === 'render' ? 'exportAsync' : 'getLocalVariableCollectionsAsync';
+    const original = owner[key];
+    owner[key] = (...args) => { entered.resolve(); return gate.promise.then(() => original(...args)); };
+    const job = f.start({ code: 'target.name = "\u4e0d\u5e94\u5199\u5165";', ...(stage === 'render' ? { expect: 'changed' } : {}) });
+    await entered.promise;
+    await f.figma.ui.onmessage({ type: 'cancel', id: job.id, channelNonce: job.channelNonce });
+    const r = await job.done;
+    assert.deepEqual([r.ok, r.executionStarted, f.doc.frame.name, f.events.includes('undo')], [false, false, '\u753b\u677f', false], stage);
+    assert.match(r.error, /Cancelled before execution/);
+    gate.resolve(); owner[key] = original;
+    await delay(5);
+    assert.equal(f.doc.frame.name, '\u753b\u677f', 'Late preparation cannot resume a canceled task');
+    assert.equal((await f.send({ code: 'target.name = "\u65b0\u4efb\u52a1";' })).ok, true);
+    assert.equal(f.doc.frame.name, '\u65b0\u4efb\u52a1');
+  }
+});
+
+test('Cancellation while awaiting approval or checkpointing ignores late approval without Undo or document writes', async () => {
+  for (const approval of [true, false]) {
+    const f = plugin(approval ? { approval: 'wait' } : { checkpoint: 'wait' });
+    const job = f.start({ code: 'target.name = "\u4e0d\u5e94\u5199\u5165";', ...(approval ? { risk: { level: 'high', reason: 'test' } } : {}) });
+    await delay(5);
+    assert.equal((approval ? f.approvals : f.checkpoints).length, 1);
+    await f.figma.ui.onmessage({ type: 'cancel', id: job.id, channelNonce: job.channelNonce });
+    const r = await job.done;
+    assert.deepEqual([r.ok, r.executionStarted], [false, false]);
+    await f.figma.ui.onmessage({ type: approval ? 'approval-ack' : 'checkpoint-ack', id: job.id, channelNonce: job.channelNonce, approved: true, ok: true });
+    await delay(5);
+    assert.equal(f.doc.frame.name, '\u753b\u677f');
+    assert.equal(f.events.includes('undo'), false);
+  }
+});
+
 test('cancel requires the same task channelNonce; a hung Figma call fails immediately with caller stack and created assets, and subsequent Figma access throws', async () => {
   const f = plugin({ checkpoint: true }), gate = hang(f.figma), made = [], { variables } = f.figma;
   f.figma.variables = { ...variables, createVariable: name => { const v = { id: `VariableID:9:${made.length}`, name }; made.push(v); return v; },

@@ -109,6 +109,8 @@ CLI 在提交前把裸名 `--lib motion` 解析为内置文件。桥接和插件
 
 7. 设置了 `expect` 时导出修改前图片。需要清理时，收集目标页已有节点 ID。目标不是页面时，记录页面根的直接子节点。
 
+8. 记录已有本地集合、变量与样式。在准备阶段最后一次 `await` 之后，再次核验文件、目标、范围、页面和快照。从该复核到调用脚本之间不让出控制。
+
 9. 提交 Undo 边界，监听目标页节点变化，进入脚本阶段，设置 `executionStarted:true`，求值库与正文，再提交结束 Undo 边界。边界失败会报错，不自动撤销。脚本失败时记录新建节点；若结束边界成功，可按选项清理这些节点。
 
 10. 获取修改后快照，以及请求的修改后图片。成功且目标不是页面的 run 还会比较页面根子节点。修改后快照过大会使变更集不可用；修改后导出失败会使画面核验不可用，两者都不改变脚本自身的结果。
@@ -284,6 +286,8 @@ pass = expect === "changed" ? changed : !changed
 
 阶段为 `prepare`、`approval`、`script` 和 `finish`。只有 script 阶段带目标页本地改动次数与未返回调用。`waiting` 最多列出最早的三个 `{call,forMs}`，最早的一项还带最多 1,000 字符的 stack。iframe 立即把进度放进 URL 编码的心跳参数。桥接把 stack 映射为 `at`，移除原始 stack，追加 `reportedAt` 和可选的 `hidden:true`，保存内存状态，并按每个序号写一次 `progress.json`。无效进度会忽略。Status 另加 `ageMs`。
 
+`POST /cancel {id}` 只接受当前在途 run。交付前取消会记录未执行结果；交付后取消会唤醒挂起的心跳，并持续返回 `cancel:true`，由 iframe 转发匹配的任务 ID 与 nonce。准备或确认期间取消，以 `executionStarted:false` 结束等待；迟到读取或回执不能恢复执行。脚本期间取消会把执行 race 结束为失败，以最早未返回调用作为错误上下文，并照常走失败取证和清理。
+
 独立的 `/heartbeat?hold=1` 通道挂起到取消、完成或约十秒后，再用 `X-Long-Poll` 立即续接，避开面板计时器节流。插件自身的进度与失败清理计时器仍可能被节流。
 
 取消无法终止已经挂起的 JavaScript 后续执行，也无法终止已经发出的宿主调用。之后经代理的访问会抛错，但通过此前已取得节点进行的直接写入无法阻止。结果会以警告说明该限制。要终止后续执行，应停止并重新运行插件。读取任务不能取消；同步工作必须先让出控制，取消才有机会被处理。
@@ -317,6 +321,8 @@ pass = expect === "changed" ? changed : !changed
 ## 插件消息
 
 iframe 与执行代码使用 postMessage。每个任务都有随机 `channelNonce`；ID 或 nonce 不匹配的消息会忽略。
+
+消息包括 `hello`/`file`、`approval-request`/`approval-ack`、`checkpoint`/`checkpoint-ack`、`progress`、`cancel`、`check-target`/`target-info`、`focus-target`、`resize` 和 `hide-ui`。iframe 在轮询或心跳前先取得文件 key。目标定位会切换页面、选中目标并滚动到可见位置；执行任务期间禁用。
 
 包括快照和 base64 在内，超过 65,536 个 JavaScript 字符串字符的任务消息使用 `serialized-result` 封装。结构化部分超过约 16 MB、桥接返回 `413`，或同一完成回传累计收到三次 `400` 时，iframe 改用精简失败证据。其他失败不重置拒收计数，`409 FOREIGN_JOB` 永不触发降级。精简结果保留执行状态、核验后的绑定、脚本失败清理列表、新建资源、警告和 stack。
 
@@ -651,14 +657,6 @@ HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内
 HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SANDBOX_BLOCKED` 表示 localhost 访问被拒绝，`BRIDGE_DOWN` 表示会话端口无响应，`BRIDGE_TIMEOUT` 表示请求超时，`NO_SESSION` 表示缺少会话文件。
 
 `report --since` 接受 ISO 日期/时间；带时间时必须提供 `Z` 或时区偏移，只有日期则按 UTC 零点处理。`jobs.failed` 统计 `ok:false`；`jobs.verifyFailed` 统计执行成功但画面核验失败/不可用的任务，两者互斥。
-
-## 准备阶段顺序
-
-当前目标复核发生在前图导出及后续准备读取之前。准备期间保持目标不变。
-
-## 取消边界
-
-未交付的 run 可记为未执行。交付后在脚本执行阶段请求取消。准备、确认和写前日志等待使用各自的超时，随后检查返回的执行状态。
 
 ## 动效回滚值
 
