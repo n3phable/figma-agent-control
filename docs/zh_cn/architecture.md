@@ -93,6 +93,8 @@ html.check -> match / attrib / shift / layout / structure / suggest / zoom
 | [png](../../src/png.mjs)、[image-diff](../../src/image-diff.mjs)、[frames](../../src/frames.mjs) | 主机分析独立于文档执行，导出证据可离线检查 |
 | [report](../../src/report.mjs) | 只聚合完成证据，不改会话或任务状态 |
 
+桥接内存状态各有明确用途：`active` 是唯一在途槽，`unresolved` 记录未知写入，`jobs` 保存本次/恢复任务，交付、完成、checkpoint、approval 各自保存进行中的写盘 Promise。重复请求共享同一持久化操作；快照和确认决定不可更改。关闭时先等写盘完成，再分类未完成任务。
+
 ### 插件与库
 
 Figma 只加载一份 main 脚本。源码按职责分为执行端 [main.js](../../plugin/main.js) 和只读提取 [extract.js](../../plugin/extract.js)，安装时拼接，共享经典脚本全局作用域。extract 契约参与类型检查。

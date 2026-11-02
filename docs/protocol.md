@@ -312,6 +312,8 @@ Every request supplies `X-Session-Token`. Plugin routes additionally require `X-
 
 `pluginIssues` records a last-seen timestamp independently per connection cause. When disconnected, doctor reports causes seen within two minutes in this order: `FOREIGN_JOB`, `PAIRING_MISMATCH`, `NO_FILE_KEY`, `WRONG_FILE`. Only the first is an error with an action; the rest are warnings. Foreign results take priority because restarting the plugin could discard them. Pairing diagnostics require a version header to avoid noise from simple requests or scans.
 
+Request bodies are capped at 72 MiB for `/complete` and 16 MiB elsewhere. Shutdown waits for in-progress evidence writes before classifying active work. Only an explicit `executionStarted:false` permits a resubmit instruction; all other completed outcomes direct the caller to read the result.
+
 ## Plugin messages
 
 The iframe and execution code use postMessage. Each job has a random `channelNonce`; mismatched IDs or nonces are ignored.

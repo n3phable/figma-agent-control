@@ -69,11 +69,14 @@ export async function stop(cwd, force = false) {
   for (let i = 0; i < 100 && !released; i++) {
     try { await fs.access(lockFile); await delay(50); } catch (error) { if (error.code !== 'ENOENT') throw error; released = true; }
   }
+  const result = released && data.active && await exists(path.join(root(cwd), 'runs', data.active, 'result.json'))
+    ? await json(path.join(root(cwd), 'runs', data.active, 'result.json')) : null;
   return { bridge: released ? 'stopped' : 'stopping', pid: data.pid, sessionId: session.sessionId, activeJob: data.active, unresolved: data.unresolved,
     document: 'not modified: stop sends no operation to Figma', cloudSync: 'not affected: sync is handled by Figma itself and this tool cannot verify it',
     plugin: 'a plugin panel that is still open shows that it is reconnecting; it reattaches automatically after connect, no reopen needed',
     ...(data.active ? { recovery: !released ? `Job ${data.active} is still finishing; check it later with figma-agent-control wait ${data.active}`
-      : await exists(path.join(root(cwd), 'runs', data.active, 'result.json')) ? `Job ${data.active} was not yet delivered to the plugin and is recorded as not executed; it can be resubmitted`
+      : result?.executionStarted === false ? `Job ${data.active} is explicitly recorded as not executed and may be resubmitted`
+      : result ? `Job ${data.active} has saved its execution result; read it with figma-agent-control result ${data.active}; do not replay the script`
       : `Recovery instruction written for running job ${data.active}: ${(await json(path.join(root(cwd), 'runs', data.active, 'recovery.json')).catch(() => null))?.instruction ?? 'after reconnecting, inspect first; do not replay the script'}` } : {}),
     ...(released ? {} : { note: 'The bridge is still shutting down; run figma-agent-control status later to confirm' }), exitCode: released ? 0 : 2 };
 }
