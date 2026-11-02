@@ -361,6 +361,8 @@ While a result is awaiting delivery, the iframe sends `/complete` rather than he
 
 Apply is declarative: supplied `tracks` or `styles` fully reconcile that field for the listed node, deleting extras and changing only differences. Omitted fields/nodes remain untouched. Changed timeline durations are written. Unchanged input causes no writes, including read-only inherited or component entries.
 
+All nodes, paths, values, easing, references, and presets are parsed before writing. Components/variant sets themselves and instance sublayers are rejected when a change is requested; component children and instances themselves can be writable. Every applied step records an inverse operation. On Figma rejection, the library attempts reverse-order rollback and reports how much was restored. Raw API values preserve variable IDs and numeric precision; reapplying a preset during rollback can give it a new ID. Read the failure rather than assuming a general transaction guarantee.
+
 Video export finds the enclosing top-level frame. It retries `Video export failed`; with `differentFrom`, byte-identical exports also retry. The wait is bounded, and other errors fail immediately. Since video export can lag behind document edits, use `differentFrom` for visible changes and inspect the sampled frames. Omit it for edits intended to preserve appearance.
 
 Issues have `{rule,timeline,node?,message}` and do not modify data:
@@ -651,10 +653,6 @@ HTML and html-check stdout summaries fit within 16 KiB of formatted UTF-8 JSON. 
 HTML-specific codes and frames output are defined above. Network errors remain distinct: `SANDBOX_BLOCKED` is denied localhost access, `BRIDGE_DOWN` is an unresponsive session port, `BRIDGE_TIMEOUT` is a request timeout, and `NO_SESSION` is a missing session file.
 
 `report --since` accepts ISO dates/times; a time requires `Z` or an offset, and a date alone is UTC midnight. `jobs.failed` counts `ok:false`; `jobs.verifyFailed` counts successful executions with failed/unavailable visual checks. They are mutually exclusive.
-
-## Motion rollback values
-
-Rollback reconstructs writes from the prior parsed spec. Inspect variable identities and numeric values after an error.
 
 ## Frame dump filenames
 

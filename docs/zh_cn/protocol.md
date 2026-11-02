@@ -367,6 +367,8 @@ iframe 与执行代码使用 postMessage。每个任务都有随机 `channelNonc
 
 Apply 是声明式写入：列出的节点只要提供 `tracks` 或 `styles`，就完整同步对应字段，删除多余项，只写实际差异。省略的字段和节点不动。变化的时间线时长会写入。输入未变时不写入，包括只读的继承项和组件项。
 
+写入前解析全部节点、路径、值、缓动、引用和预设。要求修改组件/变体集本身或实例内部图层时会被拒绝；组件子图层和实例本身可能可写。每个已执行步骤记录逆操作。Figma 拒绝后，库尝试按逆序回滚，并报告恢复了多少。原始 API 值保留变量 ID 和数值精度；回滚时重新应用预设可能产生新的 ID。应读取失败详情，不能假定存在通用事务保证。
+
 视频导出先找到所属顶层画框。遇到 `Video export failed` 时重试；提供 `differentFrom` 时，逐字节相同的导出也会重试。等待有上限，其他错误立即失败。视频导出可能滞后于文档修改：可见改动使用 `differentFrom` 并检查采样帧；应保持画面的改动省略该选项。
 
 问题形状为 `{rule,timeline,node?,message}`，检查不会修改数据：
@@ -657,10 +659,6 @@ HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内
 HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SANDBOX_BLOCKED` 表示 localhost 访问被拒绝，`BRIDGE_DOWN` 表示会话端口无响应，`BRIDGE_TIMEOUT` 表示请求超时，`NO_SESSION` 表示缺少会话文件。
 
 `report --since` 接受 ISO 日期/时间；带时间时必须提供 `Z` 或时区偏移，只有日期则按 UTC 零点处理。`jobs.failed` 统计 `ok:false`；`jobs.verifyFailed` 统计执行成功但画面核验失败/不可用的任务，两者互斥。
-
-## 动效回滚值
-
-回滚从先前解析的 spec 重建写入。报错后应检查变量身份与数值。
 
 ## 取帧文件名
 

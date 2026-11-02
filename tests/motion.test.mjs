@@ -167,6 +167,25 @@ test('A rejected applyMotion write rolls back earlier writes in reverse order, r
   assert.ok(trace.some(frame => frame.file === 'demo.js' && frame.line === 1), JSON.stringify(trace));
 });
 
+test('Partial-spec rollback restores original variable IDs, track values, and preset parameters without resolving same-name references again', async () => {
+  const f = motionPlugin(), { swatch, frame } = f.doc;
+  swatch.manualKeyframeTracks = { OPACITY: binding(FLOAT(0.123456789), [[0, FLOAT(0.987654321)], [0.123456789, FLOAT(1), ALIAS('VariableID:lib')]]) };
+  swatch.animationStyles = [preset('alias-style', 'Opacity', 0.123456789, 0.345678912, { easing: ALIAS('VariableID:lib'), amount: 0.123456789 })];
+  const beforeTrack = structuredClone(swatch.manualKeyframeTracks.OPACITY), beforeStyle = structuredClone(swatch.animationStyles[0]);
+  frame.applyManualKeyframeTrack = () => { throw Error('\u62d2\u7edd\u4e0b\u4e00\u8282\u70b9'); };
+  const r = await f.run('return applyMotion(data)', {
+    refs: { '$motion/standard': 'VariableID:9:1', '$motion/standard#VariableID:lib': 'VariableID:lib' },
+    timelines: [{ id: frame.id, nodes: [{ id: swatch.id, tracks: {}, styles: [] }, { id: frame.id, tracks: { OPACITY: { keys: [[0, 0], [1, 1]] } } }] }]
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /rolled back 2 earlier change\(s\)/);
+  assert.deepEqual(JSON.parse(JSON.stringify(swatch.manualKeyframeTracks.OPACITY)), beforeTrack);
+  const { id: oldId, ...oldStyle } = beforeStyle, { id: newId, ...restoredStyle } = JSON.parse(JSON.stringify(swatch.animationStyles[0]));
+  // Figma assigns new instance IDs to reapplied presets; preserve preset configuration and variable identity exactly.
+  delete oldStyle.styleId; delete restoredStyle.styleId;
+  assert.deepEqual(restoredStyle, oldStyle);
+});
+
 // ── exportMotion ─────────────────────────────────────────────────────────
 test('exportMotion finds the top-level frame from a child and retries only Video export failed or unchanged differentFrom exports, with immediate other errors and a timeout explanation', async () => {
   const f = motionPlugin(), seen = [];
