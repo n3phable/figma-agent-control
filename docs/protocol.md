@@ -53,6 +53,8 @@ The shared directory is `~/.config/figma-agent-control/`, overridden by `FIGMA_A
 
 The bridge generates plugin contents; `connect` installs only changed files. A fixed candidate port range and shared pairing credential make the generated files identical across projects at the same version. Bindings and project names arrive in authenticated response headers instead of being embedded in the plugin.
 
+The iframe probes each candidate port using `/heartbeat?probe=1` without a held job. Probes read identity without taking a lease. When idle, it selects a matching file key, preferring the lowest port; if none match, it uses the first responding bridge to show a diagnostic. With no bridge it retries discovery before requests. When connected to a different file it rediscovers periodically. While holding a job or result, it matches the job's binding ID and waits for the original project rather than surrendering that result. `FOREIGN_JOB` or port reassignment triggers rediscovery.
+
 Because the manifest has no Figma-assigned ID, private `setPluginData` is unavailable. Namespaced `setSharedPluginData` does not depend on that ID.
 
 ## Jobs
@@ -309,6 +311,10 @@ Cancellation cannot kill the suspended JavaScript continuation or a host call al
 | `POST /complete` | Plugin | Idempotent completion, first result wins; does not require the current lease |
 
 Every request supplies `X-Session-Token`. Plugin routes additionally require `X-Plugin-Version`. CLI and plugin credentials are separate and role-specific. Plugin mismatch gives `403 PAIRING_MISMATCH` without echoing credentials; CLI mismatch gives `403`. A version mismatch gives `409 PLUGIN_OUTDATED`.
+
+Formal plugin requests include `client`, `visibility`, and current-file `file`. Execution heartbeats also include `job` and optional `progress`. A wrong/missing file gets no work and no lease renewal. An unknown held job gets `409 FOREIGN_JOB` and no renewal. Probe requests do not claim or renew a lease. Lease lifetimes are 15 seconds when active and 90 seconds in the background. An in-flight run prevents replacement of its plugin instance; reads may be abandoned and replaced after lease expiry.
+
+Every response carries `X-Figma-Session`. Authenticated plugin responses also carry `X-Figma-Binding` with binding ID, file key, node ID, and project directory name. Header JSON escapes non-ASCII characters as `\uXXXX`; the iframe restores them with JSON parsing. CORS exposes these headers and `X-Long-Poll`. A session change prompts a fresh file check.
 
 `pluginIssues` records a last-seen timestamp independently per connection cause. When disconnected, doctor reports causes seen within two minutes in this order: `FOREIGN_JOB`, `PAIRING_MISMATCH`, `NO_FILE_KEY`, `WRONG_FILE`. Only the first is an error with an action; the rest are warnings. Foreign results take priority because restarting the plugin could discard them. Pairing diagnostics require a version header to avoid noise from simple requests or scans.
 
@@ -659,11 +665,3 @@ HTML-specific codes and frames output are defined above. Network errors remain d
 ## Frame dump filenames
 
 --dump writes original-size PNGs using rounded sample times such as 0.300s.png. Distinct times rounding to the same millisecond can collide; avoid such pairs in one invocation.
-
-## Discovery probes
-
-Discovery checks bridge identity using heartbeat requests. These requests still follow the normal lease path; recheck connection state after discovery.
-
-## Pending results and port changes
-
-Discovery selects a bridge by the current file. Keep the original project available while a result is pending.

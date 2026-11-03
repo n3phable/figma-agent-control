@@ -51,6 +51,8 @@ The iframe matches each task message against its ID and random nonce before acce
 
 - `~/.config/figma-agent-control/`, or `FIGMA_AGENT_CONTROL_HOME`: shared pairing credential and generated development-plugin files.
 
+A shared plugin avoids duplicate same-named installations. Its configuration contains only candidate ports, credential, and version; each authenticated bridge supplies binding identity in a response header. Idle plugins choose a bridge for their current file. A plugin holding a result searches for that result's original binding, even if its port changed.
+
 `connect` is the assembly point: obtain pairing, start bridge, install generated contents. The bridge itself returns those contents rather than writing global plugin files. Installation only changes different files to avoid needless Figma hot reload. Failure during installation closes the bridge.
 
 ## Module structure

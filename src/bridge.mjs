@@ -106,7 +106,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   const pluginIssues = /** @type {Record<string, string>} */ ({}), noteIssue = (/** @type {string} */ code) => { pluginIssues[code] = new Date().toISOString(); };
   // Response headers tell the global plugin which project and binding this bridge serves; bindings no longer live in generated plugin files.
   // Headers must be ASCII: project directory names may contain non-ASCII characters, encoded as JSON \uXXXX escapes and restored by plugin JSON.parse.
-  const bindingHeader = JSON.stringify({ fileKey: binding.fileKey, nodeId: binding.nodeId, project: path.basename(path.resolve(cwd)) })
+  const bindingHeader = JSON.stringify({ id: binding.id, fileKey: binding.fileKey, nodeId: binding.nodeId, project: path.basename(path.resolve(cwd)) })
     .replace(/[^\x20-\x7e]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
   const jobs = /** @type {Map<string, Job>} */ (new Map()), unresolved = /** @type {Set<string>} */ (new Set());
   const completing = new Map(), checkpoints = new Map(), approvals = new Map(), deliveries = new Map(), waiters = new Set();
@@ -303,6 +303,8 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       if (req.method === 'GET' && u.pathname === '/status') return reply(200, { sessionId, pid: process.pid, connected: connection.connected, connectionState: connection.state, pollAgeMs: connection.ageMs,
         active, ...progressOf(active), unresolved: [...unresolved], binding, pluginVersion: version, pluginIssues, jobs: [...jobs.values()].slice(-20).map(j => ({ id: j.id, operation: j.operation, state: j.state, ...(j.label ? { label: j.label } : {}) })) });
       if (req.method === 'GET' && ['/poll', '/heartbeat'].includes(u.pathname)) {
+        // Port discovery does not authorize task claims: do not renew leases or take over active read-only work.
+        if (u.pathname === '/heartbeat' && u.searchParams.get('probe') === '1') return reply(200, null);
         // Only instances in the bound file without foreign tasks acquire the connection. Others receive binding headers for panel guidance but cannot claim tasks or renew leases.
         const file = u.searchParams.get('file');
         if (file !== binding.fileKey) { noteIssue(file ? 'WRONG_FILE' : 'NO_FILE_KEY'); return reply(200, null); }

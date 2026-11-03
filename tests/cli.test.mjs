@@ -507,15 +507,15 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
       assert.equal(h.element('state').textContent, 'Waiting for original project');
       assert.match(h.element('state-detail').textContent, new RegExp(path.basename(h.cwd)));
       const status = async () => (await cli(other, 'status')).json;
-      assert.deepEqual([(await status()).connected, Object.keys((await status()).pluginIssues)], [false, ['FOREIGN_JOB']], 'An instance holding another project job does not renew the lease for B');
+      assert.equal((await status()).connected, false, 'Port probes and instances running another project\'s task do not renew B\'s lease');
       assert.equal((await cli(other, 'inspect', '--no-wait')).json.code, 'RECONNECTING');
 
-      // Drive retries until B receives five completions, exceeding the three-rejection fallback threshold; every attempt must retain the original result.
+      // While the original project is offline, keep probing without repeatedly posting its result to same-file B.
       finish.resolve(); await h.settle();
       const completes = () => h.requests.filter(r => r.path === '/complete').map(r => r.body);
-      while (completes().length < 5) { await h.tick(); await delay(5); }
+      for (let i = 0; i < 5; i++) { await h.tick(); await delay(5); }
       await h.pause(); h.resume(); await delay(20);
-      assert.deepEqual(completes().map(body => [body.id, body.ok, body.output]), Array(5).fill([id, true, '\u539f\u6587+']), 'Repeated rejection by B preserves the original result without degrading it to failure');
+      assert.deepEqual(completes(), [], 'Wait by bindingId for the original project without sending its pending result to B');
       assert.equal(h.element('state').textContent, 'Waiting for original project');
       assert.deepEqual(await runIds(other), [], 'B does not persist another project\'s result');
     } finally { await b.close(); }

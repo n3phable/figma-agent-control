@@ -36,6 +36,8 @@ Start work when `connected` is `true`. The current working directory is the proj
 
 - One bridge executes one job at a time. Multiple agents should retrieve data sequentially, then analyze it independently offline.
 
+- A single plugin installation serves all projects. Bridges choose ports `32523`–`32530`; the plugin selects a bridge for its current file, or the original binding when it holds a pending result. Remove obsolete duplicate development-plugin installations if pairing fails.
+
 - Long polling continues while the panel is hidden. Reconnecting after a bridge restart may wait for a throttled timer. Figma can also throttle an invisible window or background file; see [stalled jobs](#stalled-jobs).
 
 - Plugin-file changes can trigger Figma's development-plugin reload. If the panel reports an outdated plugin, rerun it. Its footer version should match `status.pluginVersion`.
@@ -457,7 +459,3 @@ Keep `.figma-agent-control/` out of version control. It includes credentials and
 ## Frame dump filenames
 
 --dump writes original-size PNGs using rounded sample times such as 0.300s.png. Distinct times rounding to the same millisecond can collide; avoid such pairs in one invocation.
-
-## Pending results and port changes
-
-Discovery selects a bridge by the current file. Keep the original project available while a result is pending.

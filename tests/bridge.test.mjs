@@ -390,7 +390,7 @@ test('Mismatched plugin credentials return PAIRING_MISMATCH and update status; m
   const accepted = await b.poll();
   // In Figma the plugin can read only CORS-exposed headers; omitting these would incorrectly report a file mismatch on every check.
   assert.deepEqual(accepted.headers.get('Access-Control-Expose-Headers').split(','), ['X-Figma-Session', 'X-Figma-Binding', 'X-Long-Poll']);
-  assert.deepEqual(JSON.parse(accepted.headers.get('X-Figma-Binding')), { fileKey: 'example', nodeId: '1:2', project: path.basename(b.cwd) });
+  assert.deepEqual(JSON.parse(accepted.headers.get('X-Figma-Binding')), { id: (await b.status()).binding.id, fileKey: 'example', nodeId: '1:2', project: path.basename(b.cwd) });
   assert.equal((await b.cli('/status')).headers.get('X-Figma-Binding'), null);
 });
 
@@ -447,6 +447,22 @@ test('A heartbeat for another project returns 409 FOREIGN_JOB without lease rene
   await b.restart();
   assert.equal((await b.plugin(`/heartbeat?client=plugin&file=example&job=${job.id}`)).status, 200, 'Recovered tasks still belong to this project');
   assert.equal((await b.plugin('/complete', { id: job.id, ok: true, output: 1 })).status, 200);
+});
+
+test('Port probes return binding identity without creating a lease, enabling submission, or taking over an in-flight read task', OPTIONS, async t => {
+  const b = await fixture(t), probe = () => b.plugin('/heartbeat?client=scanner&file=example&probe=1');
+  const found = await probe();
+  assert.equal(JSON.parse(found.headers.get('X-Figma-Binding')).id, (await b.status()).binding.id);
+  assert.equal((await b.status()).connected, false);
+  assert.equal((await b.cli('/job', RUN)).body.code, 'RECONNECTING');
+  await b.poll();
+  const job = await b.deliver({ operation: 'inspect' });
+  b.clock = 16000;
+  await probe();
+  assert.deepEqual([(await b.status()).active, (await b.status()).connected], [job.id, false]);
+  assert.equal(await exists(path.join(b.run(job.id), 'result.json')), false, 'Scanning must not mark the original task ABANDONED');
+  await b.poll();
+  assert.equal((await b.plugin('/complete', { id: job.id, ok: true, output: {} })).status, 200);
 });
 
 test('Non-ASCII project names with CJK, accents, and emoji work; binding headers stay ASCII and round-trip exactly', OPTIONS, async t => {
