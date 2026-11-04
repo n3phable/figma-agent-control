@@ -206,7 +206,3 @@ The [extract contract](../src/html/extract-contract.d.ts) distinguishes plugin b
 ## Shadow mapping
 
 Shadow outlines account for painted fills and outside/center strokes. Spread follows the observed rectangle/ellipse/filled-clipping-frame rules; overflowing content can require a content-shaped shadow and an explicit approximation finding.
-
-## Child paint order
-
-Generation follows extracted child order. Compare reversed Auto Layout stacking with the reference image.

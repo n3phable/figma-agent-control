@@ -167,6 +167,7 @@ Exceeding a limit fails without partial output. The structured estimate counts n
 |---|---|
 | `schema`, `islandRule` | Schema `1`; automatic-island rule version `2` |
 | `root` | Tree with `id`, `name`, `type`, target-space transform `[[a,c,tx],[b,d,ty]]`, dimensions, and clipped target-space `renderBounds` or null. Root transform is identity. Other properties omit defaults; text styles are in `segments` |
+| `root.children` (and descendant children) | Visible children in original order; horizontal/vertical Auto Layout can reverse paint order with `itemReverseZIndex` |
 | `colorProfile`, `scale` | Document color profile and extraction scale |
 | `reference` | PNG of the node's own box via `useAbsoluteBounds`, scaled, preferably sRGB; fallback to document color adds a warning |
 | `images` | Image-hash-deduplicated `{bytes, width, height}` entries; missing bytes produce warnings |
@@ -469,6 +470,8 @@ Issues have `{rule,level,node?,message}`:
 2. Process `--from` frames first, then `--node`, preserving order within each group. A frame error normally affects only that frame.
 
 3. Read an existing extract without waiting, or submit and wait for a new extract. New extracts include requested SVG-bake islands. Each occupies the bridge's single job slot.
+
+4. Assemble the page. Paint order respects Auto Layout `itemReverseZIndex`; root opacity applies to the whole canvas and is not multiplied twice into reference crops.
 
 5. If generated output needs missing SVG islands, a `--node` frame may get one second extract with those IDs and valid explicit SVG bakes. A `--from` frame is marked `needsExtract` instead. If the second extract fails, times out, exceeds limits, or still misses islands, preserve the first extraction/page basis and record `second-extract-failed` approximations and warnings.
 

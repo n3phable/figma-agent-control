@@ -25,8 +25,8 @@ import { hash, writeAtomic } from '../project.mjs';
 
 // Fail above 2% full-frame differing pixels, matching ui2html acceptance with pixelmatch threshold 0.1 and antialiasing excluded.
 export const LIMIT = 0.02;
-// Checker fingerprint: comparison, decoding, rendering, diagnostic modules, and this module's source; persisted in check.json for verification records.
-export const CHECKER = hash(['check.mjs', 'match.mjs', 'attrib.mjs', 'shift.mjs', 'layout.mjs', 'structure.mjs', 'suggest.mjs', 'zoom.mjs', 'chrome.mjs', '../png.mjs'].map(file => fs.readFileSync(new URL(file, import.meta.url))).join('\n')).slice(0, 12);
+// Hash matching, decoding, rendering, diagnostics and shared paint-rule source into CHECKER for check.json and verification records.
+export const CHECKER = hash(['check.mjs', 'match.mjs', 'attrib.mjs', 'css.mjs', 'shift.mjs', 'layout.mjs', 'structure.mjs', 'suggest.mjs', 'zoom.mjs', 'chrome.mjs', '../png.mjs'].map(file => fs.readFileSync(new URL(file, import.meta.url))).join('\n')).slice(0, 12);
 // Write crop evidence for the first BLOCK_IMAGES structural blocks.
 export const BLOCK_IMAGES = 10;
 export { raster };

@@ -1,7 +1,9 @@
 /**
- * [INPUT]: Inputs and types declared below; no runtime package dependencies.
- * [OUTPUT]: Exports num, px, esc, cssStr, color, place, painted, linearGradient, svgLinearGradient, paintLayer, radius, stroke, effects, backdrop, blend, lineHeight, baselineShift, postScriptGuess, segmentStyle, textBox, maskImage, VECTORS, FRAMES, vectorSvg, fillAlpha, bakeReason, paintsBackground.
- * [POS]: Pure conversion of Figma drawing properties into CSS and SVG fragments.
+ * [INPUT]: No runtime dependencies; types use ./extract-contract.js ExtractNode/TextSegment, deriving Paint/Effect from node fields.
+ * [OUTPUT]: VECTORS, FRAMES and pure functions paintOrder, painted, num, px, esc, cssStr, color, place, linearGradient, svgLinearGradient, paintLayer, radius, stroke, effects, backdrop, blend,
+ *           lineHeight, baselineShift, postScriptGuess, segmentStyle, textBox, maskImage, vectorSvg, fillAlpha, bakeReason, paintsBackground; Style/Matrix/Paint/FontMetrics types.
+ * [POS]: Maps individual Figma values to CSS/SVG fragments for generate, including initial bake and backdrop-dependency decisions.
+ *        No files, time or mutable state: equal input yields byte-identical output. attrib/structure share VECTORS and shift shares num/place, keeping diagnostics aligned with generation.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 /** @import { ExtractNode, TextSegment } from './extract-contract.js' */
@@ -47,6 +49,11 @@ const shown = list => Array.isArray(list) ? list.filter(p => p?.visible !== fals
 export const painted = list => shown(list).filter(p => (p.opacity ?? 1) > 0);
 // Blend modes that do not alter blending; omission defaults to PASS_THROUGH.
 const PLAIN = new Set([undefined, 'PASS_THROUGH', 'NORMAL']);
+
+// children retains layout order. Reverse stacking changes paint order only, shared by generation/attribution without mutating extraction.
+/** @param {ExtractNode} node */
+export const paintOrder = node => node.itemReverseZIndex && ['HORIZONTAL', 'VERTICAL'].includes(node.layoutMode ?? '')
+  ? [...node.children ?? []].reverse() : node.children ?? [];
 
 // -- Gradients ----------------------------------------------------------
 // gradientTransform's first row (a, b, c) gives t = a*u + b*v + c at normalized coordinates; pixel-space gradient is (a/w, b/h).

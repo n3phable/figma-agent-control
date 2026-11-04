@@ -235,6 +235,23 @@ describe('Rendering and checking (requires Chrome)', () => {
     assert.equal(px(190, 5)[3], 0, 'Transparent background');
   });
 
+  test('Generated pixels place the first auto-layout child on top under reverse stacking and apply root-frame opacity to the whole frame', needs, async () => {
+    const rect = (id, color) => ({ id, name: id, type: 'RECTANGLE', width: 32, height: 32, transform: [[1, 0, 0], [0, 1, 0]], renderBounds: [0, 0, 32, 32], fills: [{ type: 'SOLID', color }] });
+    const root = { ...rect('1:1', { r: 1, g: 1, b: 1 }), type: 'FRAME', layoutMode: 'HORIZONTAL',
+      children: [rect('1:2', { r: 1, g: 0, b: 0 }), rect('1:3', { r: 0, g: 0, b: 1 })] };
+    const output = { root, scale: 1, reference: {}, images: {}, islands: {}, svgs: {} };
+    for (const reversed of [false, true]) for (const opacity of [1, 0.5, 0]) {
+      Object.assign(root, { itemReverseZIndex: reversed, opacity });
+      const generated = run(output);
+      await tab.open(url('stack-opacity.html', generated.html), 32, 32);
+      const png = decodePng(await tab.shot()), pixel = [...png.data.subarray((16 * 32 + 16) * 4, (16 * 32 + 16) * 4 + 4)];
+      assert.ok(Math.abs(pixel[3] - opacity * 255) <= 1, JSON.stringify({ reversed, opacity, pixel }));
+      if (opacity) assert.deepEqual(pixel.slice(0, 3), reversed ? [255, 0, 0] : [0, 0, 255]);
+      assert.deepEqual(generated.violations, []);
+      assert.deepEqual(root.children.map(n => n.id), ['1:2', '1:3']);
+    }
+  });
+
   test('Moving the blue block down 6 px yields two 60x6 difference bands, attributes the new position to the node and vacated area to the frame, and writes evidence', needs, async () => {
     const { report, images } = await check(tab, { url: url('moved.html', blocks(36)), reference, expected: { width: 200, height: 120 } });
     assert.equal(report.mismatched, 720);

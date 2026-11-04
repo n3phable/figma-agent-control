@@ -27,6 +27,16 @@ const drawn = painted => {
 };
 
 describe('attrib: Figma-side attribution and ranking', () => {
+  test('Auto-layout reverse stacking matches the generator: first child on top without mutating extraction; non-auto-layout order stays unchanged', () => {
+    for (const layoutMode of ['HORIZONTAL', 'VERTICAL', 'NONE']) {
+      const output = doc([N('1:1', 0, 0, 10, 10), N('1:2', 0, 0, 10, 10)]);
+      Object.assign(output.root, { layoutMode, itemReverseZIndex: true });
+      const p = figmaPainted(output, ctx()), owner = raster(p.rects, 10, 10);
+      assert.equal(p.ids[owner[55]], layoutMode === 'NONE' ? '1:2' : '1:1');
+      assert.deepEqual(output.root.children.map(n => n.id), ['1:1', '1:2']);
+    }
+  });
+
   test('figmaPainted covers the root frame, paints parents before children and later siblings on top, and registers each node once', () => {
     const p = figmaPainted(doc([N('1:1', 0, 0, 6, 6, { children: [N('1:2', 1, 1, 2, 2)] }), N('1:3', 4, 4, 6, 6)]), ctx());
     assert.deepEqual(p.ids, ['0:1', '1:1', '1:2', '1:3']);

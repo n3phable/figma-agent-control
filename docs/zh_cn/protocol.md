@@ -167,6 +167,7 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 |---|---|
 | `schema`, `islandRule` | Schema 为 `1`；自动孤岛规则版本为 `2` |
 | `root` | 节点树，包含 `id`、`name`、`type`、目标坐标系变换 `[[a,c,tx],[b,d,ty]]`、尺寸，以及裁切后的目标坐标系 `renderBounds` 或 null。根变换为单位矩阵。其他属性省略默认值；文字样式放在 `segments` |
+| `root.children`（以及后代的 children） | 按原始顺序排列的可见子节点；水平/垂直 Auto Layout 可通过 `itemReverseZIndex` 反转绘制顺序 |
 | `colorProfile`, `scale` | 文档颜色配置与提取倍率 |
 | `reference` | 通过 `useAbsoluteBounds` 导出的节点自身盒子 PNG，应用倍率，优先使用 sRGB；回退到文档颜色配置时追加警告 |
 | `images` | 按 image hash 去重的 `{bytes, width, height}` 条目；字节取不到时追加警告 |
@@ -469,6 +470,8 @@ Apply 同步列出节点的 reactions；空数组清空，未列出的节点不�
 2. 先处理 `--from`，再处理 `--node`，各组内保持给定顺序。通常一帧出错只影响该帧。
 
 3. 不等待地读取已有 extract，或提交并等待新 extract。新提取包含要求 SVG 烘焙的孤岛，每个都占用桥接唯一的任务槽位。
+
+4. 组装页面。绘制顺序遵循 Auto Layout 的 `itemReverseZIndex`；根不透明度施加到整个画布，不会在参考图裁切上重复相乘。
 
 5. 如果生成结果缺少需要的 SVG 孤岛，`--node` 帧可带这些 ID 与有效的显式 SVG 烘焙节点再提取一次；`--from` 帧只标记 `needsExtract`。第二次提取失败、超时、超限或仍缺孤岛时，保留第一次提取作为页面依据，记录 `second-extract-failed` 近似项与警告。
 
