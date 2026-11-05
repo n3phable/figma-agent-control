@@ -396,6 +396,8 @@ Apply 是声明式写入：列出的节点只要提供 `tracks` 或 `styles`，�
 
 显式时刻会去重排序，最多 24 个，且必须在视频时长内。默认从零到结束前 0.05 秒均匀取八个时刻，每个时刻选择覆盖它的那一帧。联系表格子带时间标注，每行最多四格，对照时最多六格，总宽不超过 1,600 px。窄帧以最近邻放大到至少 160 px。对照格把源帧和对照帧上下排列，并标注变化像素。
 
+`--dump` 把原尺寸静帧写到联系表旁、与联系表同名的目录中。文件名包含采样序号与时间，避免毫秒取整后重名；对照帧添加 `-compare`。
+
 输出为 `{source,compare?,width,height,duration,sheet,frames:[{t,file?,compareFile?,changedPixels?,sameSize?}],changed?,layout?,warning?,limitation}`。只有 dump 时才给出逐帧文件路径。视频字节相同会追加警告。像素差异沿用 run 画面核验的 `diffPng` 定义。输出写入绑定项目的 `frames/`，或系统临时目录。成功退出 `0`；无效输入或解码失败退出 `1`。
 
 ## 原型
@@ -664,7 +666,3 @@ HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内
 HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SANDBOX_BLOCKED` 表示 localhost 访问被拒绝，`BRIDGE_DOWN` 表示会话端口无响应，`BRIDGE_TIMEOUT` 表示请求超时，`NO_SESSION` 表示缺少会话文件。
 
 `report --since` 接受 ISO 日期/时间；带时间时必须提供 `Z` 或时区偏移，只有日期则按 UTC 零点处理。`jobs.failed` 统计 `ok:false`；`jobs.verifyFailed` 统计执行成功但画面核验失败/不可用的任务，两者互斥。
-
-## 取帧文件名
-
---dump 使用取整后的采样时刻保存原尺寸 PNG，例如 0.300s.png。不同采样时刻舍入到同一毫秒可能重名，一次调用中应避免这种组合。

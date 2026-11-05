@@ -319,6 +319,8 @@ figma-agent-control frames <before-video-job-id> --compare <after-video-job-id> 
 
 静态 PNG 不反映关键帧，不要用 `--expect` 验收动效。导出视频并看联系表。视频导出可能落后于修改，或对新画框暂时失败；`exportMotion` 会重试 `Video export failed`，`differentFrom` 还会等待字节变化。应保持画面的修改不要设置 `differentFrom`。套餐可能限制分辨率、帧率和导出参数。
 
+`frames` 接受 MP4/WebM 文件或恰好含一段视频的成功 run ID。默认采八帧，`--at 0,0.15,0.3` 指定时刻，每次最多 24 个。`--dump` 保存带序号的原尺寸 PNG。两段视频逐字节相同时会警告，因为导出可能仍是旧状态。
+
 其他开发观察：关键帧不更新静态 `x`/`opacity`；超出时间线的动效可能被接受，但播放会截断；旋转以节点中心为轴，正值逆时针；第一帧之前使用该帧的值。COLOR 关键帧为 RGBA，不是颜色变量别名。依赖 TIMING 变量单位或 Beta 行为前，应在当前编辑器中核验。
 
 ## 原型
@@ -455,7 +457,3 @@ figma-agent-control resolve <original-job-id> --inspect <inspect-job-id> --previ
 - 插件数据使用命名空间 `setSharedPluginData`，适用于生成的开发插件 manifest。
 
 不要把 `.figma-agent-control/` 提交到版本控制，其中有凭证和设计证据。只交付需要的产物，保留尚未核验的证据，完成后停止本次启动且不再需要的桥接。
-
-## 取帧文件名
-
---dump 使用取整后的采样时刻保存原尺寸 PNG，例如 0.300s.png。不同采样时刻舍入到同一毫秒可能重名，一次调用中应避免这种组合。

@@ -319,6 +319,8 @@ Write to a top-level frame without a shallow depth when its subtree fits the sna
 
 Static PNG exports do not show keyframes, so do not use `--expect` for motion. Export video and inspect contact sheets. Video export can lag behind a change or fail for a newly created frame; `exportMotion` retries `Video export failed`, and `differentFrom` also waits for different bytes. Do not use `differentFrom` for a change intended to preserve rendering. Plan-specific limits can affect resolution, frame rate, and export settings.
 
+`frames` accepts MP4/WebM files or successful run IDs containing exactly one video. It samples eight frames by default; `--at 0,0.15,0.3` selects exact times, up to 24 per call. `--dump` saves original-resolution PNGs with numbered filenames. Identical source videos produce a warning because an export may still reflect the old state.
+
 Additional observed Motion behavior: keyframes do not update static `x`/`opacity`; animation beyond the timeline is accepted but truncated in playback; rotation uses the node center and positive values rotate counterclockwise; values before the first key equal that key's value. COLOR keyframe values are RGBA rather than color-variable aliases. Verify TIMING-variable units and Beta API details in the current editor before depending on them.
 
 ## Prototypes
@@ -455,7 +457,3 @@ The flag is an assertion that the previous plugin has actually stopped. The insp
 - Store plugin data with namespaced `setSharedPluginData`, which works with the generated development manifest.
 
 Keep `.figma-agent-control/` out of version control. It includes credentials and design evidence. Deliver only the required result artifacts, retain unreviewed evidence, and stop bridges you started when their work is complete.
-
-## Frame dump filenames
-
---dump writes original-size PNGs using rounded sample times such as 0.300s.png. Distinct times rounding to the same millisecond can collide; avoid such pairs in one invocation.

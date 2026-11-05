@@ -114,14 +114,16 @@ export async function frames(cwd, sourceValue, { atSeconds, frameCount = DEFAULT
     const sheet = path.join(dir, `${bytes.map(b => hash(b).slice(0, 12)).join('-')}-${hash(times.join(',')).slice(0, 8)}.png`);
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     await save(sheet, sheetBytes);
-    // --dump writes original-size frames into the directory named after the contact sheet. Filenames use sample times; comparison frames add -compare.
+    // --dump: sample indices prevent collisions when precise times round to the same millisecond; comparison frames add -compare.
     const dumped = dump ? sheet.slice(0, -'.png'.length) : null;
+    /** @param {number} i */
+    const frameFile = (i, compare = false) => `${String(i + 1).padStart(2, '0')}-${times[i].toFixed(3)}s${compare ? '-compare' : ''}.png`;
     if (dumped) {
       await fs.mkdir(dumped, { recursive: true, mode: 0o700 });
-      await Promise.all(shots.flatMap((set, k) => set.map((b64, i) => save(path.join(dumped, `${times[i].toFixed(3)}s${k ? '-compare' : ''}.png`), Buffer.from(b64, 'base64')))));
+      await Promise.all(shots.flatMap((set, k) => set.map((b64, i) => save(path.join(dumped, frameFile(i, k > 0)), Buffer.from(b64, 'base64')))));
     }
     return { source: files[0], ...(files[1] ? { compare: files[1] } : {}), width: meta[0].width, height: meta[0].height, duration: Math.round(duration * 1000) / 1000, sheet,
-      frames: times.map((t, i) => ({ t, ...(dumped ? { file: path.join(dumped, `${t.toFixed(3)}s.png`), ...(files[1] ? { compareFile: path.join(dumped, `${t.toFixed(3)}s-compare.png`) } : {}) } : {}),
+      frames: times.map((t, i) => ({ t, ...(dumped ? { file: path.join(dumped, frameFile(i)), ...(files[1] ? { compareFile: path.join(dumped, frameFile(i, true)) } : {}) } : {}),
         ...(diffs ? { changedPixels: diffs[i].changedPixels, sameSize: diffs[i].sameSize } : {}) })),
       ...(diffs ? { changed: diffs.some(d => !d.sameSize || d.changedPixels > 0), layout: 'Each cell shows the source on top and the comparison below; the delta in each label is the number of changed pixels at that time' } : {}),
       // Figma video export can lag edits, returning the previous video immediately after a change. Byte-identical videos often indicate this; report it explicitly.

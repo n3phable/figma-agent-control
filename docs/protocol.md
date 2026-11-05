@@ -396,6 +396,8 @@ A file is resolved from the working directory. A job ID must be a successful run
 
 Explicit times are deduplicated and sorted, limited to 24, and must fit the video. Default sampling uses eight times from zero to 0.05 seconds before the end. Each time selects the covering frame. Contact-sheet cells are labeled, with at most four per row, or six during comparison; total width is at most 1,600 px. Narrow frames are enlarged to at least 160 px with nearest-neighbor sampling. A comparison cell stacks source and comparison frames and labels changed pixels.
 
+`--dump` writes original-size frames beside the sheet, in a directory with the same stem. Filenames include sample number and time, preventing collisions after millisecond rounding; comparison frames add `-compare`.
+
 Output is `{source,compare?,width,height,duration,sheet,frames:[{t,file?,compareFile?,changedPixels?,sameSize?}],changed?,layout?,warning?,limitation}`. File paths appear only with dump. Identical video bytes add a warning. Pixel differences use the same `diffPng` definition as run verification. Outputs go to the bound project's `frames/` or a system temporary directory. Success exits `0`; invalid inputs or decoding failure exit `1`.
 
 ## Prototypes
@@ -664,7 +666,3 @@ HTML and html-check stdout summaries fit within 16 KiB of formatted UTF-8 JSON. 
 HTML-specific codes and frames output are defined above. Network errors remain distinct: `SANDBOX_BLOCKED` is denied localhost access, `BRIDGE_DOWN` is an unresponsive session port, `BRIDGE_TIMEOUT` is a request timeout, and `NO_SESSION` is a missing session file.
 
 `report --since` accepts ISO dates/times; a time requires `Z` or an offset, and a date alone is UTC midnight. `jobs.failed` counts `ok:false`; `jobs.verifyFailed` counts successful executions with failed/unavailable visual checks. They are mutually exclusive.
-
-## Frame dump filenames
-
---dump writes original-size PNGs using rounded sample times such as 0.300s.png. Distinct times rounding to the same millisecond can collide; avoid such pairs in one invocation.
