@@ -1,7 +1,9 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:path, node:util, node:timers/promises, node:perf_hooks, ./project.mjs.
- * [OUTPUT]: Exports changeSet, scriptTrace, localResult, summarizeRecord, exitCode, waitForResult.
- * [POS]: Interprets persisted jobs and snapshots into outcomes, changes and wait results.
+ * [INPUT]: Uses ./project.mjs root/json/isJobId, node:fs/promises, node:path, node:util, node:timers/promises and node:perf_hooks. Type checking reads extract output as LandedExtractOutput from ./html/extract-contract.d.ts, with no runtime dependency.
+ * [OUTPUT]: changeSet, scriptTrace, localResult, summarizeRecord, exitCode and waitForResult.
+ * [POS]: Interprets runs/<id> evidence into summaries, exit codes and next steps. extract exposes output shape, statistics, skipped islands and warnings. run exposes pageRoot changes, reminding users to confirm provenance before deleting new root nodes, including after a failed verdict.
+ *        Script failures expose trace or a stack prefix, created/cleaned nodes, deleted-existing counts and createdAssets (outside clean's scope). Pending results expose progress.json; expired waits reported while hidden suggest revealing Figma. Leftover nodes point to clean; cleanup runs are recognized by label and data.task and return exit 1 for skipped nodes. Used by CLI submit/result/wait, clean, image-diff and html/extracts.
+ *        Also supplies bridge with snapshot changeSet and scriptTrace mapping to library/body lines. Does not exclusively own runs/: bridge/session read and write directly, while report, client.stop, image-diff and html extracts/command also read evidence.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs/promises';
@@ -234,7 +236,7 @@ export function summarizeRecord(record) {
   if (extract && result?.ok === true && result.output) {
     const { stats, islandsSkipped = [], warnings = [] } = /** @type {LandedExtractOutput} */ (result.output);
     summary.extract = { stats, islandsSkipped: islandsSkipped.slice(0, 50), ...(islandsSkipped.length > 50 ? { islandsSkippedOmitted: islandsSkipped.length - 50 } : {}),
-      warnings: warnings.slice(0, 20).map(text => clip(text, 300)), ...(warnings.length > 20 ? { warningsOmitted: warnings.length - 20 } : {}) };
+      warnings: warnings.slice(0, 20).map(text => clip(text, 600)), ...(warnings.length > 20 ? { warningsOmitted: warnings.length - 20 } : {}) };
   }
   if (result?.images) summary.images = result.images.map((/** @type {{ nodeId: string, name?: string, file: string, width: number, height: number, pixels?: unknown }} */ { nodeId, name, file, width, height, pixels }) => ({ nodeId, ...(name ? { name } : {}), file: path.join(record.evidence, file), width, height, ...(pixels ? { pixels } : {}) }));
   if (result) summary.timing = { queueMs: elapsed(job.createdAt, job.claimedAt), pluginMs: result.pluginMs ?? null, ...(result.approvalMs ? { approvalMs: result.approvalMs } : {}), totalMs: elapsed(job.createdAt, result.finishedAt) };

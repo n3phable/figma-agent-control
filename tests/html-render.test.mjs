@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs, node:os, node:path, node:child_process, node:url, ../src/html/chrome.mjs, ../src/html/check.mjs, ../src/html/generate.mjs, ../src/png.mjs, ./helpers/generate.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for html render; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/html/chrome findChrome/launch; src/html/check check/raster/writeEvidence/BLOCK_IMAGES; src/html/generate embed/dataUri; src/png decodePng/encodePng; helpers/generate extracted/run; local Chrome.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Rendering/check contracts cover self-comparison, pixels/transparency/root opacity/reverse stacking, node attribution and clipping, reference sizes, navigation/DSF/CDP, evidence, timeouts and process/signal cleanup, tall-frame performance, and override/fix round trips under rotated or left/top parents. Chrome-free stubs cover refs, reports, block crops, two-sided top/fix/basis/layout/font/structure/focus/cluster/seam findings. Missing Chrome skips with CHROME_NOT_FOUND; only suite-owned processes and temporary directories are cleaned.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test, before, after } from 'node:test';

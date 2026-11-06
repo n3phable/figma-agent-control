@@ -1,7 +1,8 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:os, node:path, ./html/chrome.mjs, ./png.mjs, ./record.mjs, ./project.mjs.
- * [OUTPUT]: Exports frames.
- * [POS]: Samples exported videos in Chrome and assembles comparison/contact-sheet evidence.
+ * [INPUT]: Uses ./html/chrome.mjs launch for video decoding, frame capture and contact sheets; ./png.mjs diffPng; ./record.mjs localResult; and ./project.mjs root/hash/isJobId.
+ * [OUTPUT]: frames(cwd, source, { atSeconds, frameCount, compareSource, dump }, invocationDir, chromeOptions) -> summary with contact-sheet paths, sample times, comparison pixel counts, and optional individual PNG paths.
+ * [POS]: Converts run-exported MP4/WebM into timestamped PNG contact sheets that agents can inspect. --dump also saves full-size frames for quantitative checks; --compare compares both videos at identical sample times.
+ *        Shares diffPng's change definition with image-diff and run --expect; byte-identical videos trigger a possible stale-export hint. Sample indices prevent rounded-millisecond filename collisions. Runs offline without bridge access and uses only html/chrome, like doctor.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs/promises';

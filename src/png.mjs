@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:zlib.
- * [OUTPUT]: Exports pngSize, decodePng, encodePng, imageStats, diffPng.
- * [POS]: PNG codec and pixel evidence shared by the bridge and offline image tools.
+ * [INPUT]: Uses node:zlib.
+ * [OUTPUT]: pngSize, decodePng, encodePng, imageStats and diffPng.
+ * [POS]: Pixel utilities shared by bridge --expect and image-diff, using one premultiplied-alpha, per-pixel definition of change. html/command, page, check and zoom use only decoding and encoding; visual similarity is defined separately by html/match.mjs. Supports the 8-bit, non-interlaced subset needed by Figma exports and difference images, decoding everything to RGBA.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import zlib from 'node:zlib';

@@ -1,7 +1,8 @@
 /**
- * [INPUT]: Imports node:path, ./record.mjs, ./project.mjs.
- * [OUTPUT]: Exports CLEAN_SCRIPT, cleanJob.
- * [POS]: Builds a guarded cleanup run from the creation evidence of a failed script.
+ * [INPUT]: Uses ./record.mjs localResult, ./project.mjs json/readBinding and node:path.
+ * [OUTPUT]: CLEAN_SCRIPT and cleanJob(cwd, id) -> a run request body for /job, or null when nothing needs removal.
+ * [POS]: Deferred cleanup translates a failed run's created evidence into a normal run (fixed script plus removal list; data and snapshot limits are checked before submission). Bridge and plugin need no clean operation; write-ahead logging, both Undo boundaries and unresolved-write checks remain unchanged.
+ *        Called by bin submission. record recognizes cleanup by label and data.task to produce specialized instructions and exit codes, without importing this module and creating a cycle.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import path from 'node:path';

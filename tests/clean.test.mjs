@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:util, ../src/clean.mjs, ../src/record.mjs, ../src/project.mjs, ./helpers/plugin.mjs, ./helpers/harness.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for clean; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/clean CLEAN_SCRIPT; src/record summarizeRecord/exitCode; src/project root/save/init; tests/helpers/plugin plugin; tests/helpers/harness harness/writeScript/cliFile.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Deferred-cleanup tests: created-node parents and subtree counts, including leaves without findAll; per-node CLEAN_SCRIPT revalidation; summaries and exit codes recognized by label/data.task; CLI rejection without submission or new evidence directories; end-to-end job bodies, safe retries, and consistent partial-cleanup exit codes across submit/result/wait. Shares VM and end-to-end fixtures with plugin-failure.test.mjs.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -59,7 +59,7 @@ test('created records parents and own subtree sizes excluding instance internals
 test('Summaries recognize clean by label and data.task: skipped nodes exit 1 and explain separate Undo, no rollback, and safe retry; a same-named script does not count', () => {
   const record = (job, output) => ({ evidence: '/tmp/runs/x', job: { id: 'x', operation: 'run', ...job }, recordedState: 'done', journalComplete: true, instruction: '\u7ed3\u679c\u6765\u81ea\u5df2\u4fdd\u5b58\u8bc1\u636e', result: { id: 'x', ok: true, output } });
   const job = { label: `clean ${ID}`, data: { task: ID } }, item = { id: '10:1', name: 'A', type: 'FRAME' };
-  const done = record(job, { task: ID, cleaned: [item], gone: [], skipped: [] }), partial = record(job, { task: ID, cleaned: [], gone: [item], skipped: [{ ...item, reason: 'moved to 1:2' }] });
+  const done = record(job, { task: ID, cleaned: [item], gone: [], skipped: [] }), partial = record(job, { task: ID, cleaned: [], gone: [item], skipped: [{ ...item, reason: '\u5df2\u632a\u5230 1:2' }] });
   assert.deepEqual([exitCode(done), exitCode(partial)], [0, 1]);
   assert.match(summarizeRecord(done).instruction, new RegExp(`^Cleaned up nodes left by job ${ID}: 1 deleted, 0 already gone, 0 skipped; the deletion is a single Undo step; .*undo once in Figma to restore anything deleted by mistake; existing nodes modified by the original job are not rolled back; clean can run again`));
   assert.match(summarizeRecord(partial).instruction, /1 skipped \(reasons in output\.skipped; inspect, then handle them manually\); existing nodes modified by the original job are not rolled back/);

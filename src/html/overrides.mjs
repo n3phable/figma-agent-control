@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:fs, ../project.mjs.
- * [OUTPUT]: Exports invalidOverrides, loadOverrides.
- * [POS]: Validates per-node rendering overrides before generation consumes them.
+ * [INPUT]: Uses ../project hash/isNodeId and node:fs readFileSync; accepts user-supplied overrides JSON.
+ * [OUTPUT]: invalidOverrides(raw) -> first problem or null, loadOverrides(file) -> { groups, sha }, and OverrideGroups.
+ * [POS]: The html trust boundary: generators trust validated entries, so reject invalid keys and values here. html, html-check and local regression scripts share validation; overrides are frame-grouped, while application/staleness live in generate. Per-frame bake:"svg" counts constrain only commands submitting extract, not this validator.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs';

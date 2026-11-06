@@ -1,7 +1,9 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:path, node:crypto, ./project.mjs.
- * [OUTPUT]: Exports pairingToken, NOT_DELIVERED, ABANDONED, unfinishedOperations, emptyLock, validPid, acquireLock.
- * [POS]: Owns pairing, exclusive bridge locks and recovery of unfinished disk records.
+ * [INPUT]: Uses ./project.mjs json/save/writeAtomic/isJobId, node:fs/promises, node:path and node:crypto.
+ * [OUTPUT]: pairingToken, unfinishedOperations, acquireLock, emptyLock (shared empty-lock error), validPid,
+ *           NOT_DELIVERED and ABANDONED (non-execution reasons: bridge shutdown and startup recovery write NOT_DELIVERED; bridge writes ABANDONED when a new instance takes over an interrupted read-only task; html/extracts recognizes both).
+ * [POS]: Cross-restart persistence for plugin pairing, evidence recovery and unresolved tasks (queued proves non-delivery), plus a single-instance lock with serialized stale-lock takeover. connect calls pairingToken in the global plugin directory; client.stop and doctor share emptyLock, and doctor shares validPid.
+ *        html/extracts also reads NOT_DELIVERED and ABANDONED; all remaining consumers are in bridge.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs/promises';

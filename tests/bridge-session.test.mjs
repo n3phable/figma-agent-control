@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:fs, node:os, node:path, node:net, node:crypto, node:child_process, node:timers/promises, node:url, ../src/bridge.mjs, ../src/client.mjs, ../src/project.mjs, ../src/png.mjs, ./helpers/bridge.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for bridge session; tests use local synthetic inputs and isolated state.
+ * [INPUT]: tests/helpers/bridge fixture and constants; src/bridge start on random ports; src/client stop; src/project init/root/json; src/png encodePng/decodePng; node:net for occupied ports and pipelined requests, mkfifo for a blocked read, and node:url for a package copy missing a plugin template.
+ * [OUTPUT]: No exports; node:test cases for persisted evidence, named previews, permissions, verification, stop races, recovery/resolve, late results, interrupted reads, incomplete journals, long polling, status, occupied ports, and missing templates.
+ * [POS]: Bridge session and lifecycle contract tests. Shares fixtures with bridge.test.mjs, which covers individual requests; neither suite runs plugin code.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -60,7 +60,7 @@ test('Concurrent stop and result persistence tells executed tasks to read result
     const result = await stopping;
     await completing;
     assert.equal((await json(path.join(b.run(job.id), 'result.json'))).ok, true);
-    assert.match(result.recovery, /saved its execution result.*result.*do not replay the script/);
+    assert.match(result.recovery, /execution result was saved.*result.*do not replay/);
     assert.doesNotMatch(result.recovery, /not executed|resubmit/);
   } finally { release.resolve(); }
 });

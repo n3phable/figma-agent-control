@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs, node:os, node:path, node:crypto, node:child_process, node:util, node:perf_hooks, node:timers/promises, ./helpers/generate.mjs, ./helpers/doc.mjs, ./helpers/harness.mjs, ../src/html/command.mjs, ../src/html/page.mjs, ../src/html/overrides.mjs, ../src/html/summary.mjs, ../src/html/chrome.mjs, ../src/html/generate.mjs, ../src/html/match.mjs, ../src/args.mjs, ../src/bridge.mjs, ../src/client.mjs, ../src/record.mjs, ../src/session.mjs, ../src/png.mjs, ../src/project.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for html cli; tests use local synthetic inputs and isolated state.
+ * [INPUT]: helpers/generate extracted/run; helpers/doc extractDoc; helpers/harness harness/cliFile; HTML command/page/overrides/summary/chrome/generate/match functions; args parse; bridge start; client call; record waitForResult; session pairingToken/NOT_DELIVERED/ABANDONED; png encode/decode; project hash/init/root.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: HTML command tests. Chrome-free page/trust checks cover filenames, meta/ref round trips, asset/crop assembly, overrides/fingerprints, output cleanup, and GLASS defaults. Synthetic --from evidence covers preflight, resume ownership, findings, and checks; injected calls/browsers cover failure classification and lifecycle. Real random-port bridge + VM plugin --node cases cover submission/re-extraction, budgets, 409s, and interruption. Chrome-dependent cases skip with a reason; temporary directories are removed.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test, after } from 'node:test';
@@ -540,7 +540,7 @@ test('Injected submission classification: BRIDGE_STOPPING is fatal/exit 1, 400 b
   const go = (deps, ...argv) => html(cwd, args('--node', '1:2', ...argv, '--out', out, '--no-check'), { ...quiet, ...deps });
   const stopping = await go({ call: reply({ status: 409, ok: false, data: { code: 'BRIDGE_STOPPING', error: '\u6865\u63a5\u6b63\u5728\u505c\u6b62\uff0c\u4efb\u52a1\u672a\u63d0\u4ea4' } }) }, '--node', '1:3');
   assert.deepEqual([manifestOf(out).stop, manifestOf(out).remaining, stopping.exitCode], [{ kind: 'fatal', code: 'BRIDGE_STOPPING', message: '\u6865\u63a5\u6b63\u5728\u505c\u6b62\uff0c\u4efb\u52a1\u672a\u63d0\u4ea4' }, ['1:2', '1:3'], 1]);
-  assert.match(stopping.summary.instruction, /^\u6865\u63a5\u6b63\u5728\u505c\u6b62，\u4efb\u52a1\u672a\u63d0\u4ea4\. Rerun figma-agent-control connect\. Run /);
+  assert.match(stopping.summary.instruction, /^\u6865\u63a5\u6b63\u5728\u505c\u6b62\uff0c\u4efb\u52a1\u672a\u63d0\u4ea4\. Rerun figma-agent-control connect\. Run /);
   const rejected = await go({ call: reply({ status: 400, ok: false, data: { error: '\u5c40\u90e8\u76ee\u6807 ID \u65e0\u6548' } }) });
   assert.deepEqual([manifestOf(out).frames, rejected.exitCode], [[{ node: '1:2', source: 'node', error: { code: 'EXTRACT_REJECTED', message: '\u5c40\u90e8\u76ee\u6807 ID \u65e0\u6548' } }], 1]);
   const { id } = await landRun(cwd), slept = [], lines = [];

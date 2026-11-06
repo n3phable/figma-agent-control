@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:path, node:timers/promises, ./project.mjs, ./session.mjs.
- * [OUTPUT]: Exports readSession, call, stop.
- * [POS]: CLI-side transport and bridge shutdown; result interpretation stays in the evidence layer.
+ * [INPUT]: Uses ./project.mjs root/json, ./session.mjs emptyLock, node:fs/promises, node:path and node:timers/promises.
+ * [OUTPUT]: readSession, call (the sole CLI-to-bridge HTTP entry), and stop. stop exitCode is 0 when stopped or not running, 1 when rejected, and 2 when accepted but the lock remains after about 5 s; active-task guidance reuses recovery.json text, which differs for run and read-only tasks.
+ * [POS]: The src bridge client. Translates network failures into actionable sandbox-blocked, bridge-down or timeout causes. stop derives task disposition from persisted results and permits resubmission only when non-execution is proven.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs/promises';
@@ -75,8 +75,8 @@ export async function stop(cwd, force = false) {
     document: 'not modified: stop sends no operation to Figma', cloudSync: 'not affected: sync is handled by Figma itself and this tool cannot verify it',
     plugin: 'a plugin panel that is still open shows that it is reconnecting; it reattaches automatically after connect, no reopen needed',
     ...(data.active ? { recovery: !released ? `Job ${data.active} is still finishing; check it later with figma-agent-control wait ${data.active}`
-      : result?.executionStarted === false ? `Job ${data.active} is explicitly recorded as not executed and may be resubmitted`
-      : result ? `Job ${data.active} has saved its execution result; read it with figma-agent-control result ${data.active}; do not replay the script`
+      : result?.executionStarted === false ? `Job ${data.active} is explicitly recorded as not executed; it can be resubmitted`
+      : result ? `Job ${data.active} execution result was saved; read it with figma-agent-control result ${data.active}; do not replay the script`
       : `Recovery instruction written for running job ${data.active}: ${(await json(path.join(root(cwd), 'runs', data.active, 'recovery.json')).catch(() => null))?.instruction ?? 'after reconnecting, inspect first; do not replay the script'}` } : {}),
     ...(released ? {} : { note: 'The bridge is still shutting down; run figma-agent-control status later to confirm' }), exitCode: released ? 0 : 2 };
 }

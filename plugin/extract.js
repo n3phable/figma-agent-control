@@ -1,7 +1,8 @@
 /**
- * [INPUT]: Figma Plugin API, bridge configuration and the sandbox/iframe message channel.
- * [OUTPUT]: Plugin task handling and serialized results.
- * [POS]: Read-only extraction of scene geometry, text and render assets for HTML export.
+ * [INPUT]: Uses Figma Plugin API (figma.*) and main.js copy, prop and BINARY_LIMIT in the same script; bridge concatenates main.js and this file at installation.
+ *          Type checking uses the src/html/extract-contract.d.ts extract contract through comments only.
+ * [OUTPUT]: extract(target, job, page) -> PluginExtractOutput in plugin global scope, plus utf8Upper and EXTRACT_BYTES used by main.js before returning results.
+ * [POS]: Read-only plugin extraction serializes a target subtree in target coordinates for pixel reproduction. References, bitmaps and islands use the binary channel. Called by main.js dispatch without writes, approval or Undo handling.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 /** @import { Bounds, ExtractImage, ExtractNode, ExtractRequest, ExtractStats, PluginExtractOutput, TextSegment } from '../src/html/extract-contract.js' */

@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:zlib, ../src/png.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for png; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/png decodePng/encodePng; node:zlib constructs PNGs with arbitrary filter and color types.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Decoder coverage for all five filters at the first row, first pixel, and interior positions; five color types expanded to RGBA including tRNS keys and palette transparency; invalid filters, palette indexes, and truncated data; byte-exact encodePng round trips.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

@@ -1,7 +1,13 @@
 /**
- * [INPUT]: Imports node:fs, node:path, ./match.mjs, ./attrib.mjs, ./shift.mjs, ./layout.mjs, ./structure.mjs, ./suggest.mjs, ./zoom.mjs, ../png.mjs, ../project.mjs.
- * [OUTPUT]: Exports LIMIT, CHECKER, BLOCK_IMAGES, raster, check, writeEvidence.
- * [POS]: Coordinates reference rendering, pixel comparison and evidence production.
+ * [INPUT]: Uses ./match.mjs match/blockscan/crop/upscale/stack, ./attrib.mjs attribution/ranking, ./shift.mjs search/local conversion,
+ *          ./layout.mjs page facts/geometry/fonts, ./structure.mjs structure checks, ./suggest.mjs baking/seams, ./zoom.mjs zoom comparison,
+ *          ../png.mjs pngSize/decodePng/encodePng, ../project.mjs hash/writeAtomic, node:fs and node:path.
+ *          Receives a chrome launch().page() without starting a browser. CHECKER hashes diagnostic source dependencies, including shared css.mjs paint rules.
+ * [OUTPUT]: LIMIT, CHECKER, BLOCK_IMAGES, check(page, { url, reference, expected, refs?, frame? }) -> { report, images? },
+ *           re-exported raster, writeEvidence(dir, report, images?) for check.json/render.png/diff.png/block-<n>.png/zoom-<node>/, plus Page/Ref/Frame/TopEntry.
+ * [POS]: Checker orchestration: validate sizes, render, compare, scan structural blocks, attribute HTML pixels and count baked refs; with frame context, attribute Figma pixels and rank both sides,
+ *        collect page geometry/fonts/structure once, audit fonts, search/correct top/focus positions, check geometry/structure, suggest baking, measure seams, compare zoom, then produce verdict/evidence.
+ *        Sibling modules own diagnostic rules; this file owns order, timing and verdict. Only top geometry affects verdict, never focus/zoom. Without frame (local regression), do only image matching, blocks, HTML attribution and ref counts.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs';

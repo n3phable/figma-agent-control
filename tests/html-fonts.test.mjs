@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs, node:os, node:path, ../src/html/fonts.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for html fonts; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/html/fonts parseFont/findFont; handwritten minimal sfnt/TTC bytes; local Kanit when available.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Font metric tests cover metric fields, missing/short OS/2, name-platform priority and IDs 16/17, fvar named instances, TTC faces, truncation, and missing tables. Temporary-directory lookup covers PostScript and normalized family/style, unreadable directories/bad files, first-match precedence, and process-local caching. Deletes only test-owned directories.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

@@ -1,7 +1,12 @@
 /**
- * [INPUT]: Figma Plugin API, bridge configuration and the sandbox/iframe message channel.
- * [OUTPUT]: Plugin task handling and serialized results.
- * [POS]: Figma sandbox executor for bound reads and trusted writes, with approval, checkpoints and Undo boundaries.
+ * [INPUT]: Uses Figma Plugin API (figma.*), the ui.html postMessage relay, and extract.js extract, utf8Upper and EXTRACT_BYTES in the shared script scope.
+ *          bridge concatenates this file and extract.js at installation; runtime loads no files. Type checking uses @figma/plugin-typings globals.
+ * [OUTPUT]: No exports. Executes run / inspect / preview / variables / extract and returns results by message. hello reports the current file; check-target reports readiness, node type, page and ID; focus-target selects and reveals the binding when idle; resize adjusts panel height; hide-ui hides it. Runs emit progress every 2 s by phase, with pending async calls and page activity during execution; cancel interrupts matching work during preparation, approval or execution.
+ * [POS]: Plugin execution endpoint and sole document-access boundary. run order is fixed: file validation -> compilation -> scope verification -> before snapshot -> high-risk approval -> write-ahead log ->
+ *        before render when expected, plus local asset reads -> final validation -> execution inside Undo boundaries -> after render/snapshot. Successful non-page runs also compare direct page-root children and report pageRoot changes. Compilation precedes boundaries, so syntax errors remain unexecuted. Script-thrown string stacks are returned; this module's own errors carry no script stack.
+ *        Script errors never trigger automatic Undo. Report highest surviving newly created target-page nodes with parent and owned-subtree size for deferred clean. cleanOnFail removes them only after the end boundary commits, creating a separate Undo step; deletedExisting counts and warnings flag removed originals. New collections, variables and styles appear in createdAssets but are never deleted.
+ *        Cancellation starts at run receipt: preparation/approval waits end without late replies releasing execution. During execution, stack points to the oldest pending call and later figma-proxy access throws. Successfully loaded fonts are cached for the plugin session.
+ *        Other operations are built-in read-only flows. extract lives in extract.js, loads without switching pages and checks a 12 MB UTF-8 upper bound before return. preview name lookup exactly matches binding children and nested Sections, resolving all names before export and rejecting missing or ambiguous names.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 // Tasks relayed by ui.html: bridge buildJob supplies fields, /poll adds binding, and ui.html adds channelNonce. Declare only fields read by the plugin.
@@ -241,7 +246,7 @@ async function localVariables(target) {
         scopes: v.scopes, bindings: counts.get(v.id) || 0, prototypeRefs: prototypeRefs.get(v.id) || 0 };
     }),
     bindingScope: { nodeId: target.id, scannedNodes: Math.min(scanned, 50000), truncated },
-    limitation: 'Local variables only, using default-mode values with aliases followed up to 10 levels; bindings counts target-subtree boundVariables, while prototypeRefs counts references in target-subtree reactions'
+    limitation: 'Lists local variables only, with default-mode values (following aliases up to 10 levels); bindings counts only boundVariables on nodes in the target subtree; prototypeRefs counts only references in prototype reactions in that subtree'
   };
 }
 
@@ -424,7 +429,8 @@ async function focusTarget(id) {
   figma.viewport.scrollAndZoomIntoView([scene]);
 }
 
-figma.ui.onmessage = async job => {
+// Messages from ui.html are any, like MessageEventHandler pluginMessage. Declare this explicitly because VS Code's bundled TS 6 cannot infer contextual types in JS assignments and reports 7006.
+figma.ui.onmessage = /** @param {any} job */ async job => {
   // At UI startup, request the current file so the bridge lets only instances in the bound file claim work.
   if (job?.type === 'hello') { figma.ui.postMessage({ type: 'file', fileKey: figma.fileKey || '' }); return; }
   if (job?.type === 'check-target') {
@@ -536,7 +542,7 @@ figma.ui.onmessage = async job => {
       const assetsBefore = await prepare(localAssets().catch(error => { warnings.push('Cannot read variables and styles before execution; created variables and styles cannot be listed if the script fails: ' + String(error)); return null; }));
       // Revalidate after the last await and do not yield before invoking the script, keeping write-ahead evidence aligned with the actual starting state.
       const currentPage = pageOf(target);
-      if (figma.fileKey !== job.binding.fileKey || target.removed || !within(target, job.binding.nodeId) || currentPage?.id !== page.id || JSON.stringify(snapshot()) !== JSON.stringify(before)) throw Error('Target changed while waiting for the snapshot; the script did not run. Run inspect again');
+      if (figma.fileKey !== job.binding.fileKey || target.removed || !within(target, job.binding.nodeId) || currentPage?.id !== page.id || JSON.stringify(snapshot()) !== JSON.stringify(before)) throw Error('Target changed while preparing the run; the script did not run. Run inspect again');
       if (typeof figma.commitUndo !== 'function') throw Error('This environment does not support Undo boundaries; the script did not run');
       const commitUndo = figma.commitUndo.bind(figma);
       try { commitUndo(); undoBoundaries.before = 'committed'; }

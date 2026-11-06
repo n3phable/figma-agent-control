@@ -1,7 +1,10 @@
 /**
- * [INPUT]: Imports node:fs, node:fs/promises, node:path, ./generate.mjs, ./fonts.mjs, ./match.mjs, ../png.mjs, ../project.mjs.
- * [OUTPUT]: Exports expectedSize, assemble, pageFile, readMeta, readRefs, indexPages, writePage.
- * [POS]: Assembles and writes self-contained HTML pages with provenance and embedded assets.
+ * [INPUT]: Uses ./generate generate/fontRequests/embed/dataUri, ./fonts findFont, ./match crop, ../png decodePng/encodePng,
+ *          ../project hash/writeAtomic, node:fs, node:fs/promises and node:path; accepts persisted extract output and its task directory or offline base directory.
+ * [OUTPUT]: expectedSize(output), assemble(output, input) -> { html, result, violations, expected }, pageFile(name, node), readMeta(text), readRefs(html), indexPages(dir), writePage(dir, file, node, html, index).
+ * [POS]: Defines the single-file HTML artifact: assembly through font metrics, islands, bitmaps, reference crops and embedding; filenames;
+ *        atomic persistence and cleanup after renames; and provenance reads. html, html-check and local regression scripts share assembly. All file access stays here so generate remains pure.
+ *        readMeta/readRefs depend on generator metadata and ref-container syntax, protected by round-trip tests.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs';

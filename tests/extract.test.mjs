@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:vm, node:timers/promises, ./helpers/doc.mjs, ./helpers/harness.mjs, ../src/bridge.mjs, ../src/project.mjs, ../src/session.mjs, ../src/record.mjs, ../src/png.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for extract; tests use local synthetic inputs and isolated state.
+ * [INPUT]: helpers/doc extractDoc/T; helpers/harness fakeFigma/pluginSource/harness; src/bridge start; src/project init/root/json; src/session pairingToken; src/record localResult; src/png encodePng/pngSize; node:vm runs real plugin/main.js.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Extract contracts: real VM plugin against the shared mock document with a deep Proxy read-only guard; real random-port bridge with injected lease clock for validation, persistence, interruption, and same-session takeover; CLI end-to-end files, summaries, and exit codes.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

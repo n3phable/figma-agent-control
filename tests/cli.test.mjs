@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:net, node:path, node:vm, node:crypto, node:child_process, node:util, node:timers/promises, ./helpers/harness.mjs, ../src/bridge.mjs, ../src/project.mjs, ../src/session.mjs, ../src/png.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for cli; tests use local synthetic inputs and isolated state.
+ * [INPUT]: helpers/harness harness/writeScript/fakeFigma/cliFile; src/bridge start; src/project root/json/save/hash/init/installPlugin; src/session pairingToken; src/png encodePng/decodePng; CLI subprocesses execute bin/figma-agent-control.mjs and node:vm runs reopened plugin instances.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: CLI end-to-end coverage for submit/wait/pageRoot, pre-submission file/option failures, requestId reuse, evidence and binaries, named previews, approval, visuals, unknown-write resolution and later reads, stop/network errors, doctor stages, late results across projects, image-diff, and reports. Library/data/syntax basics remain in smoke.test.mjs.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test } from 'node:test';

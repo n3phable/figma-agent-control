@@ -1,7 +1,9 @@
 /**
- * [INPUT]: Imports ./match.mjs, ./css.mjs.
- * [OUTPUT]: Exports SHIFT, region, search, worth, relocate, moved, advise.
- * [POS]: Searches local pixel offsets and converts them into node-coordinate corrections.
+ * [INPUT]: Uses ./match.mjs match/differing/crop and ./css.mjs num/place, with Rect from attrib and Matrix from css.
+ * [OUTPUT]: SHIFT, region(boxes, own, mask, width, height, pad?) -> search area or reason, search(ref, act, rect, k?) -> { s, before, after },
+ *           worth(r, k?), relocate(placement, dx, dy, basis?) -> { fix?, flat, hint? }, advise(r, k, placement, basis?) -> { shift?, fix?, flat?, hints }, moved(dx, dy), and Placement.
+ * [POS]: Pure checker corrections: finds alignment shifts and converts them to local CSS coordinates. 1x top diagnostics and zoom share search/advise with scale k.
+ *        match owns counts (differing ranks candidates, match measures before/after); css.place serializes transforms consistently with generation. No browser or file access.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { match, differing, crop } from './match.mjs';
@@ -101,7 +103,7 @@ export function relocate({ style, chain: [a, b, c, d] }, dx, dy, basis) {
   const fix = { style: { transform: place(m) }, ...(basis === null ? {} : { basis: { transform: basis ?? current } }) };
   return { fix, flat, ...(flat ? { hint: 'Node is written as left/top in the page; still write overrides as transform' } : {}) };
 }
-// Describe horizontal movement before vertical movement.
+// Direction text puts x first, as in "up 2px" or "right 1px, up 0.5px".
 /** @param {number} dx @param {number} dy */
 export const moved = (dx, dy) => [dx ? `${dx > 0 ? 'right' : 'left'} ${num(Math.abs(dx))}px` : '', dy ? `${dy > 0 ? 'down' : 'up'} ${num(Math.abs(dy))}px` : ''].filter(Boolean).join(', ');
 

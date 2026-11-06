@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, ./helpers/plugin.mjs, ../src/png.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for plugin; tests use local synthetic inputs and isolated state.
+ * [INPUT]: tests/helpers/plugin plugin/BINDING; src/png encodePng/decodePng.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Direct VM main.js execution contracts following docs/protocol.md: compilation, preflight, approval/checkpoint/revalidation, Undo boundaries, busy-task rejection, visuals, serialization, pageRoot changes, Motion snapshots, read-only tasks, named-preview scope/ambiguity/missing behavior, and panel target focus. Failure cleanup and end-to-end result retention belong to plugin-failure.test.mjs using the same fixture.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -236,14 +236,14 @@ test('Replies missing id/channelNonce are ignored safely when no waiter exists, 
 
 test('Revalidation rejects edited or moved-out-of-scope targets while preserving user changes', async () => {
   const edits = {
-    \u6539\u6587\u5b57: doc => { doc.text.characters = '\u7528\u6237\u8f93\u5165'; },
-    \u79fb\u51fa\u8303\u56f4: doc => { doc.frame.children = [doc.swatch]; doc.page.children.push(doc.text); doc.text.parent = doc.page; }
+    editText: doc => { doc.text.characters = '\u7528\u6237\u8f93\u5165'; },
+    moveOutOfScope: doc => { doc.frame.children = [doc.swatch]; doc.page.children.push(doc.text); doc.text.parent = doc.page; }
   };
   for (const [name, beforeAck] of Object.entries(edits)) {
     const f = plugin({ beforeAck });
     const r = await f.send({ targetNodeId: '1:3', code: 'figma.mark("script"); target.characters = "\u811a\u672c\u8986\u76d6";' });
     assert.equal(r.executionStarted, false, name);
-    assert.match(r.error, /changed while waiting for the snapshot/, name);
+    assert.match(r.error, /changed while preparing the run/, name);
     assert.deepEqual(f.events, ['checkpoint'], name);
     assert.notEqual(f.doc.text.characters, '\u811a\u672c\u8986\u76d6', name);
   }
@@ -379,10 +379,10 @@ test('Byte views and complete PNG/JPEG integer arrays become binary placeholders
 
 test('Reserved keys, non-JSON output, or oversized binaries fail after execution and prohibit replay', async () => {
   const cases = {
-    \u4fdd\u7559\u952e: ['return { real: new Uint8Array([1]), fake: { __figmaAgentControlBinary: 0 } };', /reserved key/],
+    reservedKey: ['return { real: new Uint8Array([1]), fake: { __figmaAgentControlBinary: 0 } };', /reserved key/],
     BigInt: ['return 1n;', /JSON/],
-    \u8d85\u8fc7200\u4e2a: ['return Array.from({ length: 201 }, () => new Uint8Array([1]));', /200/],
-    \u8d85\u8fc748MB: ['return new Uint8Array(37 * 1024 * 1024);', /48 MB/]
+    tooManyBinaries: ['return Array.from({ length: 201 }, () => new Uint8Array([1]));', /200/],
+    oversizedBinary: ['return new Uint8Array(37 * 1024 * 1024);', /48 MB/]
   };
   for (const [name, [tail, reason]] of Object.entries(cases)) {
     const f = plugin();

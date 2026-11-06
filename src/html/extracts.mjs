@@ -1,7 +1,9 @@
 /**
- * [INPUT]: Imports node:path, ../client.mjs, ../record.mjs, ../session.mjs, ../project.mjs.
- * [OUTPUT]: Exports RETRY_MS, fromJob, readLanded, submit, awaitLanded.
- * [POS]: Submits extraction jobs and classifies their persisted outcomes for command workflows.
+ * [INPUT]: Uses injectable ../client call, ../record localResult/waitForResult, ../session NOT_DELIVERED/ABANDONED,
+ *          ../project root/json/readBinding, node:path and evidence files under runs/<taskID>/.
+ * [OUTPUT]: RETRY_MS, fromJob(cwd, id), readLanded(cwd, id), submit(cwd, request, deps), awaitLanded(cwd, id, seconds, clock), plus Clock, Stop, Landed and Outcome types.
+ * [POS]: The sole extract-result access layer for html/html-check: submission with 409 classification/retry, budgeted waiting, and persisted reads for --from/page metadata.
+ *        Knows only the bridge and evidence, not pages or checks. Injectable clock/call cover retries and budgets without a bridge in tests. No bridge import; interruption text comes from session.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import path from 'node:path';
@@ -31,13 +33,14 @@ export async function fromJob(cwd, id) {
   return { id, node: job.targetNodeId ?? (await readBinding(cwd)).nodeId };
 }
 
-// Classify interruption using exact bridge-generated completion messages before handling deterministic failures.
+// Classify evidence using the first matching rule. Match the bridge's two non-execution reasons exactly, including legacy wording from before English localization; host-written text cannot be reinterpreted through plugin-supplied messages.
 // Other failures, such as budget violations, are deterministic and would simply repeat; do not treat them as interruptions. executionStarted cannot distinguish them because all extract failures report false.
+const INTERRUPTED = new Set([NOT_DELIVERED, ABANDONED, '\u6865\u63a5\u505c\u6b62\u524d\u4efb\u52a1\u5c1a\u672a\u4ea4\u4ed8\u63d2\u4ef6\uff0c\u811a\u672c\u672a\u6267\u884c\uff1b\u53ef\u4ee5\u91cd\u65b0\u63d0\u4ea4', '\u63d2\u4ef6\u5728\u53ea\u8bfb\u4efb\u52a1\u6267\u884c\u4e2d\u65ad\u5f00\uff0c\u5df2\u7531\u65b0\u7684\u63d2\u4ef6\u5b9e\u4f8b\u63a5\u7ba1\uff1b\u6587\u6863\u672a\u88ab\u4fee\u6539\uff0c\u53ef\u4ee5\u91cd\u65b0\u63d0\u4ea4']);
 /** @param {Awaited<ReturnType<typeof localResult>>} record @returns {Outcome} */
 function classify({ job, result, recovery, resolution, evidence }) {
   const id = job.id;
   if (result?.ok === true && !result.binaryErrors?.length) return { landed: { id, output: /** @type {LandedExtractOutput} */ (result.output), dir: evidence } };
-  if (result?.ok === false && (result.error === NOT_DELIVERED || result.error === ABANDONED)) return { interrupted: { id } };
+  if (result?.ok === false && INTERRUPTED.has(result.error)) return { interrupted: { id } };
   if (result) return { failed: { id, message: result.ok === false ? String(result.error) : `Binary files not fully written to disk: ${result.binaryErrors[0]}` } };
   if (recovery || resolution) return { interrupted: { id } };
   return { pending: { id } };

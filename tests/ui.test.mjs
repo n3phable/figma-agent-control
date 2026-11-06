@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:vm, node:crypto, ./helpers/harness.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for ui; tests use local synthetic inputs and isolated state.
+ * [INPUT]: plugin/ui.html script with SESSION_CONFIG replaced before node:vm execution; controlled fetch, document, parent, window, and setInterval mocks.
+ * [OUTPUT]: No exports; relay behavior tests for file discovery, multiport/binding-ID routing, credentials, delivery/completion/long-poll renewal, cancellation holds, serialized ticks, approval/checkpoint forwarding, reduced failure evidence, request timeouts, foreign-project results, pairing/version errors, footer version, target/task panels, visibility/session changes, and network recovery.
+ * [POS]: Plugin relay unit tests using fetch mocks to assert exact request sequences without a bridge; complements harness-driven end-to-end coverage.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

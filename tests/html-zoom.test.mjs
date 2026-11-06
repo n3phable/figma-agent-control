@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs, node:os, node:path, node:url, ../src/html/zoom.mjs, ../src/html/check.mjs, ../src/html/chrome.mjs, ../src/png.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for html zoom; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/html/zoom zoomTarget/renderZoom/zoomCompare; src/html/check check/writeEvidence; src/html/chrome findChrome/launch; src/png decodePng/encodePng; local Chrome for two cases.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Zoom comparison tests cover scale/target/rotation/reflection/size preflight, skipped comparisons, timeout retention of 1x reports, and identical-image search suppression without Chrome. Chrome cases isolate target subtrees and neutralize ancestors, search/fix at 1/k px, and persist evidence. Missing Chrome skips with a reason; profiles and processes belong only to this suite.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test, before, after } from 'node:test';

@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, ../src/html/summary.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for html summary; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/html/summary STDOUT_LIMIT/bytes/totals/exitCode/batch/instruction/stdoutOf/checkStdout.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Pure output-layer tests with synthetic manifests, no bridge or browser: 16 KiB progressive stdout compression, frame ordering/truncation, top/suggest/hints/font limits, four-level html-check projection and zoom diagnostics, exit codes, layout/font totals, batch resume commands, and fix/structure/font/geometry/GLASS/suggestion guidance.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -28,10 +28,10 @@ test('stdoutOf lists at most 10 attention frames ordered error, fail, unchecked,
   assert.deepEqual([a.frames.length, a.omittedFrames, a.frames.every(f => f.verdict === 'fail')], [10, 20, true]);
   assert.equal('done' in a, false, 'Omit done when there is no resume work');
   const order = [frame(1, { verdict: undefined }), frame(2), frame(3, { violations: ['v'] }), frame(4, { verdict: 'unchecked', reason: 'CHROME_NOT_FOUND' }),
-    frame(5, { verdict: 'fail' }), frame(6, { html: undefined, verdict: undefined, error: { code: 'EXTRACT_FAILED', message: long('\u957f', 400) } }), frame(7, { verdict: 'clean' })];
+    frame(5, { verdict: 'fail' }), frame(6, { html: undefined, verdict: undefined, error: { code: 'EXTRACT_FAILED', message: long('\u957f', 800) } }), frame(7, { verdict: 'clean' })];
   const b = fits(stdoutOf(manifest(order)));
   assert.deepEqual(b.frames.map(f => f.node), ['1:6', '1:5', '1:4', '1:3', '1:2', '1:1']);
-  assert.equal(b.frames[0].error.message.length, 300);
+  assert.equal(b.frames[0].error.message.length, 600);
   const refs = Array.from({ length: 5 }, (_, i) => ({ node: `2:${i}`, rect: [0, 0, 1, 1], share: 0.01, bakedOver: [], px: 0 }));
   const stale = Array.from({ length: 5 }, (_, i) => ({ node: `3:${i}`, kind: 'missing' }));
   const c = fits(stdoutOf(manifest([frame(1, { refs, overrides: { applied: [], stale } })]))).frames[0];
@@ -119,17 +119,17 @@ test('batch and instruction resume all frames; missing islands, default-only GLA
 
 
 // -- Diagnostic output: top, suggest, focus, zoom ---------------------------
-const top = (i, extra = {}) => ({ node: `5:${i}`, name: long('\u540d', 100), px: 100 - i, htmlPx: 90 - i, figmaPx: 100 - i, layout: [], approximations: ['glass'], hint: long('\u63d0', 300),
+const top = (i, extra = {}) => ({ node: `5:${i}`, name: long('\u540d', 100), px: 100 - i, htmlPx: 90 - i, figmaPx: 100 - i, layout: [], approximations: ['glass'], hint: long('h', 600),
   fix: { style: { transform: `translate(${i}px,0px)` }, basis: { transform: 'translate(0px,0px)' } }, ...extra });
 const proposal = (i, extra = {}) => ({ node: `6:${i}`, name: '\u6309\u94ae', entry: { bake: 'ref', note: 'glass' }, rect: [0, 0, 10, 10], share: 0.01, textNodes: 1, bakedOver: ['7:1', '7:2'],
   members: ['6:9'], replaces: [], ...extra });
 
-test("stdoutOf caps top/suggest at 3 each with compact fields and truncation; above 16 KiB remove details before the frame list", () => {
+test('stdoutOf caps top/suggest at 3 each with compact fields and truncation; above 16 KiB remove details before the frame list', () => {
   const f = frame(1, { top: [0, 1, 2, 3, 4].map(i => top(i, i === 1 ? { flat: true } : {})), suggest: [0, 1, 2, 3].map(i => proposal(i)) });
   const a = fits(stdoutOf(manifest([f]))).frames[0];
   assert.deepEqual([a.top.length, a.topOmitted, a.suggest.length, a.suggestOmitted], [3, 2, 3, 1]);
   assert.deepEqual(Object.keys(a.top[0]), ['node', 'name', 'px', 'htmlPx', 'figmaPx', 'hint', 'fix']);
-  assert.deepEqual([a.top[0].name.length, a.top[0].hint.length, a.top[1].flat, a.suggest[0]], [60, 200, true,
+  assert.deepEqual([a.top[0].name.length, a.top[0].hint.length, a.top[1].flat, a.suggest[0]], [60, 400, true,
     { node: '6:0', entry: { bake: 'ref', note: 'glass' }, rect: [0, 0, 10, 10], share: 0.01, textNodes: 1, bakedOver: 2 }]);
   // Ten frames with long top node IDs exceed the full limit; remove top/suggest first while retaining frames.
   const heavy = Array.from({ length: 10 }, (_, i) => frame(i, { top: [0, 1, 2].map(k => top(k, { node: long('I', 600) })), suggest: [proposal(0, { node: long('J', 600) })] }));
@@ -137,10 +137,10 @@ test("stdoutOf caps top/suggest at 3 each with compact fields and truncation; ab
   assert.deepEqual([b.frames.length, b.frames.some(x => 'top' in x || 'suggest' in x || 'topOmitted' in x), b.omittedFrames], [10, false, 0]);
 });
 
-test("stdoutOf and checkStdout include hint-only clusters and seam warnings, capped per frame and removed at level two with top/suggest", () => {
+test('stdoutOf and checkStdout include hint-only clusters and seam warnings, capped at 3 x 400 characters and removed at level two with top/suggest', () => {
   const hints = ['\u6839\u8282\u70b9', '\u9762\u79ef', long('\u6587'), '\u63a5\u7f1d'];
   const a = fits(stdoutOf(manifest([frame(1, { hints })]))).frames[0];
-  assert.deepEqual([a.hints.length, a.hintsOmitted, a.hints[2].length], [3, 1, 200]);
+  assert.deepEqual([a.hints.length, a.hintsOmitted, a.hints[2].length], [3, 1, 400]);
   const heavy = Array.from({ length: 10 }, (_, i) => frame(i, { hints: [0, 1, 2].map(() => long('\u63d0', 200)), top: [top(0, { node: long('I', 600) })] }));
   assert.equal(fits(stdoutOf(manifest(heavy))).frames.some(x => 'hints' in x), false);
   const page = fits(checkStdout({ pages: [{ file: '/o/p.html', verdict: 'pass-with-findings', hints: ['\u6839\u8282\u70b9'] }] })).pages[0];
@@ -159,26 +159,26 @@ test('instruction points failures to top/block images, replaces only transform f
 
 test('checkStdout includes page top/suggest/focus/zoom/warnings/error across four projections under 16 KiB; level three omits clean pages and warning/error details, with error/font/suggestion/zoom guidance', () => {
   const zoom = { node: '3:1', extract: id(9), scale: 4, size: [160, 80], dir: 'zoom-3-1', mismatched: 12, aa: 3, diffRatio: 0.001, shift: { dx: 0, dy: -0.5, before: 900, after: 10 },
-    fix: { style: { transform: 'translate(0px,0px)' } }, hint: long('\u63d0', 300), warnings: ['w'] };
+    fix: { style: { transform: 'translate(0px,0px)' } }, hint: long('h', 600), warnings: ['w'] };
   const page = (i, extra = {}) => ({ html: `/o/${long('p', 120)}${i}.html`, node: `1:${i}`, extract: id(i), verdict: 'pass-with-findings', diffRatio: 0.01, mismatched: 10, blocks: 0,
     context: { overrides: 'none', exact: true }, top: [0, 1, 2, 3].map(k => top(k)), suggest: [proposal(0)], clusters: [{ target: '6:0' }], hints: ['h'], focus: [top(7)], zoom,
     fonts: [{ family: long('F', 100), style: 'Light', postScriptName: long('P', 100), chromeUsed: long('C', 100), figmaMissing: true }],
-    warnings: [long('w', 300), long('x', 300), long('y', 300), 'x'], check: '/c.json', ...extra });
-  const light = { warnings: [long('w', 300), 'b', 'c', 'x'] };
-  const small = fits(checkStdout({ pages: [page(1, light), page(2, { ...light, verdict: undefined, error: { code: 'COMMAND_FAILED', message: long('e', 400) } })] }));
+    warnings: [long('w', 600), long('x', 600), long('y', 600), 'x'], check: '/c.json', ...extra });
+  const light = { warnings: [long('w', 600), 'b', 'c', 'x'] };
+  const small = fits(checkStdout({ pages: [page(1, light), page(2, { ...light, verdict: undefined, error: { code: 'COMMAND_FAILED', message: long('e', 800) } })] }));
   const [p, q] = small.pages;
   assert.deepEqual([p.top.length, p.topOmitted, p.suggest.length, p.focus.length, Object.keys(p.zoom), p.zoom.warnings, p.warnings.length, p.warnings[0].length, 'clusters' in p, 'fonts' in p],
-    [3, 1, 1, 1, ['node', 'scale', 'size', 'mismatched', 'diffRatio', 'shift', 'fix', 'hint', 'warnings', 'dir'], ['w'], 3, 200, false, false]);
-  // Project zoom errors and warnings, each bounded to 200 characters.
-  const failed = fits(checkStdout({ pages: [page(3, { zoom: { node: '3:1', extract: id(9), scale: 4, size: [160, 80], dir: 'zoom-3-1', error: long('d', 300), warnings: [long('s', 300)] } })] })).pages[0].zoom;
-  assert.deepEqual([Object.keys(failed), failed.error.length, failed.warnings[0].length], [['node', 'scale', 'size', 'error', 'warnings', 'dir'], 200, 200]);
-  assert.deepEqual([q.error.code, q.error.message.length, small.totals.errors], ['COMMAND_FAILED', 300, 1]);
+    [3, 1, 1, 1, ['node', 'scale', 'size', 'mismatched', 'diffRatio', 'shift', 'fix', 'hint', 'warnings', 'dir'], ['w'], 3, 400, false, false]);
+  // Zoom screenshots differing from reference size by more than 1 px expose error/warnings in projection, each capped at 400 characters.
+  const failed = fits(checkStdout({ pages: [page(3, { zoom: { node: '3:1', extract: id(9), scale: 4, size: [160, 80], dir: 'zoom-3-1', error: long('d', 600), warnings: [long('s', 600)] } })] })).pages[0].zoom;
+  assert.deepEqual([Object.keys(failed), failed.error.length, failed.warnings[0].length], [['node', 'scale', 'size', 'error', 'warnings', 'dir'], 400, 400]);
+  assert.deepEqual([q.error.code, q.error.message.length, small.totals.errors], ['COMMAND_FAILED', 600, 1]);
   assert.match(small.instruction, /^For pages with errors, see error\. Local fonts do not match the declared fonts: F{61}\.\.\. Light \(P{61}\.\.\. -> C{61}\.\.\.\) \(see fonts in each page's check\.json\): install or fix the local fonts, then rerun; fonts with figmaMissing true are missing in Figma too, so the reference image itself uses a substitute font\. Background-dependent approximations got bake:"ref" suggestions \(pages\[\]\.suggest; full list in each page's check\.json\): review the block crops and add a note before writing them into overrides, and delete or rewrite the entries listed in replaces beforehand; fix text and position first and use ref only as a last step\. --node and --zoom results are in pages\[\]\.focus and pages\[\]\.zoom; zoomed images are in zoom-<node>\/ in the evidence directory$/);
   // Level two: four detailed pages exceed the limit but fit without details. Level three: omit clean pages among 50. Level four: omit all pages.
   assert.ok(bytes(checkStdout({ pages: [page(0)] })) * 4 > STDOUT_LIMIT);
   const second = fits(checkStdout({ pages: Array.from({ length: 4 }, (_, i) => page(i)) }));
   assert.deepEqual([second.pages.length, second.pages.some(x => x.top || x.suggest || x.focus), Object.keys(second.pages[0].zoom), second.pages[0].warnings.length], [4, false, ['node', 'dir'], 3]);
-  const many = Array.from({ length: 50 }, (_, i) => page(i, i % 2 ? { verdict: 'clean' } : { error: { code: 'COMMAND_FAILED', message: long('e', 400) } }));
+  const many = Array.from({ length: 50 }, (_, i) => page(i, i % 2 ? { verdict: 'clean' } : { error: { code: 'COMMAND_FAILED', message: long('e', 800) } }));
   const third = fits(checkStdout({ pages: many }));
   assert.deepEqual([third.pages.length, third.omittedPages, third.pages.some(x => x.warnings || x.error.message), third.pages[0].error], [25, 25, false, { code: 'COMMAND_FAILED' }]);
   const fourth = fits(checkStdout({ pages: many.map(x => ({ ...x, html: `/o/${long('q', 1000)}.html` })) }));

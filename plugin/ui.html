@@ -1,9 +1,11 @@
 <!doctype html><html lang="en"><meta charset="utf-8">
 <!--
-[INPUT]: Figma Plugin API, bridge configuration and the sandbox/iframe message channel.
-[OUTPUT]: Plugin panel and authenticated message relay.
-[POS]: Iframe network relay and connection/task panel between the local bridge and Figma sandbox.
-[PROTOCOL]: When changing this file, update this header and check AGENTS.md.
+  [INPUT]: Uses bridge-injected SESSION_CONFIG (candidate ports, global pairing token and plugin version), X-Figma-Session (revalidate binding on change), X-Figma-Binding (project/binding), X-Long-Poll (immediate continuation), and main.js postMessage messages; request the current fileKey before polling.
+  [OUTPUT]: Relays bridge tasks to main.js, returns results, write-ahead snapshots and high-risk decisions, and forwards checkpoint/approval acknowledgments. Progress triggers immediate heartbeats, and heartbeat cancellations go to main. Active runs use a separate hold=1 channel for prompt cancellation while hidden.
+            The panel shows connection state, actionable guidance, approval, project/target with canvas focus, active progress, five recent results and injected pluginVersion. Content changes request a window resize through main.
+  [POS]: The plugin's iframe network relay and panel. main.js never makes network requests: sandbox fetch lacks request cancellation and panel visibility. Network-driven long polling claims work and immediately returns results without hidden-timer delays.
+         Polls and heartbeats identify the open file; active tasks heartbeat without claiming more work. The global plugin serves multiple projects: probes acquire no lease, idle discovery matches fileKey, active discovery matches bindingId across port changes, and unavailable original projects leave results preserved for later delivery.
+  [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
 -->
 <style>
 /* Use Figma themeColors with fallbacks only for previews outside Figma. color-mix derives subtle status backgrounds from icon colors in both light and dark themes. */
@@ -41,11 +43,11 @@ h2{display:flex;align-items:center;justify-content:space-between;margin:0 0 4px;
 .sub{grid-column:2/-1;color:var(--text2);overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.failed .sub{color:var(--danger-text)}
 footer{display:flex;justify-content:space-between;padding-top:8px;border-top:1px solid var(--border);color:var(--text3)}#plugin-version{font:var(--mono)}
 </style>
-<header><p id="status" class="status idle"><span id="state" role="status" aria-live="polite">Connecting</span></p><button id="hide-panel" title="Hide the panel and keep the plugin running; closing the window disconnects the agent">Hide</button></header>
+<header><p id="status" class="status idle"><span id="state" role="status" aria-live="polite">Connecting</span></p><button id="hide-panel" title="Hide the panel while the plugin keeps running; closing the window disconnects the agent">Hide</button></header>
 <p id="state-detail" class="notice idle">Connecting to the local bridge.</p>
 <div id="approval" hidden><h2>Approval required</h2><p id="approval-reason"></p><details><summary>View scope and script</summary><pre id="approval-details"></pre></details>
   <div class="actions"><button id="reject">Reject changes</button><button id="approve" class="primary">Allow changes</button></div></div>
-<section><h2>Target<span id="project" hidden></span></h2><button id="target-name" title="Locate and select on the canvas" disabled>Checking...</button><p id="target-meta" class="meta"></p></section>
+<section><h2>Target<span id="project" hidden></span></h2><button id="target-name" title="Locate and select on canvas" disabled>Checking...</button><p id="target-meta" class="meta"></p></section>
 <section><h2>Tasks</h2>
   <div id="job" class="job running" hidden><span class="mark">●</span><span id="job-op" class="op"></span><span id="job-label" class="label"></span><span id="job-time" class="time"></span><span id="job-phase" class="sub"></span></div>
   <ol id="recent"></ol><p id="empty" class="meta">Waiting for an agent task</p></section>

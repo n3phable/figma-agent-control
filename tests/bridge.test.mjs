@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, ../src/bridge.mjs, ../src/project.mjs, ./helpers/bridge.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for bridge; tests use local synthetic inputs and isolated state.
+ * [INPUT]: tests/helpers/bridge fixture/send and constants; src/bridge start; src/project init/root/json.
+ * [OUTPUT]: No exports; node:test cases for role credentials, plugin versions, /job fields, immutable requestId including preview names, concurrent submission gates, delivery/checkpoint/approval/completion, body limits, pairing diagnostics, and multiple plugin instances.
+ * [POS]: Single-request bridge contracts checked against docs/protocol.md without running plugin code. Session state and lifecycle belong to bridge-session.test.mjs; both share bridge helpers and complement the real-plugin smoke tests.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -117,14 +117,14 @@ test('Every protocol.md job-field constraint rejects out-of-bounds values with 4
   const accepted = {
     'minimal run': RUN,
     '20 libraries totaling exactly 2 MiB': { ...RUN, libs: [lib('big', 'a'.repeat(2 * MiB - 19)), ...Array.from({ length: 19 }, (_, i) => lib(`l${i}`, 'a'))] },
-    'snapshotDepth 1（run）': { ...RUN, snapshotDepth: 1 },
-    'snapshotDepth 31（inspect）': { operation: 'inspect', snapshotDepth: 31 },
+    'snapshotDepth 1 (run)': { ...RUN, snapshotDepth: 1 },
+    'snapshotDepth 31 (inspect)': { operation: 'inspect', snapshotDepth: 31 },
     '2 nodes': { ...preview, nodes: ['1:3', '1:4'] },
     '50 nodes': { ...preview, nodes: nodes(50) },
     '1 name': named(['\u9996\u9875 · 1440']),
     '50 names': named(names(50)),
     '200-character name': named(['\u5b57'.repeat(200)]),
-    'scale 0.1（preview）': { ...preview, scale: 0.1 },
+    'scale 0.1 (preview)': { ...preview, scale: 0.1 },
     'scale 4 on run with expect': { ...RUN, expect: 'changed', scale: 4 },
     'data exactly 1 MiB': { ...RUN, data: 'a'.repeat(MiB - 2) },
     'expect unchanged with tolerance 0': { ...RUN, expect: 'unchanged', tolerance: 0 },
@@ -132,7 +132,7 @@ test('Every protocol.md job-field constraint rejects out-of-bounds values with 4
     'instance descendant target': { operation: 'inspect', targetNodeId: 'I1:2;3:4' },
     'variables': { operation: 'variables' },
     'UUID requestId': { operation: 'inspect', requestId: uuid(9) },
-    'cleanOnFail（run）': { ...RUN, cleanOnFail: true },
+    'cleanOnFail (run)': { ...RUN, cleanOnFail: true },
     'cleanOnFail false': { ...RUN, cleanOnFail: false }
   };
   for (const [name, body] of Object.entries(rejected)) {

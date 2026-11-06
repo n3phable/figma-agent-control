@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:path, ./project.mjs.
- * [OUTPUT]: Exports report.
- * [POS]: Reads recorded jobs to summarize timings, outcomes and repeated requests.
+ * [INPUT]: Uses ./project.mjs root/json/isJobId, node:fs/promises and node:path.
+ * [OUTPUT]: report(cwd, { since }).
+ * [POS]: Read-only session summaries from local evidence: task duration distributions, gaps and repeated execution, replacing manual assembly of acceptance reports.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs/promises';

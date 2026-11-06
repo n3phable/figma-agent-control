@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:timers/promises, ./helpers/plugin.mjs, ./helpers/harness.mjs, ../src/record.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for cancel; tests use local synthetic inputs and isolated state.
+ * [INPUT]: tests/helpers/plugin plugin for the real plugin in a VM; tests/helpers/harness harness/writeScript for a real bridge, UI, and CLI subprocess; src/record scriptTrace.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Execution progress and cancellation tests: cancel preparation, approval, checkpointing, and execution; reject stale replies and wrong channelNonce values; preserve stacks and created assets when Figma calls hang; block subsequent Figma access; cache successful font loads across runs. End-to-end cases cover hidden-panel heartbeat progress and cancellation, wait evidence, and queued versus delivered tasks.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

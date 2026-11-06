@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:fs, node:os, node:path, ../src/project.mjs, ../src/session.mjs, ../src/connection.mjs, ../src/bridge.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for project session; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/project parseTarget/init/readBinding/save/json/isNodeId/isJobId/installPlugin/pluginHome; src/session pairingToken/unfinishedOperations/acquireLock; src/connection createConnection; src/bridge start on port 0 solely to reject legacy directories before locking.
+ * [OUTPUT]: No exports; node:test cases for bindings/legacy isolation, atomic writes, identifiers, pairing credentials, plugin directories/incremental installation, recovery, locks/stale-lock takeover, and connection leases.
+ * [POS]: Persistence and lease unit tests without plugin execution or HTTP. Stub process.kill for probes only; inject lease clocks without sleeping; install plugins only in temporary directories and compare ~/.config paths without touching them.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

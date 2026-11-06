@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, ../src/html/suggest.mjs, ../src/html/attrib.mjs, ../src/html/generate.mjs, ../src/html/overrides.mjs, ./helpers/generate.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for html suggest; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/html/suggest suggest/seams/seamLimit/hardEdge/BACKGROUND/SPAN/SEAM_STEP; src/html/attrib figmaPainted/raster; src/html/generate generate; src/html/overrides invalidOverrides; helpers/generate extracted/run.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Chrome-free bake suggestion and seam tests: clustering, component-level targets/merging, structural-block and ownPx triggers with injected thresholds, hint-only root/area/text-mismatch cases, replaces, generator-consistent rectangles/bakedOver, seam edge/mean/max metrics including other refs and premultiplied transparency, and exact SEAM_STEP boundaries.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

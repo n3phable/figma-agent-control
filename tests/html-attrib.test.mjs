@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, ../src/html/attrib.mjs, ../src/html/shift.mjs, ../src/html/generate.mjs, ../src/html/match.mjs, ./helpers/generate.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for html attrib; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/html/attrib figmaPainted/inlinedIslands/raster/frameBox/tally/boxes/rank/GAP_PX/GAP_RATIO; src/html/shift SHIFT/region/search/worth/relocate/advise/moved; src/html/match match/crop; generate; helpers/generate extracted/run.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Chrome-free attribution and shift tests: Figma paint rectangles/order, masks/clipping/islands/skip/ref, vectors and zero-height lines; shared frameBox/generator origins; two-sided ranking and gaps; search regions/reasons/candidates/scales/thresholds, local coordinate conversion including rotated/flipped/singular parents, fixes/hints, and direction text.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test } from 'node:test';
@@ -206,7 +206,7 @@ describe('shift: displacement search and local conversion', () => {
     assert.deepEqual(advise({ s: [-4, 0], before: 800, after: 600 }, 4, at), { shift: { dx: 1, dy: 0, before: 800, after: 600 }, hints: ['After moving right 1px: differing pixels 800->600', 'Reduction too small; no fix given'] });
     const flat = advise({ s: [0, -2], before: 100, after: 0 }, 1, { style: 'left:5px;top:6px', chain: [1, 0, 0, 1] }, null);
     assert.deepEqual(flat, { shift: { dx: 0, dy: 2, before: 100, after: 0 }, fix: { style: { transform: 'translate(5px,8px)' } }, flat: true,
-      hints: ['After moving down 2px: differing pixels 100->0', 'Node is written as left/top in the page; still write overrides as transform'] });
+      hints: ['After moving down 2px: differing pixels 100->0','Node is written as left/top in the page; still write overrides as transform'] });
   });
 
   test('moved lists x first, maps signs to right/left and down/up, and preserves decimals', () => {
