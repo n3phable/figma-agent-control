@@ -36,6 +36,8 @@ Start work when `connected` is `true`. The current working directory is the proj
 
 - One bridge executes one job at a time. Multiple agents should retrieve data sequentially, then analyze it independently offline.
 
+- A single plugin installation serves all projects. Bridges choose ports `32523`–`32530`; the plugin selects a bridge for its current file, or the original binding when it holds a pending result. Remove obsolete duplicate development-plugin installations if pairing fails.
+
 - Long polling continues while the panel is hidden. Reconnecting after a bridge restart may wait for a throttled timer. Figma can also throttle an invisible window or background file; see [stalled jobs](#stalled-jobs).
 
 - Plugin-file changes can trigger Figma's development-plugin reload. If the panel reports an outdated plugin, rerun it. Its footer version should match `status.pluginVersion`.
@@ -238,6 +240,8 @@ An invisible or minimized Figma window can throttle timers and host calls heavil
 
 - Growing `changes` indicates progress. Keep waiting. If a call remains stuck, `cancel <job-id>` requests cancellation and waits for its result.
 
+- Cancellation before script execution gives `executionStarted: false`. Cancellation during execution follows the normal failure/cleanup path and points the trace at the pending call when available.
+
 - Cancellation cannot terminate an already suspended JavaScript continuation. Future accesses through the `figma` proxy throw, but direct writes through node objects already obtained can still occur if the pending call returns. Closing and reopening the plugin is required to terminate that continuation. Do not kill Figma or trigger global Undo as a generic recovery step.
 
 Progress timers and failure cleanup can themselves be throttled. The held-heartbeat cancellation channel does not depend on the panel's timer, but a synchronous loop must yield before the plugin can handle anything.
@@ -314,6 +318,8 @@ Fix `beyond-timeline`, `first-key-easing`, `static-track`, and `track-conflict` 
 Write to a top-level frame without a shallow depth when its subtree fits the snapshot budget. Changes to `manualKeyframeTracks`, `animationStyles`, and `timelines` appear in the change set. Components and variant sets themselves cannot receive animation writes; their child layers can. Instance sublayers inherit motion and cannot be edited directly; instances themselves can. Do not detach an instance merely to bypass this limitation without authorization.
 
 Static PNG exports do not show keyframes, so do not use `--expect` for motion. Export video and inspect contact sheets. Video export can lag behind a change or fail for a newly created frame; `exportMotion` retries `Video export failed`, and `differentFrom` also waits for different bytes. Do not use `differentFrom` for a change intended to preserve rendering. Plan-specific limits can affect resolution, frame rate, and export settings.
+
+`frames` accepts MP4/WebM files or successful run IDs containing exactly one video. It samples eight frames by default; `--at 0,0.15,0.3` selects exact times, up to 24 per call. `--dump` saves original-resolution PNGs with numbered filenames. Identical source videos produce a warning because an export may still reflect the old state.
 
 Additional observed Motion behavior: keyframes do not update static `x`/`opacity`; animation beyond the timeline is accepted but truncated in playback; rotation uses the node center and positive values rotate counterclockwise; values before the first key equal that key's value. COLOR keyframe values are RGBA rather than color-variable aliases. Verify TIMING-variable units and Beta API details in the current editor before depending on them.
 
@@ -451,15 +457,3 @@ The flag is an assertion that the previous plugin has actually stopped. The insp
 - Store plugin data with namespaced `setSharedPluginData`, which works with the generated development manifest.
 
 Keep `.figma-agent-control/` out of version control. It includes credentials and design evidence. Deliver only the required result artifacts, retain unreviewed evidence, and stop bridges you started when their work is complete.
-
-## Cancellation boundary
-
-An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
-
-## Frame dump filenames
-
---dump writes original-size PNGs using rounded sample times such as 0.300s.png. Distinct times rounding to the same millisecond can collide; avoid such pairs in one invocation.
-
-## Pending results and port changes
-
-Discovery selects a bridge by the current file. Keep the original project available while a result is pending.

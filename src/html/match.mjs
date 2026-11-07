@@ -1,8 +1,15 @@
 /**
- * [INPUT]: Inputs and types declared below; no runtime package dependencies.
- * [OUTPUT]: Exports match, blockscan, differing, crop, upscale, stack.
- * [POS]: Pixel comparison, structural difference grouping and RGBA evidence helpers.
- * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
+ * [INPUT]: No dependencies; accepts equally sized RGBA buffers from ../png.mjs decodePng.
+ * [OUTPUT]: match(a, b, width, height, { threshold }) -> { mismatched, aa, mask, image }, blockscan(mask, width, height, opts) -> structural blocks,
+ *           differing(a, b, width, height, rect, sx, sy, threshold?, limit?) -> shifted difference count, crop(rgba, width, [x0, y0, x1, y1]) -> cropped RGBA,
+ *           upscale(rgba, width, height, f) -> nearest-neighbor RGBA, stack(parts, width) -> vertically combined RGBA.
+ * [POS]: Visual similarity definition shared by check, shift and zoom. png.mjs diffPng instead measures whether an image changed, using zero threshold and premultiplied alpha for --expect/image-diff;
+ *        never mix the two comparisons. differing cheaply scores shift candidates; page uses crop for baked references;
+ *        upscale and stack assemble structural-block evidence crops.
+ *
+ * match is ported from pixelmatch 7.2.0 (https://github.com/mapbox/pixelmatch), preserving squared YIQ thresholds, antialias detection,
+ * translucent blending over a checkerboard, and grayscale difference images (alpha 0.1, red differences, yellow antialiasing). Output centers on a mask: 0 equal, 1 different, 2 antialiased.
+ * Original license:
  *
  *   ISC License
  *
@@ -19,6 +26,9 @@
  *   OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
  *   TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
  *   THIS SOFTWARE.
+ *
+ * blockscan uses ui2html tools/blockscan.mjs's algorithm (16 px grid, density 0.22, minimum 150 px), reading mask directly instead of detecting red pixels in a difference image.
+ * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 
 // -- Image matching: pixelmatch 7.2.0 ------------------------------------

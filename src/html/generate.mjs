@@ -1,13 +1,17 @@
 /**
- * [INPUT]: Imports node:fs, node:crypto, ./css.mjs.
- * [OUTPUT]: Exports GENERATOR, fontRequests, generate, embed, dataUri.
- * [POS]: Pure generation of static frame markup and asset/reference placeholders.
+ * [INPUT]: Uses ./css.mjs styling functions, VECTORS and FRAMES; node:fs/node:crypto only compute GENERATOR at module load.
+ *          Accepts LandedExtractOutput from ./extract-contract.js, including same-shaped offline data where renderBounds may be absent.
+ * [OUTPUT]: GENERATOR, generate(output, options) -> GenerateResult, fontRequests(output) -> FontRequest[], embed(html, uris) -> { html, missing },
+ *           dataUri(type, bytes), and FontRequest/OverrideEntry/GenerateOptions/GenerateResult/RefPlacement/Approximation/Stale/FontUse types.
+ * [POS]: Pure extraction-to-HTML assembly: nested DOM, matrix positions (left/top for escaping blends), mask wrappers, island inclusion/veto and bake decisions,
+ *        fill/stroke layers, root opacity, reversed auto-layout paint order, box/content shadows, integer line heights and baseline compensation, font declarations, overrides/staleness, and baked-reference placeholders/refs after #canvas.
+ *        Also owns the document template and output invariants. Callers supply parsed font metrics/SVG; bitmaps and reference crops remain fac-asset placeholders until embed replaces them with data URIs. css.mjs maps individual values.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { VECTORS, FRAMES, num, px, esc, cssStr, place, paintLayer, radius, stroke, effects, backdrop, blend, lineHeight, baselineShift, postScriptGuess,
-  segmentStyle, textBox, maskImage, vectorSvg, fillAlpha, bakeReason, paintsBackground, painted } from './css.mjs';
+  segmentStyle, textBox, maskImage, vectorSvg, fillAlpha, bakeReason, paintsBackground, painted, paintOrder } from './css.mjs';
 /** @import { LandedExtractOutput, ExtractNode, TextSegment, BinaryFile } from './extract-contract.js' */
 /** @import { Style, Matrix, Paint, FontMetrics } from './css.mjs' */
 /**
@@ -389,7 +393,7 @@ export function generate(output, { fonts = {}, svgs = {}, overrides = {}, extrac
   /** @param {ExtractNode} node @param {Matrix} M @param {boolean} listed @param {string} iso */
   function children(node, M, listed, iso) {
     let out = '', P = M, open = 0, mask = /** @type {ExtractNode | null} */ (null);
-    for (const c of node.children ?? []) {
+    for (const c of paintOrder(node)) {
       if (!c.isMask) {
         if (mask && bg.has(c)) approx(mask, 'mask-isolation');
         out += emit(c, P, listed, iso);
@@ -455,10 +459,10 @@ export function generate(output, { fonts = {}, svgs = {}, overrides = {}, extrac
 
   // -- Document --
   // Root fills, strokes, radii and effects paint on #canvas without a root transform; descendants start from root coordinates.
-  const canvas = /** @type {Style} */ ({}), layers = surface(root, canvas, 1);
+  const canvas = /** @type {Style} */ ({}), layers = surface(root, canvas, root.opacity ?? 1);
   stats.nodes++;
   finish(root, canvas);
-  const kids = children(root, [1, 0, 0, 1, 0, 0], false, '');
+  const kids = children(root, [1, 0, 0, 1, 0, 0], false, canvas.opacity ? 'opacity' : canvas.filter ? 'filter' : '');
   // References are already final composites, so paint refs after #canvas at body end in extract preorder. Do not reapply ancestor/node opacity, blending or effects,
   // nor root effects/overrides applied to #canvas.
   const top = refs.map(r => {

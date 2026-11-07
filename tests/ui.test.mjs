@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:vm, node:crypto, ./helpers/harness.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for ui; tests use local synthetic inputs and isolated state.
+ * [INPUT]: plugin/ui.html script with SESSION_CONFIG replaced before node:vm execution; controlled fetch, document, parent, window, and setInterval mocks.
+ * [OUTPUT]: No exports; relay behavior tests for file discovery, multiport/binding-ID routing, credentials, delivery/completion/long-poll renewal, cancellation holds, serialized ticks, approval/checkpoint forwarding, reduced failure evidence, request timeouts, foreign-project results, pairing/version errors, footer version, target/task panels, visibility/session changes, and network recovery.
+ * [POS]: Plugin relay unit tests using fetch mocks to assert exact request sequences without a bridge; complements harness-driven end-to-end coverage.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -487,6 +487,29 @@ test('Multiport discovery probes once per port, selects the current-file binding
   await f.tick();
   assert.deepEqual(f.calls.at(-1).origin, 'http://localhost:1234');
   assert.deepEqual(f.toMain.at(-1), { type: 'check-target', binding: { fileKey: 'other', nodeId: '1:1', project: 'project-b' } });
+});
+
+test('If same-file project B takes A\'s port, retain A\'s result and route by bindingId when A returns on another port, without reexecution', async () => {
+  const f = plugin({ ports: [1234, 1235] }), a = { ...BINDING, id: 'binding-a', project: 'A' }, b = { ...BINDING, id: 'binding-b', project: 'B' };
+  const header = binding => ({ headers: { 'X-Figma-Binding': JSON.stringify(binding) } });
+  const job = { id: 'job-a', bindingId: a.id, operation: 'inspect' };
+  f.reply('probe', header(a), new TypeError('offline'));
+  f.reply('/poll', { session: 'A-1', binding: a, body: job });
+  await f.tick();
+  const channelNonce = f.toMain.at(-1).channelNonce, result = { id: job.id, ok: true, output: { value: '\u539f\u7ed3\u679c' } };
+  f.reply('/complete', { ...header(b), status: 409, body: { code: 'FOREIGN_JOB' } });
+  await f.fromMain({ ...result, channelNonce });
+  assert.equal(f.state(), 'Waiting for original project');
+  f.reply('probe', header(b), new TypeError('Project A is not running yet'));
+  await f.tick();
+  assert.equal(f.bodies('/complete').length, 1, 'Finding only B must not resend A\'s result to B');
+  f.reply('probe', header(b), header(a));
+  f.reply('/complete', { session: 'A-2', binding: a, body: { received: true } });
+  await f.tick();
+  assert.deepEqual(f.calls.filter(c => c.path === '/complete').map(c => c.origin), ['http://localhost:1234', 'http://localhost:1235']);
+  assert.deepEqual(f.bodies('/complete'), [result, result]);
+  assert.equal(f.toMain.filter(m => m.id === job.id).length, 1);
+  assert.equal(f.state(), 'Connected');
 });
 
 test('Network failures distinguish automatic recovery from manual checks, retaining and retrying active results without reexecution', async () => {

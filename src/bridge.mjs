@@ -1,7 +1,12 @@
 /**
- * [INPUT]: Imports node:http, node:fs/promises, node:path, node:crypto, node:url, ./project.mjs, ./connection.mjs, ./session.mjs, ./png.mjs, ./record.mjs.
- * [OUTPUT]: Exports DEFAULT_PORT, PORT_RANGE, DEFAULT_PORTS, PLUGIN_SCRIPTS, pluginMain, start.
- * [POS]: Owns authenticated CLI/plugin transport, single-job delivery and durable outcomes.
+ * [INPUT]: Uses ./project.mjs paths, atomic writes, hash, JSON reads, ID validation and readBinding; ./connection.mjs plugin leases; ./session.mjs unresolved tasks, single-instance locking, NOT_DELIVERED and ABANDONED;
+ *          ./png.mjs pngSize/imageStats/diffPng; ./record.mjs changeSet/scriptTrace; and node:http. Startup reads ../plugin/ scripts in PLUGIN_SCRIPTS order plus ui.html, computes their version and injects configuration.
+ *          Type checking uses BinaryFile from ./html/extract-contract.d.ts for persisted binary descriptors; html/ is not a runtime dependency.
+ * [OUTPUT]: start(cwd, port, { pluginToken, ports?, ... }) -> { port, close, version, recovered, plugin }, plus DEFAULT_PORT, PORT_RANGE, DEFAULT_PORTS, PLUGIN_SCRIPTS and pluginMain(dir?) for shared script assembly in tests. connect supplies the global pluginToken and installs the returned configured plugin files.
+ * [POS]: The sole local relay between CLI and Figma plugin, enforcing bridge-side invariants: role credentials, plugin version, bound file and snapshot target, one active task,
+ *        immutable requestId content, write-ahead logging, and unknown writes blocking delivery and new runs. Read-only tasks permit takeover after disconnect. Probes return binding identity without acquiring a lease. Atomic result.json persistence is the only commit point; record.scriptTrace maps script errors before persistence.
+ *        Scope checks, final pre-execution validation, Undo boundaries and channelNonce belong to the plugin; session owns the process lock and connection owns instance leases. /poll long-polls and wakes on enqueue; only instances in the bound file without foreign tasks can claim work.
+ *        Heartbeat progress is mapped to script locations, annotated with window visibility, kept for /status and persisted to progress.json. /cancel records non-execution for undelivered runs or signals delivered runs through heartbeat responses; hold=1 provides prompt cancellation even while hidden.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import http from 'node:http';
@@ -106,7 +111,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
   const pluginIssues = /** @type {Record<string, string>} */ ({}), noteIssue = (/** @type {string} */ code) => { pluginIssues[code] = new Date().toISOString(); };
   // Response headers tell the global plugin which project and binding this bridge serves; bindings no longer live in generated plugin files.
   // Headers must be ASCII: project directory names may contain non-ASCII characters, encoded as JSON \uXXXX escapes and restored by plugin JSON.parse.
-  const bindingHeader = JSON.stringify({ fileKey: binding.fileKey, nodeId: binding.nodeId, project: path.basename(path.resolve(cwd)) })
+  const bindingHeader = JSON.stringify({ id: binding.id, fileKey: binding.fileKey, nodeId: binding.nodeId, project: path.basename(path.resolve(cwd)) })
     .replace(/[^\x20-\x7e]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
   const jobs = /** @type {Map<string, Job>} */ (new Map()), unresolved = /** @type {Set<string>} */ (new Set());
   const completing = new Map(), checkpoints = new Map(), approvals = new Map(), deliveries = new Map(), waiters = new Set();
@@ -260,7 +265,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       if (job.operation === 'run' && data.before !== undefined && data.after !== undefined) {
         try { data.changes = changeSet(data.before, data.after, job.snapshotDepth); }
         catch (error) { data.changes = { unavailable: error.message }; }
-      } else if (job.operation === 'run' && data.ok === true && typeof data.afterError === 'string') data.changes = { unavailable: `After-snapshot unavailable (${data.afterError.slice(0, 300)}); verify with preview or inspect --node` };
+      } else if (job.operation === 'run' && data.ok === true && typeof data.afterError === 'string') data.changes = { unavailable: `After-snapshot unavailable (${data.afterError.slice(0, 1000)}); verify with preview or inspect --node` };
       delete data.afterError;
       // Map script stacks back to library/body lines. Mapping failures must not block persistence: repeated /complete rejection makes the plugin replace evidence with a reduced failure. Always retain the raw stack.
       if (job.operation === 'run' && typeof data.stack === 'string') try { const trace = scriptTrace(job, data.stack, data.executionStarted); if (trace.length) data.trace = trace; } catch (_) {}
@@ -303,6 +308,8 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
       if (req.method === 'GET' && u.pathname === '/status') return reply(200, { sessionId, pid: process.pid, connected: connection.connected, connectionState: connection.state, pollAgeMs: connection.ageMs,
         active, ...progressOf(active), unresolved: [...unresolved], binding, pluginVersion: version, pluginIssues, jobs: [...jobs.values()].slice(-20).map(j => ({ id: j.id, operation: j.operation, state: j.state, ...(j.label ? { label: j.label } : {}) })) });
       if (req.method === 'GET' && ['/poll', '/heartbeat'].includes(u.pathname)) {
+        // Port discovery does not authorize task claims: do not renew leases or take over active read-only work.
+        if (u.pathname === '/heartbeat' && u.searchParams.get('probe') === '1') return reply(200, null);
         // Only instances in the bound file without foreign tasks acquire the connection. Others receive binding headers for panel guidance but cannot claim tasks or renew leases.
         const file = u.searchParams.get('file');
         if (file !== binding.fileKey) { noteIssue(file ? 'WRONG_FILE' : 'NO_FILE_KEY'); return reply(200, null); }
@@ -494,7 +501,7 @@ export async function start(cwd, port = DEFAULT_PORT, { pluginToken, pollHoldMs 
     if (sessionTouched) await fs.rm(path.join(dir, 'session.json'), { force: true });
     await lock.close(); await fs.unlink(path.join(dir, 'bridge.lock'));
     if (error.code === 'EADDRINUSE') throw Object.assign(Error(candidates.length > 1
-      ? `Port ${candidates[0]}-${candidates.at(-1)} are all in use: at most ${candidates.length} project bridges can run at once. Run figma-agent-control stop in unused project directories. Another application may own the port; inspect it with lsof -nP -iTCP:${candidates[0]}-${candidates.at(-1)})`
+      ? `Ports ${candidates[0]}-${candidates.at(-1)} are all in use: at most ${candidates.length} project bridges can run at once. Run figma-agent-control stop in a project no longer in use, or check other programs with lsof -nP -iTCP:${candidates[0]}-${candidates.at(-1)}`
       : `Port ${port} is in use: it may be another project's figma-agent-control bridge (run figma-agent-control stop in that directory, or press Ctrl-C in its terminal), or another program (check with lsof -nP -iTCP:${port})`), { code: 'EADDRINUSE' });
     throw error;
   }

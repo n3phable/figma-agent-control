@@ -1,7 +1,9 @@
 /**
- * [INPUT]: Imports @figma/plugin-typings/plugin-api-standalone.js.
- * [OUTPUT]: Exports Mixed, ExtractEffect, ExtractComponentProperties, ExtractRequest, Bounds, TextSegment, ExtractNode, ExtractStats, ExtractImage, ExtractOutput, PluginExtractOutput, BinaryPlaceholder, BinaryFile, LandedBinary, LandedExtractOutput, ExtractResult.
- * [POS]: Shared type boundary between plugin extraction and host-side HTML processing.
+ * [INPUT]: Uses module-scoped @figma/plugin-typings types from plugin-api-standalone (Paint, Effect, StyledTextSegment and others), without figma globals or Node types.
+ * [OUTPUT]: ExtractRequest, ExtractNode, TextSegment, Bounds, ExtractStats, ExtractImage, ExtractOutput<B>, Mixed, ExtractEffect and ExtractComponentProperties;
+ *           binary forms Uint8Array / BinaryPlaceholder / LandedBinary (BinaryFile or binaryUnavailable), corresponding PluginExtractOutput/LandedExtractOutput, and ExtractResult for result.json.
+ * [POS]: Type-only extraction contract shared by plugin and host. plugin/extract.js produces it; bridge replaces binary values during persistence; record and html modules consume it.
+ *        tests/contract-samples.mjs checks real Figma result.json evidence against it. Shared type environments permit only ES built-ins and module-scoped Figma types.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import type {
@@ -84,7 +86,7 @@ export type ExtractNode = {
   component?: { id: string; name: string; key: string; remote: boolean; set?: string };
   componentProperties?: ExtractComponentProperties;
   componentError?: string;
-  /** Visible children; earlier nodes paint underneath later ones. */
+  /** Visible children in original order. Earlier siblings usually paint below later ones; auto-layout itemReverseZIndex reverses paint order. */
   children?: ExtractNode[];
 }
   & Fields<MinimalBlendMixin, 'opacity' | 'blendMode'> & Fields<BlendMixin, 'isMask'> & { effects?: ReadonlyArray<ExtractEffect> } & Fields<BaseFrameMixin, 'clipsContent'>

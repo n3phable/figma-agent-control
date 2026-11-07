@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:util, node:fs, node:path, node:url, ./project.mjs.
- * [OUTPUT]: Exports COMMANDS, libName, parse.
- * [POS]: CLI input boundary: validate command syntax and normalize options into command records.
+ * [INPUT]: Uses node:util parseArgs, node:fs existsSync, node:path and node:url fileURLToPath to resolve built-in ../lib/ libraries, plus ./project.mjs isJobId/isNodeId.
+ * [OUTPUT]: COMMANDS, parse(argv) -> { command, positionals, options }, libName(file) (built-ins use lib:<name>), and the normalized Options JSDoc type consumed by bin and html/command.
+ * [POS]: The src command table: usage, positional counts and options are defined here once, driving help and bin submission dispatch. CLI validation names offending options; bridge buildJob independently enforces the same constraints.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { parseArgs } from 'node:util';

@@ -1,7 +1,8 @@
 /**
- * [INPUT]: Imports node:fs, node:os, node:path.
- * [OUTPUT]: Exports FONT_DIRS, parseFont, findFont.
- * [POS]: Reads local font metadata and provides metrics used by deterministic HTML generation.
+ * [INPUT]: Uses node:fs openSync/readSync/fstatSync/closeSync/readdirSync, node:os homedir and node:path; reads local ttf/otf/ttc/otc files.
+ * [OUTPUT]: FONT_DIRS, parseFont(bytes, file) -> FontRecord[], findFont({ postScriptName?, family?, style? }, dirs) -> FontRecord | null.
+ * [POS]: Dependency-free sfnt metrics parser for head, hhea, OS/2, name and fvar, including TTC and named variable-font instances. Finds fonts by PostScript name or
+ *        (family, style). generate does not import this module; callers pass FontRecord metrics as plain data to keep generation pure.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs';

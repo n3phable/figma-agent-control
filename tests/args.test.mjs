@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:util, node:url, ../src/args.mjs, ./helpers/harness.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for args; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/args parse/COMMANDS; tests/helpers/harness cliFile for real CLI subprocesses; node:child_process, node:fs/promises, and node:os.
+ * [OUTPUT]: No exports; node:test cases for positional bounds, option validation, preview names, HTML inputs/budgets, frame sampling, built-in libraries, clean wait options, help, argument errors, and missing sessions.
+ * [POS]: Argument-layer tests: assert parse contracts directly, then verify bin dispatch and one-JSON stdout in subprocesses without starting a bridge or binding a port.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs, node:os, node:path, node:url, ../src/html/layout.mjs, ../src/html/structure.mjs, ../src/html/attrib.mjs, ../src/html/chrome.mjs, ../src/html/fonts.mjs, ../src/html/generate.mjs, ../src/png.mjs, ./helpers/generate.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for html layout; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/html/layout collect/findings/fontRows/substitutedNodes/BLOCKING; structure; attrib inlinedIslands; chrome findChrome/launch; fonts findFont; generate embed/dataUri; png decodePng; helpers/generate extracted/run; local Chrome and Helvetica.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Page-fact and structure tests. Pure cases cover box/wrap/first-line/overflow/ink boundaries, box-only rotated/reflected text, font substitution rules and unused faces, and structural exemptions. Chrome cases collect geometry/bases/mask wrappers, text lines/ink/clipping, font status and CDP usage, and generated-document structure. Missing Chrome or required Helvetica skips with a reason; profiles/processes remain suite-owned.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test, before, after } from 'node:test';

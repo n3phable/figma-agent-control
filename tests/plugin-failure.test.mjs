@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, ./helpers/harness.mjs, ./helpers/plugin.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for plugin failure; tests use local synthetic inputs and isolated state.
+ * [INPUT]: tests/helpers/plugin plugin/BINDING; tests/helpers/harness harness/writeScript.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Plugin failure contracts: created nodes and real-timing event delivery; cleanOnFail cleanup, safeguards, Undo boundaries, deletedExisting counts/warnings; result.json before/after retention; CLI-to-summary cleanup behavior; script-only stacks, unstringifiable thrown values, and library source traces. Shares VM fixtures with plugin.test.mjs, which covers execution order, rejection, and return values.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

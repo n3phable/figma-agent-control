@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, ../src/bridge.mjs, ../src/project.mjs, ./helpers/bridge.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for bridge; tests use local synthetic inputs and isolated state.
+ * [INPUT]: tests/helpers/bridge fixture/send and constants; src/bridge start; src/project init/root/json.
+ * [OUTPUT]: No exports; node:test cases for role credentials, plugin versions, /job fields, immutable requestId including preview names, concurrent submission gates, delivery/checkpoint/approval/completion, body limits, pairing diagnostics, and multiple plugin instances.
+ * [POS]: Single-request bridge contracts checked against docs/protocol.md without running plugin code. Session state and lifecycle belong to bridge-session.test.mjs; both share bridge helpers and complement the real-plugin smoke tests.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -117,14 +117,14 @@ test('Every protocol.md job-field constraint rejects out-of-bounds values with 4
   const accepted = {
     'minimal run': RUN,
     '20 libraries totaling exactly 2 MiB': { ...RUN, libs: [lib('big', 'a'.repeat(2 * MiB - 19)), ...Array.from({ length: 19 }, (_, i) => lib(`l${i}`, 'a'))] },
-    'snapshotDepth 1（run）': { ...RUN, snapshotDepth: 1 },
-    'snapshotDepth 31（inspect）': { operation: 'inspect', snapshotDepth: 31 },
+    'snapshotDepth 1 (run)': { ...RUN, snapshotDepth: 1 },
+    'snapshotDepth 31 (inspect)': { operation: 'inspect', snapshotDepth: 31 },
     '2 nodes': { ...preview, nodes: ['1:3', '1:4'] },
     '50 nodes': { ...preview, nodes: nodes(50) },
     '1 name': named(['\u9996\u9875 · 1440']),
     '50 names': named(names(50)),
     '200-character name': named(['\u5b57'.repeat(200)]),
-    'scale 0.1（preview）': { ...preview, scale: 0.1 },
+    'scale 0.1 (preview)': { ...preview, scale: 0.1 },
     'scale 4 on run with expect': { ...RUN, expect: 'changed', scale: 4 },
     'data exactly 1 MiB': { ...RUN, data: 'a'.repeat(MiB - 2) },
     'expect unchanged with tolerance 0': { ...RUN, expect: 'unchanged', tolerance: 0 },
@@ -132,7 +132,7 @@ test('Every protocol.md job-field constraint rejects out-of-bounds values with 4
     'instance descendant target': { operation: 'inspect', targetNodeId: 'I1:2;3:4' },
     'variables': { operation: 'variables' },
     'UUID requestId': { operation: 'inspect', requestId: uuid(9) },
-    'cleanOnFail（run）': { ...RUN, cleanOnFail: true },
+    'cleanOnFail (run)': { ...RUN, cleanOnFail: true },
     'cleanOnFail false': { ...RUN, cleanOnFail: false }
   };
   for (const [name, body] of Object.entries(rejected)) {
@@ -390,7 +390,7 @@ test('Mismatched plugin credentials return PAIRING_MISMATCH and update status; m
   const accepted = await b.poll();
   // In Figma the plugin can read only CORS-exposed headers; omitting these would incorrectly report a file mismatch on every check.
   assert.deepEqual(accepted.headers.get('Access-Control-Expose-Headers').split(','), ['X-Figma-Session', 'X-Figma-Binding', 'X-Long-Poll']);
-  assert.deepEqual(JSON.parse(accepted.headers.get('X-Figma-Binding')), { fileKey: 'example', nodeId: '1:2', project: path.basename(b.cwd) });
+  assert.deepEqual(JSON.parse(accepted.headers.get('X-Figma-Binding')), { id: (await b.status()).binding.id, fileKey: 'example', nodeId: '1:2', project: path.basename(b.cwd) });
   assert.equal((await b.cli('/status')).headers.get('X-Figma-Binding'), null);
 });
 
@@ -447,6 +447,22 @@ test('A heartbeat for another project returns 409 FOREIGN_JOB without lease rene
   await b.restart();
   assert.equal((await b.plugin(`/heartbeat?client=plugin&file=example&job=${job.id}`)).status, 200, 'Recovered tasks still belong to this project');
   assert.equal((await b.plugin('/complete', { id: job.id, ok: true, output: 1 })).status, 200);
+});
+
+test('Port probes return binding identity without creating a lease, enabling submission, or taking over an in-flight read task', OPTIONS, async t => {
+  const b = await fixture(t), probe = () => b.plugin('/heartbeat?client=scanner&file=example&probe=1');
+  const found = await probe();
+  assert.equal(JSON.parse(found.headers.get('X-Figma-Binding')).id, (await b.status()).binding.id);
+  assert.equal((await b.status()).connected, false);
+  assert.equal((await b.cli('/job', RUN)).body.code, 'RECONNECTING');
+  await b.poll();
+  const job = await b.deliver({ operation: 'inspect' });
+  b.clock = 16000;
+  await probe();
+  assert.deepEqual([(await b.status()).active, (await b.status()).connected], [job.id, false]);
+  assert.equal(await exists(path.join(b.run(job.id), 'result.json')), false, 'Scanning must not mark the original task ABANDONED');
+  await b.poll();
+  assert.equal((await b.plugin('/complete', { id: job.id, ok: true, output: {} })).status, 200);
 });
 
 test('Non-ASCII project names with CJK, accents, and emoji work; binding headers stay ASCII and round-trip exactly', OPTIONS, async t => {

@@ -1,9 +1,11 @@
 <!doctype html><html lang="en"><meta charset="utf-8">
 <!--
-[INPUT]: Figma Plugin API, bridge configuration and the sandbox/iframe message channel.
-[OUTPUT]: Plugin panel and authenticated message relay.
-[POS]: Iframe network relay and connection/task panel between the local bridge and Figma sandbox.
-[PROTOCOL]: When changing this file, update this header and check AGENTS.md.
+  [INPUT]: Uses bridge-injected SESSION_CONFIG (candidate ports, global pairing token and plugin version), X-Figma-Session (revalidate binding on change), X-Figma-Binding (project/binding), X-Long-Poll (immediate continuation), and main.js postMessage messages; request the current fileKey before polling.
+  [OUTPUT]: Relays bridge tasks to main.js, returns results, write-ahead snapshots and high-risk decisions, and forwards checkpoint/approval acknowledgments. Progress triggers immediate heartbeats, and heartbeat cancellations go to main. Active runs use a separate hold=1 channel for prompt cancellation while hidden.
+            The panel shows connection state, actionable guidance, approval, project/target with canvas focus, active progress, five recent results and injected pluginVersion. Content changes request a window resize through main.
+  [POS]: The plugin's iframe network relay and panel. main.js never makes network requests: sandbox fetch lacks request cancellation and panel visibility. Network-driven long polling claims work and immediately returns results without hidden-timer delays.
+         Polls and heartbeats identify the open file; active tasks heartbeat without claiming more work. The global plugin serves multiple projects: probes acquire no lease, idle discovery matches fileKey, active discovery matches bindingId across port changes, and unavailable original projects leave results preserved for later delivery.
+  [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
 -->
 <style>
 /* Use Figma themeColors with fallbacks only for previews outside Figma. color-mix derives subtle status backgrounds from icon colors in both light and dark themes. */
@@ -41,11 +43,11 @@ h2{display:flex;align-items:center;justify-content:space-between;margin:0 0 4px;
 .sub{grid-column:2/-1;color:var(--text2);overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.failed .sub{color:var(--danger-text)}
 footer{display:flex;justify-content:space-between;padding-top:8px;border-top:1px solid var(--border);color:var(--text3)}#plugin-version{font:var(--mono)}
 </style>
-<header><p id="status" class="status idle"><span id="state" role="status" aria-live="polite">Connecting</span></p><button id="hide-panel" title="Hide the panel and keep the plugin running; closing the window disconnects the agent">Hide</button></header>
+<header><p id="status" class="status idle"><span id="state" role="status" aria-live="polite">Connecting</span></p><button id="hide-panel" title="Hide the panel while the plugin keeps running; closing the window disconnects the agent">Hide</button></header>
 <p id="state-detail" class="notice idle">Connecting to the local bridge.</p>
 <div id="approval" hidden><h2>Approval required</h2><p id="approval-reason"></p><details><summary>View scope and script</summary><pre id="approval-details"></pre></details>
   <div class="actions"><button id="reject">Reject changes</button><button id="approve" class="primary">Allow changes</button></div></div>
-<section><h2>Target<span id="project" hidden></span></h2><button id="target-name" title="Locate and select on the canvas" disabled>Checking...</button><p id="target-meta" class="meta"></p></section>
+<section><h2>Target<span id="project" hidden></span></h2><button id="target-name" title="Locate and select on canvas" disabled>Checking...</button><p id="target-meta" class="meta"></p></section>
 <section><h2>Tasks</h2>
   <div id="job" class="job running" hidden><span class="mark">●</span><span id="job-op" class="op"></span><span id="job-label" class="label"></span><span id="job-time" class="time"></span><span id="job-phase" class="sub"></span></div>
   <ol id="recent"></ol><p id="empty" class="meta">Waiting for an agent task</p></section>
@@ -133,38 +135,44 @@ function showRecent() {
 const route = (path, job = active) => path + '?client=' + client + '&visibility=' + (document.visibilityState === 'hidden' ? 'hidden' : 'visible')
   + '&file=' + encodeURIComponent(fileKey) + (job ? '&job=' + encodeURIComponent(job.id) : '');
 // Find the bridge bound to this file by probing each candidate once without the active task, avoiding FOREIGN_JOB reports in other projects. Match binding headers to the current file;
-// Choose the lowest matching port. If none match, use the first responding bridge so normal requests can show outdated-version, pairing or wrong-file diagnostics.
+// when idle, take the first match. Active tasks must also match bindingId, so another project using the same file cannot impersonate the original project.
 async function locate() {
   lastScan = Date.now();
+  const bindingId = active?.bindingId;
   const answers = await Promise.all(config.ports.map(async candidate => {
     try {
       const response = await fetch('http://localhost:' + candidate + route('/heartbeat', null) + '&probe=1', { headers, signal: AbortSignal.timeout(1500) });
       let binding = null;
       try { binding = JSON.parse(response.headers.get('X-Figma-Binding')); } catch {}
-      return { candidate, match: response.ok && binding?.fileKey === fileKey };
+      return { candidate, match: response.ok && binding?.fileKey === fileKey && (!bindingId || binding.id === bindingId) };
     } catch { return null; }
   }));
-  const alive = answers.filter(Boolean), found = alive.find(answer => answer.match) ?? alive[0];
+  const alive = answers.filter(Boolean), found = alive.find(answer => answer.match) ?? (bindingId ? null : alive[0]);
   port = found?.candidate ?? null;
   bound = Boolean(found?.match);
-  if (port === null) throw connectionError("No local bridge is running", null, 'NO_BRIDGE');
+  if (port === null) throw connectionError(bindingId ? "The original project's bridge is not running yet" : "No local bridge is running", null, bindingId ? 'FOREIGN_JOB' : 'NO_BRIDGE');
 }
 const hello = () => parent.postMessage({ pluginMessage: { type: 'hello' } }, '*');
 const randomNonce = () => Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join('');
 // The bridge holds long polls for up to 10 s, so /poll permits 15 s. /complete scales with body size (see tick); other requests allow 3 s.
 async function request(path, options = {}, timeoutMs = 3000) {
   if (port === null || (!bound && Date.now() - lastScan > 5000)) await locate();
+  const requestedPort = port;
   let response;
   // Release an unreachable port so the next request rediscovers the bridge, which may have restarted elsewhere or stopped.
-  try { response = await fetch('http://localhost:' + port + path, { ...options, headers, signal: AbortSignal.timeout(timeoutMs) }); }
-  catch (error) { port = null; throw error; }
+  try { response = await fetch('http://localhost:' + requestedPort + path, { ...options, headers, signal: AbortSignal.timeout(timeoutMs) }); }
+  catch (error) { if (port === requestedPort) port = null; throw error; }
+  let binding = null;
+  try { binding = JSON.parse(response.headers.get('X-Figma-Binding')); } catch {}
+  if (active?.bindingId && binding?.id && binding.id !== active.bindingId) {
+    if (port === requestedPort) { port = null; bound = false; }
+    throw connectionError("Another project took over this port; retaining the original task and locating its bridge", response, 'FOREIGN_JOB');
+  }
   // Recheck that the bound target belongs to the open file after a bridge restart.
   const session = response.ok && response.headers?.get?.('X-Figma-Session');
   // One global plugin receives binding/project metadata through headers; the panel updates when the bridge switches projects.
   if (session && session !== serverSessionId) {
     serverSessionId = session;
-    let binding = null;
-    try { binding = JSON.parse(response.headers.get('X-Figma-Binding')); } catch {}
     bound = binding?.fileKey === fileKey;
     project = typeof binding?.project === 'string' ? binding.project : '';
     $('project').textContent = project;
@@ -176,6 +184,7 @@ async function request(path, options = {}, timeoutMs = 3000) {
 async function failed(response, message) {
   let code;
   try { code = (await response.json())?.code; } catch {}
+  if (code === 'FOREIGN_JOB') { port = null; bound = false; }
   return connectionError(message, response, code);
 }
 
@@ -309,7 +318,7 @@ async function tick() {
       // Immediately continue after an empty long-poll response. Network callbacks keep claim latency independent of hidden-panel timer throttling.
       if (!job && response.headers?.get?.('X-Long-Poll')) again = true;
       if (job) {
-        active = { id: job.id, operation: job.operation, title: job.label || OPERATION_TEXT[job.operation] || job.operation, nodeId: job.targetNodeId, project, startedAt: Date.now() };
+        active = { id: job.id, bindingId: job.bindingId, operation: job.operation, title: job.label || OPERATION_TEXT[job.operation] || job.operation, nodeId: job.targetNodeId, project, startedAt: Date.now() };
         channelNonce = nextNonce; progress = null;
         parent.postMessage({ pluginMessage: { ...job, channelNonce } }, '*');
         if (job.operation === 'run') void watchCancel(job.id);

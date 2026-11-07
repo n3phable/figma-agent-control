@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:path, node:child_process, node:crypto, ../src/project.mjs, ../src/bridge.mjs, ../src/record.mjs, ../src/report.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for record; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/record changeSet/scriptTrace/localResult/summarizeRecord/exitCode/waitForResult; src/report report; src/project init/save/json; src/bridge start on port 0 solely for hidden-panel default wait limits.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Evidence contracts: change classification and sibling order, source mapping from real Figma stacks, journal completeness, agent summaries/traces/created nodes and assets/page-root guidance, exit codes including extract-specific islands/binaries, injected-clock waits, and report completion time from result.json.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -491,7 +491,7 @@ test('report counts execution and verification failures separately; failed/unava
     { ok: true },
     { ok: true, verify: { expect: 'changed', pass: true } },
     { ok: true, verify: { expect: 'changed', pass: false, changedPixels: 0 } },
-    { ok: true, verify: { expect: 'unchanged', pass: false, error: 'Visual check unavailable: Target was deleted by the script' } },
+    { ok: true, verify: { expect: 'unchanged', pass: false, error: '\u753b\u9762\u5224\u5b9a\u4e0d\u53ef\u7528\uff1a\u76ee\u6807\u5df2\u88ab\u811a\u672c\u5220\u9664' } },
     { ok: false, executionStarted: false, verify: { expect: 'changed', pass: false } }
   ];
   for (const result of results) {

@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:os, node:net, node:path, node:vm, node:crypto, node:child_process, node:util, node:timers/promises, ./helpers/harness.mjs, ../src/bridge.mjs, ../src/project.mjs, ../src/session.mjs, ../src/png.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for cli; tests use local synthetic inputs and isolated state.
+ * [INPUT]: helpers/harness harness/writeScript/fakeFigma/cliFile; src/bridge start; src/project root/json/save/hash/init/installPlugin; src/session pairingToken; src/png encodePng/decodePng; CLI subprocesses execute bin/figma-agent-control.mjs and node:vm runs reopened plugin instances.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: CLI end-to-end coverage for submit/wait/pageRoot, pre-submission file/option failures, requestId reuse, evidence and binaries, named previews, approval, visuals, unknown-write resolution and later reads, stop/network errors, doctor stages, late results across projects, image-diff, and reports. Library/data/syntax basics remain in smoke.test.mjs.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test } from 'node:test';
@@ -507,15 +507,15 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
       assert.equal(h.element('state').textContent, 'Waiting for original project');
       assert.match(h.element('state-detail').textContent, new RegExp(path.basename(h.cwd)));
       const status = async () => (await cli(other, 'status')).json;
-      assert.deepEqual([(await status()).connected, Object.keys((await status()).pluginIssues)], [false, ['FOREIGN_JOB']], 'An instance holding another project job does not renew the lease for B');
+      assert.equal((await status()).connected, false, 'Port probes and instances running another project\'s task do not renew B\'s lease');
       assert.equal((await cli(other, 'inspect', '--no-wait')).json.code, 'RECONNECTING');
 
-      // Drive retries until B receives five completions, exceeding the three-rejection fallback threshold; every attempt must retain the original result.
+      // While the original project is offline, keep probing without repeatedly posting its result to same-file B.
       finish.resolve(); await h.settle();
       const completes = () => h.requests.filter(r => r.path === '/complete').map(r => r.body);
-      while (completes().length < 5) { await h.tick(); await delay(5); }
+      for (let i = 0; i < 5; i++) { await h.tick(); await delay(5); }
       await h.pause(); h.resume(); await delay(20);
-      assert.deepEqual(completes().map(body => [body.id, body.ok, body.output]), Array(5).fill([id, true, '\u539f\u6587+']), 'Repeated rejection by B preserves the original result without degrading it to failure');
+      assert.deepEqual(completes(), [], 'Wait by bindingId for the original project without sending its pending result to B');
       assert.equal(h.element('state').textContent, 'Waiting for original project');
       assert.deepEqual(await runIds(other), [], 'B does not persist another project\'s result');
     } finally { await b.close(); }

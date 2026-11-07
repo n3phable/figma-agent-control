@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:os, node:path, ./png.mjs, ./record.mjs, ./project.mjs.
- * [OUTPUT]: Exports imageDiff.
- * [POS]: Offline image comparison and evidence output using the shared PNG codec.
+ * [INPUT]: Uses ./png.mjs diffPng, ./record.mjs localResult and ./project.mjs root/hash/isJobId.
+ * [OUTPUT]: imageDiff(cwd, sources, { threshold, expect }, invocationDir).
+ * [POS]: Offline comparison of two PNGs (files or single-image preview tasks), writing a difference image. bridge uses the same diffPng for run --expect.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs/promises';

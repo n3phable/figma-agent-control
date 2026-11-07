@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs, node:crypto, ../src/html/match.mjs, ../src/png.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for html match; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/html/match match/blockscan/crop/differing/upscale/stack; src/png decodePng; helpers/match PNG pairs and expected.json generated with pixelmatch 7.2.0.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Matches reproducible synthetic reference pairs against upstream pixelmatch counts, antialiasing, diff/mask hashes, and structural blocks. Focused cases cover identical/single-pixel/YIQ/transparent boundaries, block density and 8-connectivity, RGBA crop copy/bounds, shifted comparison with transparent overflow and early exit, nearest-neighbor scaling, and vertical stacking.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';

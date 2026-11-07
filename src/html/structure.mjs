@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports ./css.mjs.
- * [OUTPUT]: Exports structure.
- * [POS]: Checks correspondence between extracted nodes and rendered document structure.
+ * [INPUT]: Uses ./css.mjs VECTORS; types come from ./extract-contract.js LandedExtractOutput/ExtractNode and ./generate.mjs OverrideEntry.
+ * [OUTPUT]: structure(output, ctx, dom) -> { untracked, missing, textMismatch }, plus Structure.
+ * [POS]: Pure html structure validation comparing page and extracted tree. Consumes layout.collect's data-node/textContent scan without browser access. check blocks clean for any nonempty category: untracked indicates manual page edits; missing/textMismatch indicate lost generated content.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { VECTORS } from './css.mjs';

@@ -1,7 +1,13 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:path, node:url, node:perf_hooks, node:timers/promises, ./extracts.mjs, ./page.mjs, ./overrides.mjs, ./summary.mjs, ./check.mjs, ./chrome.mjs, ./fonts.mjs, ./generate.mjs, ./zoom.mjs, ../png.mjs, ../project.mjs.
- * [OUTPUT]: Exports glassDefaults, html, htmlCheck.
- * [POS]: Coordinates HTML export/recheck commands, browser ownership and resumable batch state.
+ * [INPUT]: Uses ./extracts fromJob/readLanded/submit/awaitLanded; ./page assemble/expectedSize/pageFile/readMeta/readRefs/indexPages/writePage;
+ *          ./overrides loadOverrides; ./summary totals/exitCode/instruction/stdoutOf/checkStdout/LAUNCH; ./check check/writeEvidence/CHECKER;
+ *          injectable ./chrome launch; ./fonts findFont for index warmup; ./generate GENERATOR; ./zoom zoomTarget for preflight;
+ *          ../png decodePng for zoom-reference preflight; ../project root/save/json/isJobId; node:fs/promises, node:path, node:url, node:perf_hooks and node:timers/promises.
+ * [OUTPUT]: html(cwd, options, deps?) -> { summary, exitCode }, htmlCheck(cwd, files, options?, deps?) -> { summary, exitCode },
+ *           glassDefaults(node) -> nodes whose GLASS parameters are all defaults, plus Deps.
+ * [POS]: The html/html-check orchestration entry used by bin: validate inputs without writes, then acquire/generate/write/check/record each frame and persist the manifest.
+ *        html-check regenerates diagnostic context from page metadata, preflighting --node/--zoom before Chrome. Owns browser lifecycle: lazy html launch, eager html-check launch, replacement after failure,
+ *        and no further checks after render timeout. Sibling modules own acquisition, page format, trust validation and output shape; this file decides ordering and where failures are recorded.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs/promises';
@@ -119,7 +125,7 @@ function checker(launch) {
   return { ready, run, close: retire, info };
 }
 
-// ── html ─────────────────────────────────────────────────────────────────
+// -- html -----------------------------------------------------------------
 // Throw only on input preflight failure, before writing anything. Later issues enter the manifest/exit code. Process --from first, then --node, preserving order within each group.
 /** @param {string} cwd @param {import('../args.mjs').Options} options @param {Deps} [deps] @returns {Promise<{ summary: object, exitCode: 0 | 1 | 2 }>} */
 export async function html(cwd, options, deps = {}) {
@@ -291,7 +297,7 @@ export async function html(cwd, options, deps = {}) {
   return { summary: stdoutOf(manifest), exitCode: manifest.exitCode };
 }
 
-// ── html-check ───────────────────────────────────────────────────────────
+// -- html-check -----------------------------------------------------------
 // Preflight every page (any failure throws), then --node/--zoom, launch Chrome (failure throws), and render/compare/diagnose each page. No Figma connection or page rewriting;
 // locate references through each page's extract metadata in the current project. Store evidence beside html-command evidence, replacing the previous check.
 // Recover approximation/font/overrides.applied context by regenerating from metadata. For overridden pages, read a matching-fingerprint group from the overrides file recorded in adjacent html.json;

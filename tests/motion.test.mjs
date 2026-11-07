@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs, node:vm, ./helpers/plugin.mjs, ../src/record.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for motion; tests use local synthetic inputs and isolated state.
+ * [INPUT]: tests/helpers/plugin plugin with real main.js and a mock document in a VM; lib/motion.js source; node:vm.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Loads the motion library through run libs and verifies read shorthand/grouping, declarative no-op and partial writes, validation-before-write, rollback preserving variable IDs and precision, top-level-frame exports, and Video export failed/differentFrom retries. motionIssues runs directly in a VM. Mock tracks, presets, styles, timelines, and EASING variables follow real-device readbacks, including default preset props/delay and cubic(0.5,0,0.5,1) keyframe easing.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -165,6 +165,25 @@ test('A rejected applyMotion write rolls back earlier writes in reverse order, r
   const trace = scriptTrace({ code, libs, label: 'demo.js' }, r.stack, true);
   assert.equal(trace[0].file, 'motion.js');
   assert.ok(trace.some(frame => frame.file === 'demo.js' && frame.line === 1), JSON.stringify(trace));
+});
+
+test('Partial-spec rollback restores original variable IDs, track values, and preset parameters without resolving same-name references again', async () => {
+  const f = motionPlugin(), { swatch, frame } = f.doc;
+  swatch.manualKeyframeTracks = { OPACITY: binding(FLOAT(0.123456789), [[0, FLOAT(0.987654321)], [0.123456789, FLOAT(1), ALIAS('VariableID:lib')]]) };
+  swatch.animationStyles = [preset('alias-style', 'Opacity', 0.123456789, 0.345678912, { easing: ALIAS('VariableID:lib'), amount: 0.123456789 })];
+  const beforeTrack = structuredClone(swatch.manualKeyframeTracks.OPACITY), beforeStyle = structuredClone(swatch.animationStyles[0]);
+  frame.applyManualKeyframeTrack = () => { throw Error('\u62d2\u7edd\u4e0b\u4e00\u8282\u70b9'); };
+  const r = await f.run('return applyMotion(data)', {
+    refs: { '$motion/standard': 'VariableID:9:1', '$motion/standard#VariableID:lib': 'VariableID:lib' },
+    timelines: [{ id: frame.id, nodes: [{ id: swatch.id, tracks: {}, styles: [] }, { id: frame.id, tracks: { OPACITY: { keys: [[0, 0], [1, 1]] } } }] }]
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /rolled back 2 earlier change/);
+  assert.deepEqual(JSON.parse(JSON.stringify(swatch.manualKeyframeTracks.OPACITY)), beforeTrack);
+  const { id: oldId, ...oldStyle } = beforeStyle, { id: newId, ...restoredStyle } = JSON.parse(JSON.stringify(swatch.animationStyles[0]));
+  // Figma assigns new instance IDs to reapplied presets; preserve preset configuration and variable identity exactly.
+  delete oldStyle.styleId; delete restoredStyle.styleId;
+  assert.deepEqual(restoredStyle, oldStyle);
 });
 
 // ── exportMotion ─────────────────────────────────────────────────────────

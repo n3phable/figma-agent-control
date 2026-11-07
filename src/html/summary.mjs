@@ -1,7 +1,11 @@
 /**
- * [INPUT]: Imports ./layout.mjs.
- * [OUTPUT]: Exports STDOUT_LIMIT, bytes, quote, fit, LAUNCH, totals, exitCode, batch, instruction, stdoutOf, checkStdout.
- * [POS]: Builds bounded command summaries, exit decisions and resumable instructions.
+ * [INPUT]: Uses ./layout.mjs BLOCKING geometry kinds; otherwise pure ES built-ins and Buffer.byteLength. Accepts html manifests or html-check page records plus explicitly supplied options.
+ *          Types come from ./check.mjs TopEntry, ./suggest.mjs Suggestion/Cluster, ./zoom.mjs ZoomResult,
+ *          ./generate.mjs Stale/Approximation and ./extracts.mjs Stop.
+ * [OUTPUT]: STDOUT_LIMIT, LAUNCH error codes, bytes, quote, fit, totals, exitCode, batch, instruction, stdoutOf, checkStdout;
+ *           RefRecord, FrameRecord, FontRecord, FontTotal, Totals, Manifest, PageRecord and Flags types.
+ * [POS]: Pure output layer deriving html.json totals, geometry/font summaries, exit codes, complete-batch continuation commands, guidance and 16 KiB stdout projections.
+ *        Compact diagnostics allow at most three top/suggest/hints entries per frame and drop them first under pressure. html-check uses four projection levels too. command owns persistence; manifests contain the complete delivery record, while stdout is only a summary.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { BLOCKING } from './layout.mjs';
@@ -128,7 +132,7 @@ export function batch({ frames, done, pending, remaining, out }, flags, { overri
   return ['figma-agent-control html', ...args].join(' ');
 }
 
-// Prioritize resumable work; report other findings after it completes, with guidance joined in display order.
+// When continuation is pending, give only continuation instructions; other issues will be reported afterward. Otherwise address each category, joining sentences with ". " and using "; " internally.
 /** @param {Omit<Manifest, 'instruction' | 'exitCode'>} m @param {Flags} flags @returns {string} */
 export function instruction(m, flags) {
   const { stop, pending, remaining, frames } = m, manifest = `${m.out}/html.json`, said = [];
@@ -184,13 +188,13 @@ function uncheckedAdvice(reasons, afterInstall, retry) {
   return said;
 }
 
-// ── stdout ───────────────────────────────────────────────────────────────
+// -- stdout ---------------------------------------------------------------
 // Frames needing attention have errors, non-clean or absent verdicts, stale entries, missing islands or violations. Lower sort keys come first; ties retain processing order.
 /** @param {FrameRecord} f */
 const rank = f => f.error ? 0 : f.verdict === 'fail' ? 1 : f.verdict === 'unchecked' ? 2 : flagged(f) ? 3 : f.verdict === 'pass-with-findings' ? 4 : f.verdict ? 6 : 5;
 // Compact top/focus/suggest shapes include only bakedOver counts; full detail remains in html.json/check.json.
 /** @param {TopEntry} e */
-const entry = ({ node, name, px, htmlPx, figmaPx, hint, fix, flat }) => ({ node, name: clip(name, 60), px, htmlPx, figmaPx, ...(hint ? { hint: clip(hint, 200) } : {}),
+const entry = ({ node, name, px, htmlPx, figmaPx, hint, fix, flat }) => ({ node, name: clip(name, 60), px, htmlPx, figmaPx, ...(hint ? { hint: clip(hint, 400) } : {}),
   ...(fix ? { fix } : {}), ...(flat ? { flat } : {}) });
 /** @param {Suggestion} s */
 const proposal = ({ node, entry, rect, share, textNodes, bakedOver }) => ({ node, entry, rect, share, textNodes, bakedOver: bakedOver.length });
@@ -198,7 +202,7 @@ const proposal = ({ node, entry, rect, share, textNodes, bakedOver }) => ({ node
 /** At most three top, three suggest and three hints entries per frame/page. @param {{ top?: TopEntry[], suggest?: Suggestion[], hints?: string[] }} f */
 const details = ({ top = [], suggest = [], hints = [] }) => ({ ...(top.length ? { top: top.slice(0, 3).map(entry), ...(top.length > 3 ? { topOmitted: top.length - 3 } : {}) } : {}),
   ...(suggest.length ? { suggest: suggest.slice(0, 3).map(proposal), ...(suggest.length > 3 ? { suggestOmitted: suggest.length - 3 } : {}) } : {}),
-  ...(hints.length ? { hints: hints.slice(0, 3).map(h => clip(h, 200)), ...(hints.length > 3 ? { hintsOmitted: hints.length - 3 } : {}) } : {}) });
+  ...(hints.length ? { hints: hints.slice(0, 3).map(h => clip(h, 400)), ...(hints.length > 3 ? { hintsOmitted: hints.length - 3 } : {}) } : {}) });
 /** @param {FrameRecord} f @param {boolean} detail */
 function brief(f, detail) {
   const refs = f.refs ?? [], stale = f.overrides?.stale ?? [];
@@ -210,7 +214,7 @@ function brief(f, detail) {
     ...(f.bakedShare !== undefined ? { bakedShare: f.bakedShare } : {}),
     ...(stale.length ? { stale: stale.slice(0, 3).map(({ node, kind }) => ({ node, kind })), ...(stale.length > 3 ? { staleOmitted: stale.length - 3 } : {}) } : {}),
     ...(f.needsIsland?.length ? { needsIsland: f.needsIsland.length } : {}), ...(f.needsExtract ? { needsExtract: true } : {}),
-    ...(f.error ? { error: { code: f.error.code, message: clip(f.error.message, 300) } } : {}), ...(detail ? details(f) : {}) };
+    ...(f.error ? { error: { code: f.error.code, message: clip(f.error.message, 600) } } : {}), ...(detail ? details(f) : {}) };
 }
 
 // Four progressively smaller candidates: full shape with at most ten frames and diagnostics; frames without diagnostics; no frame list; then no continuation lists and only manifest-directed guidance.
@@ -222,7 +226,7 @@ export function stdoutOf(m) {
   const short = { ...m.totals, fonts: fonts.slice(0, 10).map(r => ({ ...r, family: clip(r.family, 64), style: clip(r.style, 64), postScriptName: clip(r.postScriptName, 64),
     ...(r.chromeUsed !== undefined ? { chromeUsed: clip(r.chromeUsed, 64) } : {}) })), ...(fonts.length > 10 ? { fontsOmitted: fonts.length - 10 } : {}) };
   const head = { ...(m.browser ? { browser: m.browser.version } : {}), totals: short };
-  const stop = m.stop ? { stop: { code: m.stop.code, message: clip(m.stop.message, 300), ...(m.stop.active ? { active: m.stop.active } : {}) } } : {};
+  const stop = m.stop ? { stop: { code: m.stop.code, message: clip(m.stop.message, 600), ...(m.stop.active ? { active: m.stop.active } : {}) } } : {};
   const lists = resume ? { done: m.done, pending: m.pending, remaining: m.remaining } : {};
   /** @param {boolean} detail */
   const listed = detail => ({ ...head, frames: watch.slice(0, 10).map(f => brief(f, detail)), omittedFrames: Math.max(0, watch.length - 10), ...lists, ...stop, summary, instruction: m.instruction });
@@ -250,8 +254,8 @@ export function checkStdout({ browser, pages }) {
   const shown = ({ top, suggest, clusters, hints, focus, zoom, fonts, warnings, error, ...p }, level) => ({ ...p,
     ...(level === 0 ? { ...details({ top, suggest, hints }), ...(focus ? { focus: focus.map(entry) } : {}) } : {}),
     ...(zoom ? { zoom: level === 0 ? zoomBrief(zoom) : { node: zoom.node, dir: zoom.dir } } : {}),
-    ...(warnings?.length && level < 2 ? { warnings: warnings.slice(0, 3).map(w => clip(w, 200)) } : {}),
-    ...(error ? { error: level < 2 ? { code: error.code, message: clip(error.message, 300) } : { code: error.code } } : {}) });
+    ...(warnings?.length && level < 2 ? { warnings: warnings.slice(0, 3).map(w => clip(w, 400)) } : {}),
+    ...(error ? { error: level < 2 ? { code: error.code, message: clip(error.message, 600) } : { code: error.code } } : {}) });
   return fit(
     () => ({ ...head, pages: pages.map(p => shown(p, 0)), omittedPages: 0, instruction }),
     () => ({ ...head, pages: pages.map(p => shown(p, 1)), omittedPages: 0, instruction }),
@@ -260,5 +264,5 @@ export function checkStdout({ browser, pages }) {
 }
 /** @param {ZoomResult} z */
 const zoomBrief = ({ node, scale, size, mismatched, diffRatio, shift, fix, hint, reason, error, warnings, dir }) => ({ node, scale, size, ...(mismatched !== undefined ? { mismatched, diffRatio } : {}),
-  ...(shift ? { shift } : {}), ...(fix ? { fix } : {}), ...(hint ? { hint: clip(hint, 200) } : {}), ...(reason ? { reason } : {}), ...(error ? { error: clip(error, 200) } : {}),
-  ...(warnings?.length ? { warnings: warnings.slice(0, 3).map(w => clip(w, 200)) } : {}), dir });
+  ...(shift ? { shift } : {}), ...(fix ? { fix } : {}), ...(hint ? { hint: clip(hint, 400) } : {}), ...(reason ? { reason } : {}), ...(error ? { error: clip(error, 400) } : {}),
+  ...(warnings?.length ? { warnings: warnings.slice(0, 3).map(w => clip(w, 400)) } : {}), dir });

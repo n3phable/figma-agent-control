@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:path, ./project.mjs, ./client.mjs, ./session.mjs, ./html/chrome.mjs.
- * [OUTPUT]: Exports doctor.
- * [POS]: Diagnoses workspace bindings, bridge connectivity and local execution prerequisites.
+ * [INPUT]: Uses ./project.mjs root/json/parseTarget/readBinding/pluginHome, ./client.mjs call, ./session.mjs emptyLock/validPid, and ./html/chrome.mjs findChrome/chromeVersion.
+ * [OUTPUT]: doctor(cwd) -> { ready, checks[], instruction }.
+ * [POS]: Read-only offline diagnostics in src, identifying each blocking step even when the bridge is unreachable; never removes files. Only this top-level module and frames depend on html/ at runtime. Chrome absence is a warning.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs/promises';
@@ -68,7 +68,7 @@ export async function doctor(cwd) {
     if (status === 403) { add('BRIDGE_AUTH', 'error', 'The bridge rejected the current session token', 'An old bridge process may be running for this directory; run stop, then connect'); return report(); }
     if (!ok || data.sessionId !== session.sessionId || data.binding?.id !== binding.id) { add('BRIDGE_IDENTITY', 'error', 'The online bridge does not match the local session or binding', 'Check the working directory and the bridge terminal'); return report(); }
     add('BRIDGE', 'ok', `Bridge online (PID ${data.pid})`);
-    // Classify rejected plugin requests using the shared reason codes so diagnostics identify the connection issue.
+    // If plugin requests reached the bridge but could not acquire a connection, report the shared bridge/panel reason code instead of a generic "Plugin not connected".
     // Multiple causes may coexist: order them by remedy and offer instructions for the first only. FOREIGN_JOB must come first because
     // that instance holds a real result for another project; reopening the plugin to address another cause would lose it.
     /** @type {Record<string, [string, string]>} */

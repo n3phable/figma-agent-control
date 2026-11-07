@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * [INPUT]: Imports node:fs/promises, node:path, ../src/project.mjs, ../src/bridge.mjs, ../src/session.mjs, ../src/args.mjs, ../src/client.mjs, ../src/doctor.mjs, ../src/record.mjs, ../src/clean.mjs, ../src/image-diff.mjs, ../src/frames.mjs, ../src/report.mjs, ../src/html/command.mjs.
- * [OUTPUT]: Plugin task handling and serialized results.
- * [POS]: CLI shell: validate arguments, dispatch a command, and emit its JSON result and exit status.
+ * [INPUT]: Uses the src/args command table, parse and libName (cancel first POSTs /cancel, then waits like wait); src/bridge start/DEFAULT_PORT; src/session pairingToken; src/client call/stop; src/record readers, summaries, exit codes and waiting; src/clean cleanJob; src/doctor, src/image-diff, src/frames, src/report; src/html/command html/htmlCheck; and src/project init/json/pluginHome/installPlugin. Uses src/args Options for type checking.
+ * [OUTPUT]: The figma-agent-control CLI; stdout contains one JSON object (error messages containing user input are truncated at 2000 characters; stderr receives a task ID before waiting, and one per extract submitted by html).
+ *           Exit 0: success, including clean with nothing to remove. Exit 1: failure, failed verdict, rejected or skipped cleanup, skipped explicit islands, extract binary write failure, verified execution with unknown result, or html frames that failed, missed the target, were unchecked or flagged (stale overrides, missing islands, output invariant violations), or stopped on a bridge issue. Exit 2: pending, including stop still finishing or html requiring continuation.
+ * [POS]: The only bin source: dispatches commands without business rules. connect assembles global pairing, bridge startup and global plugin installation; installation failure shuts down the bridge before reporting the error.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs/promises';

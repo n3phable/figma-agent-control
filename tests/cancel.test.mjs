@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:timers/promises, ./helpers/plugin.mjs, ./helpers/harness.mjs, ../src/record.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for cancel; tests use local synthetic inputs and isolated state.
+ * [INPUT]: tests/helpers/plugin plugin for the real plugin in a VM; tests/helpers/harness harness/writeScript for a real bridge, UI, and CLI subprocess; src/record scriptTrace.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Execution progress and cancellation tests: cancel preparation, approval, checkpointing, and execution; reject stale replies and wrong channelNonce values; preserve stacks and created assets when Figma calls hang; block subsequent Figma access; cache successful font loads across runs. End-to-end cases cover hidden-panel heartbeat progress and cancellation, wait evidence, and queued versus delivered tasks.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -24,6 +24,43 @@ const hang = figma => {
   figma.loadFontAsync = () => new Promise(resolve => { gate.release = resolve; });
   return gate;
 };
+
+test('Cancellation ends preparation immediately; late target, render, or asset reads cannot permit writes, and a new task can run', async () => {
+  for (const stage of ['target', 'render', 'assets']) {
+    const f = plugin(), entered = Promise.withResolvers(), gate = Promise.withResolvers();
+    const owner = stage === 'target' ? f.figma : stage === 'render' ? f.doc.frame : f.figma.variables;
+    const key = stage === 'target' ? 'getNodeByIdAsync' : stage === 'render' ? 'exportAsync' : 'getLocalVariableCollectionsAsync';
+    const original = owner[key];
+    owner[key] = (...args) => { entered.resolve(); return gate.promise.then(() => original(...args)); };
+    const job = f.start({ code: 'target.name = "\u4e0d\u5e94\u5199\u5165";', ...(stage === 'render' ? { expect: 'changed' } : {}) });
+    await entered.promise;
+    await f.figma.ui.onmessage({ type: 'cancel', id: job.id, channelNonce: job.channelNonce });
+    const r = await job.done;
+    assert.deepEqual([r.ok, r.executionStarted, f.doc.frame.name, f.events.includes('undo')], [false, false, '\u753b\u677f', false], stage);
+    assert.match(r.error, /Cancelled before execution/);
+    gate.resolve(); owner[key] = original;
+    await delay(5);
+    assert.equal(f.doc.frame.name, '\u753b\u677f', 'Late preparation cannot resume a canceled task');
+    assert.equal((await f.send({ code: 'target.name = "\u65b0\u4efb\u52a1";' })).ok, true);
+    assert.equal(f.doc.frame.name, '\u65b0\u4efb\u52a1');
+  }
+});
+
+test('Cancellation while awaiting approval or checkpointing ignores late approval without Undo or document writes', async () => {
+  for (const approval of [true, false]) {
+    const f = plugin(approval ? { approval: 'wait' } : { checkpoint: 'wait' });
+    const job = f.start({ code: 'target.name = "\u4e0d\u5e94\u5199\u5165";', ...(approval ? { risk: { level: 'high', reason: 'test' } } : {}) });
+    await delay(5);
+    assert.equal((approval ? f.approvals : f.checkpoints).length, 1);
+    await f.figma.ui.onmessage({ type: 'cancel', id: job.id, channelNonce: job.channelNonce });
+    const r = await job.done;
+    assert.deepEqual([r.ok, r.executionStarted], [false, false]);
+    await f.figma.ui.onmessage({ type: approval ? 'approval-ack' : 'checkpoint-ack', id: job.id, channelNonce: job.channelNonce, approved: true, ok: true });
+    await delay(5);
+    assert.equal(f.doc.frame.name, '\u753b\u677f');
+    assert.equal(f.events.includes('undo'), false);
+  }
+});
 
 test('cancel requires the same task channelNonce; a hung Figma call fails immediately with caller stack and created assets, and subsequent Figma access throws', async () => {
   const f = plugin({ checkpoint: true }), gate = hang(f.figma), made = [], { variables } = f.figma;

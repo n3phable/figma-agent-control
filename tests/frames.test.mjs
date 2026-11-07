@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:fs, node:os, node:path, node:crypto, node:url, ../src/frames.mjs, ../src/html/chrome.mjs, ../src/png.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for frames; tests use local synthetic inputs and isolated state.
+ * [INPUT]: src/frames frames; src/html/chrome findChrome; src/png decodePng; two Figma-exported 64x32, 1 s WebM fixtures with a black block moving 48 px and 24 px.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Frame-sampling tests. Invalid task sources fail before Chrome startup. Chrome-dependent cases cover sample times, contact-sheet geometry/content, file/task equivalence, comparisons and identical-byte warnings, original-size dumps, high-precision filenames, and out-of-duration times; skip with a reason when unavailable. Chrome profiles live in this suite's temporary directory so other suites can count system-temp profiles independently.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test, before, after } from 'node:test';
@@ -88,11 +88,24 @@ describe('Frame sampling and contact sheets (requires Chrome)', { skip: chrome ?
 
   test('--dump saves original-size frames beside the sheet and suffixes comparison frames with -compare, allowing pixel displacement measurement', async t => {
     const cwd = await project(t), r = await frames(cwd, SLIDE_48, { atSeconds: [0, 0.5], compareSource: SLIDE_24, dump: true }, cwd, opts());
-    assert.deepEqual(r.frames.map(f => [path.relative(r.sheet.slice(0, -4), f.file), path.basename(f.compareFile)]), [['0.000s.png', '0.000s-compare.png'], ['0.500s.png', '0.500s-compare.png']]);
+    assert.deepEqual(r.frames.map(f => [path.relative(r.sheet.slice(0, -4), f.file), path.basename(f.compareFile)]), [['01-0.000s.png', '01-0.000s-compare.png'], ['02-0.500s.png', '02-0.500s-compare.png']]);
     // Leftmost block column: both start at 0; at 0.5 s the 48 px clip moves about 24 px and the 24 px clip about 12 px.
     const left = async file => { const png = decodePng(await fs.readFile(file)); assert.deepEqual([png.width, png.height], [64, 32]); return Array.from({ length: 64 }, (_, x) => x).find(x => png.data[(16 * 64 + x) * 4] < 128); };
     const [a0, b0, a1, b1] = await Promise.all(r.frames.flatMap(f => [left(f.file), left(f.compareFile)]));
     assert.deepEqual([a0, b0], [0, 0]);
     assert.ok(Math.abs(a1 - 24) <= 2 && Math.abs(b1 - 12) <= 2, JSON.stringify([a1, b1]));
+  });
+
+  test('--dump keeps distinct samples even when rounded to the same millisecond, with one returned path per comparison frame', async t => {
+    const cwd = await project(t), times = [0.1, 0.1001, 0.1002];
+    const r = await frames(cwd, SLIDE_48, { atSeconds: times, compareSource: SLIDE_24, dump: true }, cwd, opts());
+    const files = r.frames.flatMap(f => [f.file, f.compareFile]);
+    assert.deepEqual(r.frames.map(f => f.t), times);
+    assert.equal(new Set(files).size, times.length * 2);
+    for (const file of files) {
+      const png = decodePng(await fs.readFile(file));
+      assert.deepEqual([png.width, png.height], [64, 32]);
+    }
+    assert.equal((await fs.readdir(path.dirname(files[0]))).filter(n => n.endsWith('.tmp')).length, 0);
   });
 });

@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, node:fs/promises, node:fs, node:os, node:path, node:net, node:crypto, node:child_process, node:timers/promises, node:url, ../src/bridge.mjs, ../src/project.mjs, ../src/png.mjs, ./helpers/bridge.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for bridge session; tests use local synthetic inputs and isolated state.
+ * [INPUT]: tests/helpers/bridge fixture and constants; src/bridge start on random ports; src/client stop; src/project init/root/json; src/png encodePng/decodePng; node:net for occupied ports and pipelined requests, mkfifo for a blocked read, and node:url for a package copy missing a plugin template.
+ * [OUTPUT]: No exports; node:test cases for persisted evidence, named previews, permissions, verification, stop races, recovery/resolve, late results, interrupted reads, incomplete journals, long polling, status, occupied ports, and missing templates.
+ * [POS]: Bridge session and lifecycle contract tests. Shares fixtures with bridge.test.mjs, which covers individual requests; neither suite runs plugin code.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { start } from '../src/bridge.mjs';
+import { stop } from '../src/client.mjs';
 import { init, root, json } from '../src/project.mjs';
 import { encodePng, decodePng } from '../src/png.mjs';
 import { FIGMA_URL, OPTIONS, RUN, uuid, verified, exists, fixture } from './helpers/bridge.mjs';
@@ -36,6 +37,34 @@ async function stopped(b) {
 }
 
 // -- Persisted evidence ---------------------------------------------------
+test('Concurrent stop and result persistence tells executed tasks to read results without resubmitting', OPTIONS, async t => {
+  const b = await fixture(t);
+  await b.poll();
+  const job = await b.deliver(RUN), entered = Promise.withResolvers(), release = Promise.withResolvers(), shutdown = Promise.withResolvers();
+  const rename = fs.rename, originalFetch = globalThis.fetch;
+  t.mock.method(fs, 'rename', async (from, to) => {
+    if (to === path.join(b.run(job.id), 'result.json')) { entered.resolve(); await release.promise; }
+    return rename(from, to);
+  });
+  t.mock.method(globalThis, 'fetch', async (...args) => {
+    const r = await originalFetch(...args);
+    if (String(args[0]).endsWith('/shutdown')) shutdown.resolve();
+    return r;
+  });
+  try {
+    const completing = b.plugin('/complete', { id: job.id, ok: true, executionStarted: true, output: '\u5df2\u5199\u5165' }).catch(() => null);
+    await entered.promise;
+    const stopping = stop(b.cwd, true);
+    await shutdown.promise;
+    release.resolve();
+    const result = await stopping;
+    await completing;
+    assert.equal((await json(path.join(b.run(job.id), 'result.json'))).ok, true);
+    assert.match(result.recovery, /execution result was saved.*result.*do not replay/);
+    assert.doesNotMatch(result.recovery, /not executed|resubmit/);
+  } finally { release.resolve(); }
+});
+
 test('Named previews validate image count, names, and node IDs; images use resolved IDs and job.json stores only names', OPTIONS, async t => {
   const b = await fixture(t);
   await b.poll();

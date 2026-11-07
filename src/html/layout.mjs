@@ -1,7 +1,10 @@
 /**
- * [INPUT]: Imports ./attrib.mjs.
- * [OUTPUT]: Exports BOX_TOL, BLOCKING, collect, upright, findings, fontRows, substitutedNodes.
- * [POS]: Collects browser geometry/text/font facts and derives actionable layout findings.
+ * [INPUT]: Uses ./attrib.mjs frameBox; receives chrome launch().page() from check with optional cdp. Types use attrib Box/Rect, extract-contract ExtractNode and generate FontUse.
+ * [OUTPUT]: BOX_TOL, BLOCKING, collect(page, ids) -> { facts, audit, dom }, upright(linear), findings(node, facts, opts) -> Finding[],
+ *           fontRows(uses, audit) -> FontRow[], substitutedNodes(audit, rows) -> Set, and Facts/TextFacts/FontAudit/Finding/FontRow.
+ * [POS]: Browser geometry/font facts for the checker. One FACTS page script after ranking collects main-element boxes, raw styles and coordinate-parent linear transforms for shift,
+ *        text lines/ink, font declarations and usage, and the structure scan. CDP then samples actual fonts per face.
+ *        Remaining checks are pure: findings compares extraction, fontRows compares generator declarations. check orchestrates it; summary also uses BLOCKING for guidance.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { frameBox } from './attrib.mjs';

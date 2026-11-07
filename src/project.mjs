@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:fs/promises, node:path, node:os, node:crypto.
- * [OUTPUT]: Exports hash, root, json, writeAtomic, save, pluginHome, installPlugin, isJobId, isNodeId, parseTarget, readBinding, init.
- * [POS]: Foundation for bound workspaces, evidence paths, atomic writes and plugin installation.
+ * [INPUT]: Uses node:fs/promises, node:path, node:os and node:crypto.
+ * [OUTPUT]: hash, root, json, save/writeAtomic, pluginHome, installPlugin, isJobId, isNodeId, parseTarget, init and readBinding.
+ * [POS]: Foundation for project/global-plugin paths, atomic persistence and identifier validation. Shared by bin, html/ and src modules other than png and connection; depends on no internal module.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import fs from 'node:fs/promises';

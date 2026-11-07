@@ -1,7 +1,9 @@
 /**
- * [INPUT]: Imports ./match.mjs, ./shift.mjs, ./attrib.mjs, ./page.mjs, ../png.mjs.
- * [OUTPUT]: Exports zoomTarget, renderZoom, zoomCompare.
- * [POS]: Coordinates isolated-node zoom rendering and finer-grained pixel comparisons.
+ * [INPUT]: Uses ./match.mjs match/crop, ./shift.mjs region/search/advise, ./attrib.mjs frameBox, ./page.mjs expectedSize/pageFile,
+ *          ../png.mjs pngSize/decodePng and a chrome launch().page() injected by check. Types come from extract-contract, attrib and shift.
+ * [OUTPUT]: zoomTarget(frame, zoom) -> { node, k, box, expected, warnings }, renderZoom(page, url, target, size) -> PNG, zoomCompare(page, input) -> { result, images? }, and ZoomTarget/ZoomResult.
+ * [POS]: Checker zoom comparison: render one page node at extract --scale k, compare with Figma's single-node export, and search shifts at 1/k CSS px resolution.
+ *        Preflight is pure and runs before Chrome starts. Rendering isolates the target subtree and neutralizes ancestors; match/shift perform all post-screenshot computation. Orchestrated by check.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { match, crop } from './match.mjs';

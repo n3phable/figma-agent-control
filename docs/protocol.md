@@ -53,6 +53,8 @@ The shared directory is `~/.config/figma-agent-control/`, overridden by `FIGMA_A
 
 The bridge generates plugin contents; `connect` installs only changed files. A fixed candidate port range and shared pairing credential make the generated files identical across projects at the same version. Bindings and project names arrive in authenticated response headers instead of being embedded in the plugin.
 
+The iframe probes each candidate port using `/heartbeat?probe=1` without a held job. Probes read identity without taking a lease. When idle, it selects a matching file key, preferring the lowest port; if none match, it uses the first responding bridge to show a diagnostic. With no bridge it retries discovery before requests. When connected to a different file it rediscovers periodically. While holding a job or result, it matches the job's binding ID and waits for the original project rather than surrendering that result. `FOREIGN_JOB` or port reassignment triggers rediscovery.
+
 Because the manifest has no Figma-assigned ID, private `setPluginData` is unavailable. Namespaced `setSharedPluginData` does not depend on that ID.
 
 ## Jobs
@@ -109,6 +111,8 @@ The plugin follows this order:
 
 7. Export a before image if `expect` is set. For cleanup, collect IDs already on the target page. For non-page targets, record direct page-root children.
 
+8. Record existing local collections, variables, and styles. After the final preparation `await`, recheck file, target, scope, page, and snapshot. Do not yield between that recheck and invoking the script.
+
 9. Commit an Undo boundary, listen for target-page node changes, enter the script phase, set `executionStarted:true`, evaluate libraries and body, and commit the closing Undo boundary. Boundary failures are reported, not automatically undone. A script failure records created nodes and optionally cleans them after a successful closing boundary.
 
 10. Capture the after snapshot and, if requested, after image. Compare page-root children for successful non-page-target runs. A too-large after snapshot makes the change set unavailable; a failed after export makes visual verification unavailable. Neither changes the script's own outcome.
@@ -163,6 +167,7 @@ Exceeding a limit fails without partial output. The structured estimate counts n
 |---|---|
 | `schema`, `islandRule` | Schema `1`; automatic-island rule version `2` |
 | `root` | Tree with `id`, `name`, `type`, target-space transform `[[a,c,tx],[b,d,ty]]`, dimensions, and clipped target-space `renderBounds` or null. Root transform is identity. Other properties omit defaults; text styles are in `segments` |
+| `root.children` (and descendant children) | Visible children in original order; horizontal/vertical Auto Layout can reverse paint order with `itemReverseZIndex` |
 | `colorProfile`, `scale` | Document color profile and extraction scale |
 | `reference` | PNG of the node's own box via `useAbsoluteBounds`, scaled, preferably sRGB; fallback to document color adds a warning |
 | `images` | Image-hash-deduplicated `{bytes, width, height}` entries; missing bytes produce warnings |
@@ -284,6 +289,8 @@ The plugin reports progress one second after receiving a run, then every two sec
 
 Phases are `prepare`, `approval`, `script`, and `finish`. Only script phase has target-page local change counts and pending calls. `waiting` includes up to three earliest calls with `{call,forMs}`; the oldest includes up to 1,000 stack characters. The iframe sends progress immediately in a URL-encoded heartbeat parameter. The bridge maps that stack to `at`, removes the raw stack, adds `reportedAt` and optional `hidden:true`, stores memory state, and writes `progress.json` once per sequence number. Invalid progress is ignored. Status adds `ageMs`.
 
+`POST /cancel {id}` accepts only the active run. Before delivery it records a nonexecuted result. After delivery it wakes the held heartbeat and repeatedly returns `cancel:true`; the iframe forwards the matching job ID and nonce. During preparation or approval, cancellation ends waiting with `executionStarted:false`; late reads or acknowledgements cannot resume execution. During the script, it ends the execution race as a failure, with the oldest pending call as error context, and follows ordinary failure evidence and cleanup.
+
 A separate `/heartbeat?hold=1` channel holds until cancellation, completion, or roughly ten seconds, and uses `X-Long-Poll` for immediate continuation. This avoids panel timer throttling. The plugin's own progress and failure-cleanup timers can still be throttled.
 
 Cancellation cannot kill the suspended JavaScript continuation or a host call already in flight. Later proxy access throws, but later direct writes through a previously acquired node are not blocked. A warning records this limit. Stop and rerun the plugin to terminate the continuation. Read-only jobs cannot be cancelled; synchronous work must yield before cancellation can be handled.
@@ -306,11 +313,19 @@ Cancellation cannot kill the suspended JavaScript continuation or a host call al
 
 Every request supplies `X-Session-Token`. Plugin routes additionally require `X-Plugin-Version`. CLI and plugin credentials are separate and role-specific. Plugin mismatch gives `403 PAIRING_MISMATCH` without echoing credentials; CLI mismatch gives `403`. A version mismatch gives `409 PLUGIN_OUTDATED`.
 
+Formal plugin requests include `client`, `visibility`, and current-file `file`. Execution heartbeats also include `job` and optional `progress`. A wrong/missing file gets no work and no lease renewal. An unknown held job gets `409 FOREIGN_JOB` and no renewal. Probe requests do not claim or renew a lease. Lease lifetimes are 15 seconds when active and 90 seconds in the background. An in-flight run prevents replacement of its plugin instance; reads may be abandoned and replaced after lease expiry.
+
+Every response carries `X-Figma-Session`. Authenticated plugin responses also carry `X-Figma-Binding` with binding ID, file key, node ID, and project directory name. Header JSON escapes non-ASCII characters as `\uXXXX`; the iframe restores them with JSON parsing. CORS exposes these headers and `X-Long-Poll`. A session change prompts a fresh file check.
+
 `pluginIssues` records a last-seen timestamp independently per connection cause. When disconnected, doctor reports causes seen within two minutes in this order: `FOREIGN_JOB`, `PAIRING_MISMATCH`, `NO_FILE_KEY`, `WRONG_FILE`. Only the first is an error with an action; the rest are warnings. Foreign results take priority because restarting the plugin could discard them. Pairing diagnostics require a version header to avoid noise from simple requests or scans.
+
+Request bodies are capped at 72 MiB for `/complete` and 16 MiB elsewhere. Shutdown waits for in-progress evidence writes before classifying active work. Only an explicit `executionStarted:false` permits a resubmit instruction; all other completed outcomes direct the caller to read the result.
 
 ## Plugin messages
 
 The iframe and execution code use postMessage. Each job has a random `channelNonce`; mismatched IDs or nonces are ignored.
+
+Messages include `hello`/`file`, `approval-request`/`approval-ack`, `checkpoint`/`checkpoint-ack`, `progress`, `cancel`, `check-target`/`target-info`, `focus-target`, `resize`, and `hide-ui`. The iframe obtains the file key before polling or heartbeats. Target focus switches page, selects, and scrolls the target into view; it is disabled while a job is executing.
 
 Job messages above 65,536 JavaScript string characters, including snapshots and base64, use a `serialized-result` envelope. The iframe falls back to compact failure evidence when the structured portion exceeds about 16 MB, the bridge returns `413`, or the same completion receives three cumulative `400` responses. Other failures do not reset the rejection count. `409 FOREIGN_JOB` never triggers degradation. The compact result retains execution state, verified binding, script-failure cleanup lists, new assets, warnings, and stack.
 
@@ -355,6 +370,8 @@ While a result is awaiting delivery, the iframe sends `/complete` rather than he
 
 Apply is declarative: supplied `tracks` or `styles` fully reconcile that field for the listed node, deleting extras and changing only differences. Omitted fields/nodes remain untouched. Changed timeline durations are written. Unchanged input causes no writes, including read-only inherited or component entries.
 
+All nodes, paths, values, easing, references, and presets are parsed before writing. Components/variant sets themselves and instance sublayers are rejected when a change is requested; component children and instances themselves can be writable. Every applied step records an inverse operation. On Figma rejection, the library attempts reverse-order rollback and reports how much was restored. Raw API values preserve variable IDs and numeric precision; reapplying a preset during rollback can give it a new ID. Read the failure rather than assuming a general transaction guarantee.
+
 Video export finds the enclosing top-level frame. It retries `Video export failed`; with `differentFrom`, byte-identical exports also retry. The wait is bounded, and other errors fail immediately. Since video export can lag behind document edits, use `differentFrom` for visible changes and inspect the sampled frames. Omit it for edits intended to preserve appearance.
 
 Issues have `{rule,timeline,node?,message}` and do not modify data:
@@ -378,6 +395,8 @@ Issues have `{rule,timeline,node?,message}` and do not modify data:
 A file is resolved from the working directory. A job ID must be a successful run containing exactly one landed MP4/WebM; invalid sources fail before launching Chrome. GIF is unsupported. MP4 codec support depends on the Chrome build.
 
 Explicit times are deduplicated and sorted, limited to 24, and must fit the video. Default sampling uses eight times from zero to 0.05 seconds before the end. Each time selects the covering frame. Contact-sheet cells are labeled, with at most four per row, or six during comparison; total width is at most 1,600 px. Narrow frames are enlarged to at least 160 px with nearest-neighbor sampling. A comparison cell stacks source and comparison frames and labels changed pixels.
+
+`--dump` writes original-size frames beside the sheet, in a directory with the same stem. Filenames include sample number and time, preventing collisions after millisecond rounding; comparison frames add `-compare`.
 
 Output is `{source,compare?,width,height,duration,sheet,frames:[{t,file?,compareFile?,changedPixels?,sameSize?}],changed?,layout?,warning?,limitation}`. File paths appear only with dump. Identical video bytes add a warning. Pixel differences use the same `diffPng` definition as run verification. Outputs go to the bound project's `frames/` or a system temporary directory. Success exits `0`; invalid inputs or decoding failure exit `1`.
 
@@ -453,6 +472,8 @@ Issues have `{rule,level,node?,message}`:
 2. Process `--from` frames first, then `--node`, preserving order within each group. A frame error normally affects only that frame.
 
 3. Read an existing extract without waiting, or submit and wait for a new extract. New extracts include requested SVG-bake islands. Each occupies the bridge's single job slot.
+
+4. Assemble the page. Paint order respects Auto Layout `itemReverseZIndex`; root opacity applies to the whole canvas and is not multiplied twice into reference crops.
 
 5. If generated output needs missing SVG islands, a `--node` frame may get one second extract with those IDs and valid explicit SVG bakes. A `--from` frame is marked `needsExtract` instead. If the second extract fails, times out, exceeds limits, or still misses islands, preserve the first extraction/page basis and record `second-extract-failed` approximations and warnings.
 
@@ -645,27 +666,3 @@ HTML and html-check stdout summaries fit within 16 KiB of formatted UTF-8 JSON. 
 HTML-specific codes and frames output are defined above. Network errors remain distinct: `SANDBOX_BLOCKED` is denied localhost access, `BRIDGE_DOWN` is an unresponsive session port, `BRIDGE_TIMEOUT` is a request timeout, and `NO_SESSION` is a missing session file.
 
 `report --since` accepts ISO dates/times; a time requires `Z` or an offset, and a date alone is UTC midnight. `jobs.failed` counts `ok:false`; `jobs.verifyFailed` counts successful executions with failed/unavailable visual checks. They are mutually exclusive.
-
-## Preparation ordering
-
-Target revalidation currently precedes the before-render and later preparation reads. Keep the target unchanged throughout preparation.
-
-## Cancellation boundary
-
-An undelivered run can be marked unexecuted. Once delivered, request cancellation during script execution. Preparation, approval and checkpoint waits retain their timeouts; inspect the returned execution state.
-
-## Motion rollback values
-
-Rollback reconstructs writes from the prior parsed spec. Inspect variable identities and numeric values after an error.
-
-## Frame dump filenames
-
---dump writes original-size PNGs using rounded sample times such as 0.300s.png. Distinct times rounding to the same millisecond can collide; avoid such pairs in one invocation.
-
-## Discovery probes
-
-Discovery checks bridge identity using heartbeat requests. These requests still follow the normal lease path; recheck connection state after discovery.
-
-## Pending results and port changes
-
-Discovery selects a bridge by the current file. Keep the original project available while a result is pending.

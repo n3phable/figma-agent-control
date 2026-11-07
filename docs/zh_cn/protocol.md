@@ -53,6 +53,8 @@ CLI --HTTP / CLI credential--> bridge <--HTTP / plugin credential + version-- ui
 
 桥接生成插件文件内容，`connect` 只安装内容发生变化的文件。固定候选端口段与共享配对凭证，使同版本下各项目生成的文件完全相同。绑定与项目名通过已认证响应的响应头下发，不写进插件文件。
 
+iframe 用 `/heartbeat?probe=1` 逐个探测候选端口，不附带在手任务。探测只读取身份，不取得租约。空闲时按文件 key 选择匹配的桥接，优先最低端口；没有匹配项时，使用第一个有响应的桥接显示诊断。没有桥接时，在请求前重新发现；连到其他文件的桥接时，定期重新发现。持有任务或结果期间，必须匹配该任务的绑定 ID，并等待原项目，保留已有结果。`FOREIGN_JOB` 或端口被重新分配时会触发重新发现。
+
 由于清单没有 Figma 分配的 ID，私有 `setPluginData` 不可用。带命名空间的 `setSharedPluginData` 不依赖该 ID。
 
 ## 任务
@@ -109,6 +111,8 @@ CLI 在提交前把裸名 `--lib motion` 解析为内置文件。桥接和插件
 
 7. 设置了 `expect` 时导出修改前图片。需要清理时，收集目标页已有节点 ID。目标不是页面时，记录页面根的直接子节点。
 
+8. 记录已有本地集合、变量与样式。在准备阶段最后一次 `await` 之后，再次核验文件、目标、范围、页面和快照。从该复核到调用脚本之间不让出控制。
+
 9. 提交 Undo 边界，监听目标页节点变化，进入脚本阶段，设置 `executionStarted:true`，求值库与正文，再提交结束 Undo 边界。边界失败会报错，不自动撤销。脚本失败时记录新建节点；若结束边界成功，可按选项清理这些节点。
 
 10. 获取修改后快照，以及请求的修改后图片。成功且目标不是页面的 run 还会比较页面根子节点。修改后快照过大会使变更集不可用；修改后导出失败会使画面核验不可用，两者都不改变脚本自身的结果。
@@ -163,6 +167,7 @@ Extract 是内建读取，不执行脚本。它没有确认、写前检查点或
 |---|---|
 | `schema`, `islandRule` | Schema 为 `1`；自动孤岛规则版本为 `2` |
 | `root` | 节点树，包含 `id`、`name`、`type`、目标坐标系变换 `[[a,c,tx],[b,d,ty]]`、尺寸，以及裁切后的目标坐标系 `renderBounds` 或 null。根变换为单位矩阵。其他属性省略默认值；文字样式放在 `segments` |
+| `root.children`（以及后代的 children） | 按原始顺序排列的可见子节点；水平/垂直 Auto Layout 可通过 `itemReverseZIndex` 反转绘制顺序 |
 | `colorProfile`, `scale` | 文档颜色配置与提取倍率 |
 | `reference` | 通过 `useAbsoluteBounds` 导出的节点自身盒子 PNG，应用倍率，优先使用 sRGB；回退到文档颜色配置时追加警告 |
 | `images` | 按 image hash 去重的 `{bytes, width, height}` 条目；字节取不到时追加警告 |
@@ -284,6 +289,8 @@ pass = expect === "changed" ? changed : !changed
 
 阶段为 `prepare`、`approval`、`script` 和 `finish`。只有 script 阶段带目标页本地改动次数与未返回调用。`waiting` 最多列出最早的三个 `{call,forMs}`，最早的一项还带最多 1,000 字符的 stack。iframe 立即把进度放进 URL 编码的心跳参数。桥接把 stack 映射为 `at`，移除原始 stack，追加 `reportedAt` 和可选的 `hidden:true`，保存内存状态，并按每个序号写一次 `progress.json`。无效进度会忽略。Status 另加 `ageMs`。
 
+`POST /cancel {id}` 只接受当前在途 run。交付前取消会记录未执行结果；交付后取消会唤醒挂起的心跳，并持续返回 `cancel:true`，由 iframe 转发匹配的任务 ID 与 nonce。准备或确认期间取消，以 `executionStarted:false` 结束等待；迟到读取或回执不能恢复执行。脚本期间取消会把执行 race 结束为失败，以最早未返回调用作为错误上下文，并照常走失败取证和清理。
+
 独立的 `/heartbeat?hold=1` 通道挂起到取消、完成或约十秒后，再用 `X-Long-Poll` 立即续接，避开面板计时器节流。插件自身的进度与失败清理计时器仍可能被节流。
 
 取消无法终止已经挂起的 JavaScript 后续执行，也无法终止已经发出的宿主调用。之后经代理的访问会抛错，但通过此前已取得节点进行的直接写入无法阻止。结果会以警告说明该限制。要终止后续执行，应停止并重新运行插件。读取任务不能取消；同步工作必须先让出控制，取消才有机会被处理。
@@ -317,6 +324,8 @@ pass = expect === "changed" ? changed : !changed
 ## 插件消息
 
 iframe 与执行代码使用 postMessage。每个任务都有随机 `channelNonce`；ID 或 nonce 不匹配的消息会忽略。
+
+消息包括 `hello`/`file`、`approval-request`/`approval-ack`、`checkpoint`/`checkpoint-ack`、`progress`、`cancel`、`check-target`/`target-info`、`focus-target`、`resize` 和 `hide-ui`。iframe 在轮询或心跳前先取得文件 key。目标定位会切换页面、选中目标并滚动到可见位置；执行任务期间禁用。
 
 包括快照和 base64 在内，超过 65,536 个 JavaScript 字符串字符的任务消息使用 `serialized-result` 封装。结构化部分超过约 16 MB、桥接返回 `413`，或同一完成回传累计收到三次 `400` 时，iframe 改用精简失败证据。其他失败不重置拒收计数，`409 FOREIGN_JOB` 永不触发降级。精简结果保留执行状态、核验后的绑定、脚本失败清理列表、新建资源、警告和 stack。
 
@@ -361,6 +370,8 @@ iframe 与执行代码使用 postMessage。每个任务都有随机 `channelNonc
 
 Apply 是声明式写入：列出的节点只要提供 `tracks` 或 `styles`，就完整同步对应字段，删除多余项，只写实际差异。省略的字段和节点不动。变化的时间线时长会写入。输入未变时不写入，包括只读的继承项和组件项。
 
+写入前解析全部节点、路径、值、缓动、引用和预设。要求修改组件/变体集本身或实例内部图层时会被拒绝；组件子图层和实例本身可能可写。每个已执行步骤记录逆操作。Figma 拒绝后，库尝试按逆序回滚，并报告恢复了多少。原始 API 值保留变量 ID 和数值精度；回滚时重新应用预设可能产生新的 ID。应读取失败详情，不能假定存在通用事务保证。
+
 视频导出先找到所属顶层画框。遇到 `Video export failed` 时重试；提供 `differentFrom` 时，逐字节相同的导出也会重试。等待有上限，其他错误立即失败。视频导出可能滞后于文档修改：可见改动使用 `differentFrom` 并检查采样帧；应保持画面的改动省略该选项。
 
 问题形状为 `{rule,timeline,node?,message}`，检查不会修改数据：
@@ -384,6 +395,8 @@ Apply 是声明式写入：列出的节点只要提供 `tracks` 或 `styles`，�
 文件相对于工作目录解析。任务 ID 必须指向成功的 run，且返回值中恰好有一个已落盘的 MP4/WebM；无效来源在启动 Chrome 前失败。不支持 GIF，MP4 编解码支持取决于 Chrome 构建。
 
 显式时刻会去重排序，最多 24 个，且必须在视频时长内。默认从零到结束前 0.05 秒均匀取八个时刻，每个时刻选择覆盖它的那一帧。联系表格子带时间标注，每行最多四格，对照时最多六格，总宽不超过 1,600 px。窄帧以最近邻放大到至少 160 px。对照格把源帧和对照帧上下排列，并标注变化像素。
+
+`--dump` 把原尺寸静帧写到联系表旁、与联系表同名的目录中。文件名包含采样序号与时间，避免毫秒取整后重名；对照帧添加 `-compare`。
 
 输出为 `{source,compare?,width,height,duration,sheet,frames:[{t,file?,compareFile?,changedPixels?,sameSize?}],changed?,layout?,warning?,limitation}`。只有 dump 时才给出逐帧文件路径。视频字节相同会追加警告。像素差异沿用 run 画面核验的 `diffPng` 定义。输出写入绑定项目的 `frames/`，或系统临时目录。成功退出 `0`；无效输入或解码失败退出 `1`。
 
@@ -459,6 +472,8 @@ Apply 同步列出节点的 reactions；空数组清空，未列出的节点不�
 2. 先处理 `--from`，再处理 `--node`，各组内保持给定顺序。通常一帧出错只影响该帧。
 
 3. 不等待地读取已有 extract，或提交并等待新 extract。新提取包含要求 SVG 烘焙的孤岛，每个都占用桥接唯一的任务槽位。
+
+4. 组装页面。绘制顺序遵循 Auto Layout 的 `itemReverseZIndex`；根不透明度施加到整个画布，不会在参考图裁切上重复相乘。
 
 5. 如果生成结果缺少需要的 SVG 孤岛，`--node` 帧可带这些 ID 与有效的显式 SVG 烘焙节点再提取一次；`--from` 帧只标记 `needsExtract`。第二次提取失败、超时、超限或仍缺孤岛时，保留第一次提取作为页面依据，记录 `second-extract-failed` 近似项与警告。
 
@@ -651,27 +666,3 @@ HTML 与 html-check 的 stdout 摘要限制在格式化后 16 KiB UTF-8 JSON 内
 HTML 专用退出码与 frames 输出见上文。网络错误保持区分：`SANDBOX_BLOCKED` 表示 localhost 访问被拒绝，`BRIDGE_DOWN` 表示会话端口无响应，`BRIDGE_TIMEOUT` 表示请求超时，`NO_SESSION` 表示缺少会话文件。
 
 `report --since` 接受 ISO 日期/时间；带时间时必须提供 `Z` 或时区偏移，只有日期则按 UTC 零点处理。`jobs.failed` 统计 `ok:false`；`jobs.verifyFailed` 统计执行成功但画面核验失败/不可用的任务，两者互斥。
-
-## 准备阶段顺序
-
-当前目标复核发生在前图导出及后续准备读取之前。准备期间保持目标不变。
-
-## 取消边界
-
-未交付的 run 可记为未执行。交付后在脚本执行阶段请求取消。准备、确认和写前日志等待使用各自的超时，随后检查返回的执行状态。
-
-## 动效回滚值
-
-回滚从先前解析的 spec 重建写入。报错后应检查变量身份与数值。
-
-## 取帧文件名
-
---dump 使用取整后的采样时刻保存原尺寸 PNG，例如 0.300s.png。不同采样时刻舍入到同一毫秒可能重名，一次调用中应避免这种组合。
-
-## 发现探测
-
-桥接身份通过心跳请求探测。这些请求仍经过普通租约路径，发现完成后应复核连接状态。
-
-## 待回传结果与端口变化
-
-发现过程按当前文件选择桥接。有待回传结果时保持原项目可用。

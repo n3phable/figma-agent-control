@@ -1,7 +1,10 @@
 /**
- * [INPUT]: Imports ./generate.mjs, ./attrib.mjs.
- * [OUTPUT]: Exports BACKGROUND, SPAN, SUGGEST_PX, SEAM_STEP, SEAM_MIN, SEAM_RATIO, suggest, seams, seamLimit, hardEdge.
- * [POS]: Derives reference-bake suggestions and measures seams from comparison evidence.
+ * [INPUT]: Uses ./generate.mjs generate to compute suggested rectangles/share/bakedOver exactly as applied overrides would, and ./attrib.mjs raster;
+ *          types come from extract-contract LandedExtractOutput/ExtractNode, generate Approximation/OverrideEntry and attrib Rect.
+ * [OUTPUT]: BACKGROUND, SPAN, SUGGEST_PX, SEAM_STEP, SEAM_MIN, SEAM_RATIO, suggest(output, ctx, diff, threshold?) -> { suggest, hints, clusters },
+ *           seams(ref, act, width, height, refs), seamLimit(edges, min?, ratio?), hardEdge(seam, min?, ratio?), and Cluster/Suggestion/Seam types.
+ * [POS]: Pure checker advice on freezing backdrop-dependent approximations into references. Group intersecting renderBounds, choose component-level targets,
+ *        trigger on structural blocks or non-text residual pixels, and return ready-to-apply bake:"ref" entries. Measure seams along existing refs. No browser/file access; check supplies shared Figma ownership to avoid rasterizing twice.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { generate } from './generate.mjs';

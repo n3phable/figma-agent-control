@@ -1,10 +1,12 @@
 /**
- * [INPUT]: Imports ./css.mjs.
- * [OUTPUT]: Exports TOP_N, GAP_PX, GAP_RATIO, raster, frameBox, inlinedIslands, figmaPainted, tally, boxes, rank.
- * [POS]: Attributes pixel differences to drawn nodes using shared geometry rules.
+ * [INPUT]: Uses ./css.mjs VECTORS and paintOrder, matching generator stacking. Types come from ./extract-contract.js LandedExtractOutput/ExtractNode and ./generate.mjs Approximation/OverrideEntry.
+ * [OUTPUT]: TOP_N, GAP_PX, GAP_RATIO, raster(rects, width, height) -> per-pixel owner indices, frameBox(node) -> frame-coordinate bounds,
+ *           inlinedIslands(output, approximations), figmaPainted(output, ctx), tally(owner, mask, n), boxes(painted), rank(input), and Box/Rect/Painted/Ranked types.
+ * [POS]: Pure attribution for the html checker: assigns differing pixels to nodes. Both sides use raster; HTML rectangles come from the page's RECTS query,
+ *        while Figma rectangles follow generator rules for masks, clips, islands and reference crops. check orchestrates it and shares Figma ownership with suggest. layout/zoom also use frameBox. No browser or file access.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
-import { VECTORS } from './css.mjs';
+import { VECTORS, paintOrder } from './css.mjs';
 /** @import { LandedExtractOutput, ExtractNode } from './extract-contract.js' */
 /** @import { Approximation, OverrideEntry } from './generate.mjs' */
 /**
@@ -48,7 +50,7 @@ export function inlinedIslands(output, approximations) {
   return new Set(Object.keys(output.islands).filter(id => !back.has(id)));
 }
 
-// Emit rectangles in extract-tree preorder, with earlier nodes underneath, matching generator painting: skip/unpainted (renderBounds=null) subtrees do not paint; effective refs do not paint at their original position,
+// Emit rectangles in paintOrder, including reversed auto-layout stacking, following generation: skip/unpainted (renderBounds null) subtrees paint nothing. Valid refs do not paint at their original positions,
 // but paint last from reference rectangles. Masks themselves do not paint; intersect following same-parent siblings with the mask bounds. Inlined islands use renderBounds and stop traversal; vectors also stop traversal
 // and use renderBounds for zero width/height because HTML gives SVG at least a 1 px viewport. clipsContent clips descendants. Root covers the full frame and #canvas always clips.
 // Intersect each rectangle with current clipping and omit empty results. Rotated nodes and clips use bounding-box approximations. TEXT uses the node box containing its line boxes.
@@ -81,7 +83,7 @@ export function figmaPainted(output, { overrides, inlined, refs }) {
     if (VECTORS.has(n.type)) return push(n, rb && (box[2] < 1 || box[3] < 1) ? rb : box, clip);
     push(n, box, clip);
     let inner = n.clipsContent ? cut(clip, box) : clip;
-    for (const c of n.children ?? []) {
+    for (const c of paintOrder(n)) {
       if (!c.isMask) visit(c, inner);
       else if (!overrides[c.id]?.skip) inner = cut(inner, frameBox(c));
     }

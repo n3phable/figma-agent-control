@@ -1,7 +1,7 @@
 /**
- * [INPUT]: Imports node:test, node:assert/strict, ./helpers/plugin.mjs, ../src/png.mjs.
- * [OUTPUT]: Node.js test cases and fixture setup for this revision.
- * [POS]: Regression coverage for plugin; tests use local synthetic inputs and isolated state.
+ * [INPUT]: tests/helpers/plugin plugin/BINDING; src/png encodePng/decodePng.
+ * [OUTPUT]: No exports; node:test cases.
+ * [POS]: Direct VM main.js execution contracts following docs/protocol.md: compilation, preflight, approval/checkpoint/revalidation, Undo boundaries, busy-task rejection, visuals, serialization, pageRoot changes, Motion snapshots, read-only tasks, named-preview scope/ambiguity/missing behavior, and panel target focus. Failure cleanup and end-to-end result retention belong to plugin-failure.test.mjs using the same fixture.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { test } from 'node:test';
@@ -146,6 +146,23 @@ test('Without explicit depth, snapshots exceeding 2000 nodes or truncating are r
 });
 
 // -- Approval, checkpoints, and revalidation -------------------------------
+test('Edits during before-render or asset reads preserve the original checkpoint and fail final revalidation', async () => {
+  for (const render of [true, false]) {
+    const f = plugin(), gate = Promise.withResolvers(), entered = Promise.withResolvers();
+    const owner = render ? f.doc.frame : f.figma.variables, key = render ? 'exportAsync' : 'getLocalVariableCollectionsAsync', original = owner[key];
+    owner[key] = (...args) => { entered.resolve(); return gate.promise.then(() => original(...args)); };
+    const job = f.start({ code: 'figma.mark("script"); target.name = "\u8986\u76d6\u7f16\u8f91";', ...(render ? { expect: 'changed' } : {}) });
+    await entered.promise;
+    f.doc.frame.name = '\u5e76\u53d1\u7f16\u8f91';
+    gate.resolve();
+    const r = await job.done;
+    assert.deepEqual([r.ok, r.executionStarted, f.doc.frame.name], [false, false, '\u5e76\u53d1\u7f16\u8f91']);
+    assert.equal(f.checkpoints[0].before.name, '\u753b\u677f');
+    assert.match(r.error, /Target changed/);
+    assert.deepEqual(f.events, ['checkpoint']);
+  }
+});
+
 test('High-risk tasks show the panel for approval before checkpointing or execution, ignore forged replies, and do not execute when denied', async () => {
   const f = plugin();
   const job = f.start({ targetNodeId: '1:3', risk: { level: 'high', reason: '\u6539\u5199\u6807\u9898' }, libs: [{ name: 'helper', code: 'const suffix = "!";' }], code: 'target.characters = "\u9ad8\u98ce\u9669" + suffix;' });
@@ -219,14 +236,14 @@ test('Replies missing id/channelNonce are ignored safely when no waiter exists, 
 
 test('Revalidation rejects edited or moved-out-of-scope targets while preserving user changes', async () => {
   const edits = {
-    \u6539\u6587\u5b57: doc => { doc.text.characters = '\u7528\u6237\u8f93\u5165'; },
-    \u79fb\u51fa\u8303\u56f4: doc => { doc.frame.children = [doc.swatch]; doc.page.children.push(doc.text); doc.text.parent = doc.page; }
+    editText: doc => { doc.text.characters = '\u7528\u6237\u8f93\u5165'; },
+    moveOutOfScope: doc => { doc.frame.children = [doc.swatch]; doc.page.children.push(doc.text); doc.text.parent = doc.page; }
   };
   for (const [name, beforeAck] of Object.entries(edits)) {
     const f = plugin({ beforeAck });
     const r = await f.send({ targetNodeId: '1:3', code: 'figma.mark("script"); target.characters = "\u811a\u672c\u8986\u76d6";' });
     assert.equal(r.executionStarted, false, name);
-    assert.match(r.error, /changed while waiting for the snapshot/, name);
+    assert.match(r.error, /changed while preparing the run/, name);
     assert.deepEqual(f.events, ['checkpoint'], name);
     assert.notEqual(f.doc.text.characters, '\u811a\u672c\u8986\u76d6', name);
   }
@@ -312,7 +329,7 @@ test('A second task arriving during execution is discarded without snapshot, exe
 // -- Visual verification --------------------------------------------------
 const paintRed = 'figma.mark("script"); target.fills = [{ type: "SOLID", visible: true, opacity: 1, color: { r: 1, g: 0, b: 0 } }]; return "\u5b8c\u6210";';
 
-test('expect exports the before image after revalidation and before the Undo boundary, then exports after script execution, exactly once each', async () => {
+test('expect exports the before image once before final revalidation/Undo and the after image once after the script', async () => {
   const f = plugin();
   trackExports(f, f.doc.swatch);
   const r = await f.send({ targetNodeId: '1:4', expect: 'changed', code: paintRed });
@@ -362,10 +379,10 @@ test('Byte views and complete PNG/JPEG integer arrays become binary placeholders
 
 test('Reserved keys, non-JSON output, or oversized binaries fail after execution and prohibit replay', async () => {
   const cases = {
-    \u4fdd\u7559\u952e: ['return { real: new Uint8Array([1]), fake: { __figmaAgentControlBinary: 0 } };', /reserved key/],
+    reservedKey: ['return { real: new Uint8Array([1]), fake: { __figmaAgentControlBinary: 0 } };', /reserved key/],
     BigInt: ['return 1n;', /JSON/],
-    \u8d85\u8fc7200\u4e2a: ['return Array.from({ length: 201 }, () => new Uint8Array([1]));', /200/],
-    \u8d85\u8fc748MB: ['return new Uint8Array(37 * 1024 * 1024);', /48 MB/]
+    tooManyBinaries: ['return Array.from({ length: 201 }, () => new Uint8Array([1]));', /200/],
+    oversizedBinary: ['return new Uint8Array(37 * 1024 * 1024);', /48 MB/]
   };
   for (const [name, [tail, reason]] of Object.entries(cases)) {
     const f = plugin();
