@@ -1,21 +1,17 @@
 # lib/
 
-> Parent: [module map](../AGENTS.md)
+> L2 | Parent: [project map](../AGENTS.md)
 
-Plugin-side helpers injected through run libraries.
+These helpers run inside Figma's plugin environment through `run --lib <name>`. `src/args.mjs` resolves bare library names; the CLI reads source and the plugin compiler nests each library in its own outer function scope. There are no imports or runtime host dependencies. Library changes do not alter the plugin fingerprint.
+
+Motion/prototype edits remain ordinary runs, inheriting write-ahead evidence, Undo boundaries, and change sets. Libraries provide read/edit/apply specs instead of adding dedicated bridge operations. Host-only work such as decoding video belongs in `src/`.
 
 ## Members
 
-- `env.d.ts`: Type declarations for injected script values.
-- `motion.js`: Read, apply, export and inspect declarative motion specifications.
-- `prototype.js`: Read, validate and apply reactions and flow starts.
-- `tsconfig.json`: Supporting source or configuration used by this module.
-- `tsconfig.prototype.json`: Supporting source or configuration used by this module.
-
-## Contract maintenance
-
-Keep source comments and default documentation in English. Simplified Chinese belongs in README_ZH.md and docs/zh_cn/*.md. Update both languages with their owning feature change.
-
-Read the current source headers before changing behavior. Keep implementation, tests and affected document contracts in the same feature commit. Describe the interfaces provided by the files in this directory.
+- `motion.js`: Beta Motion API boundary; converts tracks, presets, custom styles, and variable aliases to a round-trippable MotionSpec. Apply validates before mutation and records raw inverse operations for attempted rollback. Async entry stacks preserve caller traces. Video export can retry failures or unchanged bytes.
+- `prototype.js`: reaction/flow spec reader, declarative writer, and async issue checks. Writes only changed reactions, restores explicit flows after Figma's auto-add behavior, attempts rollback on rejection, and rejects changes to read-only overlay settings.
+- `env.d.ts`: type-only declarations for injected `target` and `data`; Figma globals come from plugin typings.
+- `tsconfig.json`: isolated classic-script checkJs environment for motion, matching the plugin runtime without sharing main.js globals.
+- `tsconfig.prototype.json`: equivalent separate environment for prototype, avoiding false collisions between helper names that occupy separate runtime scopes.
 
 `[PROTOCOL]: When changing this file, update this header and check AGENTS.md.`

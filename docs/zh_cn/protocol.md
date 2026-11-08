@@ -98,25 +98,15 @@ CLI 在提交前把裸名 `--lib motion` 解析为内置文件。桥接和插件
 插件按以下顺序执行：
 
 1. 核验文件 key 与编辑模式。
-
 2. 把库与正文编译进嵌套函数作用域，先声明的库位于外层。语法错误对应 `executionStarted:false`。
-
 3. 解析目标，并核验它属于绑定范围。目标不存在与越界分别报错。
-
 4. 获取修改前快照，预算为 2,000 个节点。缺省深度为 32；没有显式声明的截断会拒绝 run。显式 `snapshotDepth` 允许有意缩浅证据。Preview、variables 和 extract 只快照根节点。
-
 5. 高风险 run 最多等待面板确认 300 秒。拒绝或超时均不执行脚本。
-
 6. 把写前检查点发送给桥接，原子保存 `before.json` 并固定其哈希。十秒内未收到回执则不执行。
-
 7. 设置了 `expect` 时导出修改前图片。需要清理时，收集目标页已有节点 ID。目标不是页面时，记录页面根的直接子节点。
-
 8. 记录已有本地集合、变量与样式。在准备阶段最后一次 `await` 之后，再次核验文件、目标、范围、页面和快照。从该复核到调用脚本之间不让出控制。
-
 9. 提交 Undo 边界，监听目标页节点变化，进入脚本阶段，设置 `executionStarted:true`，求值库与正文，再提交结束 Undo 边界。边界失败会报错，不自动撤销。脚本失败时记录新建节点；若结束边界成功，可按选项清理这些节点。
-
 10. 获取修改后快照，以及请求的修改后图片。成功且目标不是页面的 run 还会比较页面根子节点。修改后快照过大会使变更集不可用；修改后导出失败会使画面核验不可用，两者都不改变脚本自身的结果。
-
 11. 序列化结果并提取嵌套二进制数据。大型插件消息使用下文定义的序列化封装。
 
 可信脚本拥有当前文件的完整 Plugin API 访问能力。绑定定义有效目标，选中的目标定义快照、变更集和画面核验的覆盖范围。
@@ -126,15 +116,10 @@ CLI 在提交前把裸名 `--lib motion` 解析为内置文件。桥接和插件
 Run 与 extract 输出共用二进制通道。
 
 - 嵌套输出中任意位置的 `Uint8Array` 等字节视图，以及完整的 PNG/JPEG 整数数组，都会被识别并替换为 `{"__figmaAgentControlBinary": index}` 占位。脚本自行返回这个保留键会导致任务失败。
-
 - 一个 run 最多返回 200 个二进制项。包括修改前后画面图片在内，base64 总长度最多 48 MB。超过上限时，run 在执行后失败，不保留返回值，也不保存输出二进制；不得重放。
-
 - 桥接写入 `files/output-<n>.<type>`，序号从 1 开始，再把占位替换为 `{file, bytes, sha256, type, width?, height?, pixels?}`。路径相对于任务目录。
-
 - 内容识别支持 PNG、JPEG、GIF、WebP、PDF、SVG、MP4（第 4–8 字节为 `ftyp`）和 WebM（前缀 `1A 45 DF A3`）；未知数据使用 `bin`。PNG 带尺寸。Run 的 PNG 还带透明度与主色摘要；单图超过 1,600 万像素，或任务累计分析超过 3,200 万像素时跳过，记为 `pixels.skipped: "too-large"`。Extract 不计算像素摘要。
-
 - 无效占位替换为 `{binaryUnavailable:true}` 并追加 `binaryErrors`，其余证据照常保留。
-
 - 二进制数据不计入 iframe 的结构化结果上限。脚本返回的 base64 字符串不在豁免范围内，可能导致整个返回值被丢弃。
 
 ### 按名称 Preview
@@ -264,13 +249,9 @@ pass = expect === "changed" ? changed : !changed
 `/poll` 返回任务之前，会先原子记录 `running`。因此 queued 任务可被证明从未交付：关闭或启动恢复会为其记录带 `executionStarted:false` 的失败结果。已交付但没有结果的任务则不同：
 
 - 正常关闭桥接时，写入带 `unknown-after-disconnect` 的 `recovery.json`。
-
 - 异常退出后的恢复写入 `needs-document-review`。
-
 - 启动时，将当前绑定下的未决任务载入为 recovered。Recovered run 进入 `unresolved` 并阻止新的 run；读取任务不阻塞，可以重新提交。
-
 - 带有效 `resolution.json` 的 run 不再载入。核验记录损坏会使启动失败；其他绑定下的未决写入也会使启动失败。无关的读取任务会忽略。
-
 - Recovered 任务绝不重新交付，也不能重新确认或提交检查点。已载入任务的迟到完成结果仍可落盘，并解除其未决状态。
 
 使用 `resolve <original-id> --inspect <inspection-id> --previous-plugin-stopped` 核验。该 inspection 必须在当前会话直接查询原目标，且旧插件必须确实已经停止。Resolve 结束未决等待，但不宣称原执行结果、不重放，也不撤销写入。
@@ -357,15 +338,10 @@ iframe 与执行代码使用 postMessage。每个任务都有随机 `channelNonc
 ```
 
 - 时间线 ID 属于其顶层画框或 Section。时长与关键帧时间均以秒计。根节点自己的时间线即使为空也会列出；其他时间线只有包含动效时才列出。
-
 - 轨道路径包括属性名（`OPACITY`、`TRANSLATION_X`）、`fills.0`、`strokes.1`、`effects.0.RADIUS`，以及 `fills.0.properties.<property-id>` 这样的组件属性路径。
-
 - 值使用数字、布尔值、`[x,y]`、`#RRGGBB` / `#RRGGBBAA`；其他类型保留原 `{type,value}` 对象。关键帧为 `[seconds,value,easing?]`。
-
 - 缓动控制以该关键帧结束的区间。支持的短记法包括 `linear`、标准 ease-in/out/back 变体、`hold`、`gentle`、`quick`、`bouncy`、`slow`、`cubic(x1,y1,x2,y2)`、`spring(bounce)` 和 `$variable-name`。未知形式保留原始对象。读取时省略默认手动缓动 `cubic(0.5,0,0.5,1)`。
-
 - 预设使用 `{id,preset,at,dur,easing?,props?}`，`preset` 来自 `figma.motion.figmaAnimationStyles()`。默认 props，以及跟随时间线偏移的 delay 会省略。自定义样式使用 `{id,style:"@name",at}`；新样式省略 `id`。
-
 - `refs` 把 `$` / `@` 记法映射到确切 ID；apply 先查 refs，再查本地名称。变量重名时添加 `#ID` 后缀。实例内部图层标记为 `inherited`。
 
 Apply 是声明式写入：列出的节点只要提供 `tracks` 或 `styles`，就完整同步对应字段，删除多余项，只写实际差异。省略的字段和节点不动。变化的时间线时长会写入。输入未变时不写入，包括只读的继承项和组件项。
@@ -468,17 +444,11 @@ Apply 同步列出节点的 reactions；空数组清空，未列出的节点不�
 ### 处理顺序
 
 1. 写文件前预检全部输入：必须提供 `--out`，`--node` 与 `--from` 合计 1–50 个不同画框，`--from` 必须指向本地倍率为 1 的 extract 任务，overrides 文件有效，每帧 SVG 烘焙 ID 不超过 500 个。
-
 2. 先处理 `--from`，再处理 `--node`，各组内保持给定顺序。通常一帧出错只影响该帧。
-
 3. 不等待地读取已有 extract，或提交并等待新 extract。新提取包含要求 SVG 烘焙的孤岛，每个都占用桥接唯一的任务槽位。
-
 4. 组装页面。绘制顺序遵循 Auto Layout 的 `itemReverseZIndex`；根不透明度施加到整个画布，不会在参考图裁切上重复相乘。
-
 5. 如果生成结果缺少需要的 SVG 孤岛，`--node` 帧可带这些 ID 与有效的显式 SVG 烘焙节点再提取一次；`--from` 帧只标记 `needsExtract`。第二次提取失败、超时、超限或仍缺孤岛时，保留第一次提取作为页面依据，记录 `second-extract-failed` 近似项与警告。
-
 6. 写出页面；未禁用检查时执行检查；记录该帧。
-
 7. 整批结束后重写 `<out>/html.json`。如果命令被外部终止，可能已有完成的页面/证据，但没有最终清单。
 
 ### 输出文件
@@ -589,11 +559,8 @@ Overrides 文件先按画框 ID、再按节点 ID 分组。两层都要求冒号
 几何类型为 `box`、`wrap`、`content-offset`、`overflow`，以及只报告的 `ink-offset`。判定规则如下：
 
 - `fail`：`diffRatio > 0.02`。
-
 - `pass-with-findings`：差异比例达标，但仍有结构块、参考图裁切、字体替代、top 节点阻断几何问题、结构问题或已触发的近似项簇。
-
 - `clean`：没有上述任何情况。Focus 和 zoom 不参与判定。
-
 - `unchecked`：无法执行比对。检查报告可出现 `REFERENCE_SIZE` 与 `RENDER_TIMEOUT`。Chrome 查找/启动失败后，本次不再检查；协议/退出失败只影响当前帧，下一帧可用新浏览器。渲染超时后，本次剩余帧也标为 unchecked。
 
 HTML 比图使用 pixelmatch 风格的 YIQ 比较和抗锯齿处理，run 验收采用严格像素变化检测。结构与字体检查补充 HTML 差异比例。

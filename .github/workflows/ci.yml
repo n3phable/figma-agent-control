@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'feat/**', 'fix/**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Require Chrome for browser coverage
+        run: node --input-type=module -e 'import { findChrome, chromeVersion } from "./src/html/chrome.mjs"; console.log(await chromeVersion(findChrome()));'
+      - run: npm run check
+      - run: node scripts/check-release.mjs --self-test
+      - name: Run tests and preserve the log
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          npm test 2>&1 | tee test-results/tests.log
+      - name: Verify English test output
+        run: node --input-type=module -e 'import fs from "node:fs"; import { issuesIn } from "./scripts/check-release.mjs"; if (issuesIn(fs.readFileSync("test-results/tests.log", "utf8")).includes("non-English text")) throw Error("Test output contains non-English text");'
+      - run: npm run check:release
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: tests-${{ matrix.os }}-node${{ matrix.node }}
+          path: test-results/tests.log
+          if-no-files-found: ignore
+          retention-days: 14
