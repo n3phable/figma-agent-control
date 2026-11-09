@@ -2,7 +2,7 @@
 
 [Simplified Chinese](README_ZH.md)
 
-
+![Figma Agent Control](docs/brand/banner.png)
 
 Give your coding agent a local CLI for Figma Desktop. Inspect a design, run trusted JavaScript against the Plugin API, and get durable evidence of what changed. Export frames as self-contained HTML and compare their rendering with Figma reference images.
 
@@ -11,26 +11,33 @@ Figma Agent Control (FAC) connects your local CLI to a Figma Desktop development
 ## What it does
 
 - **Read and edit designs:** inspect node trees, inspect variables, export PNG previews, and execute Plugin API scripts with reusable libraries and JSON input.
-
 - **Keep evidence:** save before-snapshots, failure snapshots, change sets, exported files, execution traces, and optional visual checks. Resume waiting by job ID after a CLI timeout.
-
 - **Recover deliberately:** inspect partial writes, clean up newly created nodes, cancel a stalled run, and review writes whose result is unknown.
-
 - **Export static HTML:** generate nested DOM with embedded assets, compare it in Chrome, identify differences by node, and apply recorded overrides.
-
 - **Work with motion and prototypes:** read and apply declarative specs through bundled libraries; export motion video and inspect frame contact sheets. Motion uses Figma's Beta/private APIs and depends on their availability.
 
 ## Requirements
 
 - **Node.js 22 or newer.** The runtime has no npm dependencies. Development dependencies are pinned in the lockfile.
-
 - **Figma Desktop**, with the target file open in Design mode and the development plugin running. Editing requires edit access to that file.
-
 - **Local shell and localhost access** for the agent running the CLI.
-
 - **Google Chrome or Chromium** for HTML comparisons and video frame extraction. Set `FIGMA_AGENT_CONTROL_CHROME` to an executable path if needed. HTML generation with `--no-check` does not require Chrome.
 
 Font discovery searches macOS font directories.
+
+## Install from npm
+
+npm status: awaiting first publication. For immediate use, [install from source](#install-from-source).
+
+```sh
+npm install -g figma-agent-control
+figma-agent-control help
+
+# Or run without a permanent global command:
+npx figma-agent-control help
+```
+
+The npm package includes the plugin templates, bundled libraries, documentation, branding, and agent skill. Setup also includes Figma Desktop and the one-time plugin import described below.
 
 ## Install from source
 
@@ -58,6 +65,10 @@ ln -s "$PWD/skills/figma-agent-control" "$HOME/.agents/skills/figma-agent-contro
 ```
 
 Use your agent's documented skill directory if it differs. A symlink keeps the skill aligned with the checkout; do not overwrite an existing installation without checking it. A new agent session may be needed to discover the skill.
+
+For a global npm installation, the skill is under
+`$(npm root -g)/figma-agent-control/skills/figma-agent-control`; use that installed
+directory as the symlink source instead of the checkout path.
 
 ## Quick start
 
@@ -128,22 +139,20 @@ The bridge listens on `127.0.0.1`, uses separate CLI and plugin credentials, che
 
 Writes take effect as the script runs. After failure, read `instruction` and `executionStarted`, inspect the partial changes, and use cleanup for eligible newly created nodes. Existing-node changes persist. Keep `.figma-agent-control/` local: it contains design evidence and session credentials.
 
-HTML exports are fixed-size static replicas. Validate prototype clicks and cloud synchronization in Figma. See the [agent guide](docs/agent-guide.md#limits) and security policy for the operating details.
+HTML exports are fixed-size static replicas. Validate prototype clicks and cloud synchronization in Figma. See the [agent guide](docs/agent-guide.md#limits) and [security policy](SECURITY.md) for the operating details.
 
 ## Documentation and development
 
 - [Simplified Chinese documentation](docs/zh_cn/README.md): translated guides.
-
 - [Agent guide](docs/agent-guide.md): operating workflow, examples, and recovery.
-
 - [Protocol and evidence](docs/protocol.md): requests, results, files, and exit codes.
-
 - [Architecture](docs/architecture.md): process boundaries, modules, and design decisions.
+- [Contributing](CONTRIBUTING.md): local checks and contribution workflow.
 
-- Contributing: local checks and contribution workflow.
+```sh
+npm test
+npm run check
+npm run check:release
+```
 
-Licensed under the [MIT License](LICENSE). See third-party notices for included material. Maintained by [n3phable](https://github.com/n3phable).
-
-## Available command syntax
-
-Run `figma-agent-control help` for the commands in this revision. Core commands are init, connect, stop, status, doctor, run, inspect, preview, variables, result, wait, resolve, image-diff and report. A timeout does not authorize replaying a write.
+Licensed under the [MIT License](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md) for included material. Maintained by [n3phable](https://github.com/n3phable).

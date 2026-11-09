@@ -48,7 +48,6 @@ The iframe matches each task message against its ID and random nonce before acce
 [project.mjs](../src/project.mjs) defines two storage roots:
 
 - `<project>/.figma-agent-control/`: binding, current session, lock, durable jobs, recovery records, and derived comparison evidence. The current working directory is the project; no parent search occurs.
-
 - `~/.config/figma-agent-control/`, or `FIGMA_AGENT_CONTROL_HOME`: shared pairing credential and generated development-plugin files.
 
 A shared plugin avoids duplicate same-named installations. Its configuration contains only candidate ports, credential, and version; each authenticated bridge supplies binding identity in a response header. Idle plugins choose a bridge for their current file. A plugin holding a result searches for that result's original binding, even if its port changed.
@@ -203,6 +202,6 @@ Runtime executes `.mjs`/`.js` source directly; JSDoc is checked with lockfile-pi
 
 The [extract contract](../src/html/extract-contract.d.ts) distinguishes plugin byte arrays, transport placeholders, and landed files. External JSON and dynamic API field access still require assertions; types alone cannot validate real Figma behavior. The optional `node tests/contract-samples.mjs <runs-directory>` checks explicitly supplied extract evidence against the type contract. It does not require or ship a private corpus.
 
-## Shadow mapping
+`npm run check` verifies syntax then checks all environments with the pinned local compiler. `npm test` runs files serially so browser performance checks do not compete. Tests use isolated real bridges, real plugin source in VM, and synthetic documents. Browser/font-dependent cases may skip when requirements are unavailable. `npm run check:release` checks English text, obvious sensitive-data patterns, and package contents.
 
-Shadow outlines account for painted fills and outside/center strokes. Spread follows the observed rectangle/ellipse/filled-clipping-frame rules; overflowing content can require a content-shaped shadow and an explicit approximation finding.
+CI targets Linux/macOS and Node.js 22/24. Automated tests use local bridges, VM plugin execution and isolated Chrome rendering. See [Contributing](../CONTRIBUTING.md) for local development commands. Check live plugin behavior and cloud synchronization in Figma.

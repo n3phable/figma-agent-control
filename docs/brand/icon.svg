@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1C212C"/><stop offset="1" stop-color="#121212"/>
+    </linearGradient>
+  </defs>
+  <!-- Full background; the host platform applies its own corner clipping. -->
+  <rect id="Background" width="1024" height="1024" fill="url(#bg)"/>
+  <!-- A continuous chevron: the terminal prompt is itself the selected object. -->
+  <path id="Relief" d="M286 190 L588 512 L286 834" fill="none" stroke="#1865EE" stroke-width="196" stroke-linecap="round" stroke-linejoin="round" transform="translate(26 30)"/>
+  <path id="Prompt" d="M286 190 L588 512 L286 834" fill="none" stroke="#F8F6F5" stroke-width="196" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- The selection handle sits directly on the tip of the prompt. -->
+  <rect id="Handle" x="606" y="422" width="180" height="180" rx="28" fill="#F8F6F5" stroke="#3FA1F9" stroke-width="30"/>
+</svg>

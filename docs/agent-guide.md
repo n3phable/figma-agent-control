@@ -33,15 +33,10 @@ figma-agent-control doctor
 Start work when `connected` is `true`. The current working directory is the project root; the CLI does not search parent directories.
 
 - The bound node is the default `target`; `--node` must identify a node inside it. A script receives the full `figma` object. Snapshots, change sets and visual checks cover the selected target subtree, including indirect effects such as changes to its main component. Choose a target covering the authorized writes.
-
 - One bridge executes one job at a time. Multiple agents should retrieve data sequentially, then analyze it independently offline.
-
 - A single plugin installation serves all projects. Bridges choose ports `32523`–`32530`; the plugin selects a bridge for its current file, or the original binding when it holds a pending result. Remove obsolete duplicate development-plugin installations if pairing fails.
-
 - Long polling continues while the panel is hidden. Reconnecting after a bridge restart may wait for a throttled timer. Figma can also throttle an invisible window or background file; see [stalled jobs](#stalled-jobs).
-
 - Plugin-file changes can trigger Figma's development-plugin reload. If the panel reports an outdated plugin, rerun it. Its footer version should match `status.pluginVersion`.
-
 - Finish with `figma-agent-control stop` for a bridge you started and no longer need. It stops the local bridge. Check document synchronization in Figma. Exit code `2` means shutdown is still finishing; check `status` later.
 
 ## Writing scripts
@@ -122,27 +117,16 @@ for (const node of target.findAllWithCriteria({ types: ['INSTANCE'] })) {
 These notes summarize Figma Desktop behavior observed during development. Read back important properties in the current file before depending on them.
 
 - **Fonts:** load every font returned by `getRangeAllFontNames(0, node.characters.length)` before editing mixed-font text. `fontName` can be `figma.mixed` even when the layer looks uniform. Handle empty text separately.
-
 - **Text ranges:** assigning an entire `characters` or `fills` value can erase range-specific colors and sizes. Read `getStyledTextSegments` and restore the required ranges.
-
 - **Sizing:** call `resize()` before setting Fill/Hug sizing, then read back the final dimensions. Auto-height text also needs a Hug container to avoid clipping.
-
 - **Auto Layout alignment:** use `MIN`/`MAX`, not `START`/`END`. `primaryAxisAlignItems` also accepts `CENTER` and `SPACE_BETWEEN`; the counter axis accepts `CENTER` and, for horizontal frames, `BASELINE`.
-
 - **New nodes:** `figma.create*` attaches nodes to the current page root at `(0, 0)`. Explicitly `appendChild` them into the intended target.
-
 - **Instance swaps:** nested overrides migrate by layer name. Swapping to a differently named internal layer can lose overrides; keep names consistent or restore them after reading back.
-
 - **Groups:** Groups and Frames have different layout and constraint behavior, and `rescale()` on a Group inside an instance can fail. Put responsive illustration behavior into the main component when appropriate.
-
 - **Aspect ratios:** `targetAspectRatio` is read-only; use `lockAspectRatio()`. Read back dimensions and inspect exports to distinguish scaling, cropping, and distortion.
-
 - **Color bindings:** use the paint returned by `setBoundVariableForPaint`. Preserve the intended alpha in the variable value; binding a translucent paint to an opaque variable can change the rendering. Node opacity is separate.
-
 - **Variable code names:** use `variable.setVariableCodeSyntax('WEB' | 'ANDROID' | 'iOS', name)`.
-
 - **JavaScript:** the plugin uses QuickJS. `Intl` is unavailable in the observed runtime; locale formatting may not insert separators. Avoid assigning undeclared variables: run scripts share the plugin's global environment. `String(Object.create(null))` throws; use JSON serialization for such values.
-
 - **Errors:** QuickJS can lose callers across `await`, and host API rejections can be strings without a stack. Read the available stack and call-site evidence when diagnosing them.
 
 ## Reading results
@@ -211,13 +195,9 @@ Store recurring sequences in a project script with parameters. `break` itself re
 When `executionStarted` is `true`, earlier writes may already exist. **Do not replay the script.** Inspect the current document and repair only what is necessary.
 
 - `created` lists surviving top-level nodes created on the target page: `{id, name, type, parentId, size}`. Descendants are handled with their parent. A new container can hold pre-existing content, so inspect its subtree first.
-
 - `clean <job-id>` turns eligible evidence into an ordinary run. It rechecks the original page, name, type, parent, and owned descendant count. Missing nodes become `output.gone`; mismatches become `output.skipped` and exit code `1`. It does not rewrite the original evidence. It is safe to repeat, but it cannot detect every existing layer moved into a new container.
-
 - `--clean-on-fail` attempts immediate cleanup after the script's closing Undo boundary, with a separate cleanup boundary. It protects nodes that existed on the target page before execution, including those inside new containers. Successful deletions are `cleaned`; protected nodes and failures are `cleanFailed`.
-
 - `deletedExisting` warns that existing nodes disappeared during execution while cleanup also deleted newly created nodes. Operations such as `detachInstance` and `flatten` can replace existing content with new IDs, making it look newly created. Inspect; if cleanup removed content that should remain, one deliberate Undo in Figma can restore the cleanup step. It does not undo earlier script edits.
-
 - `createdAssets` lists new collections, variables, and styles. Neither cleanup path deletes these. Reuse or remove them deliberately instead of creating duplicates.
 
 Cleanup preserves existing edits, moves, renames and deletions. A delete-then-rebuild script can leave an empty location after cleanup; undoing that cleanup step restores the unfinished replacement. Inspect the original edits separately and repair them deliberately.
@@ -235,13 +215,9 @@ An invisible or minimized Figma window can throttle timers and host calls heavil
 ```
 
 - `prepare` covers target resolution, snapshots, checkpoint, and before rendering; `approval` waits for the panel; `script` runs the body; `finish` collects evidence. Large targets can make preparation or finishing slow.
-
 - `waiting` tracks proxied `figma.*Async` calls, including supported namespaces. Node methods such as `exportAsync` and a script's own Promises are not tracked.
-
 - Growing `changes` indicates progress. Keep waiting. If a call remains stuck, `cancel <job-id>` requests cancellation and waits for its result.
-
 - Cancellation before script execution gives `executionStarted: false`. Cancellation during execution follows the normal failure/cleanup path and points the trace at the pending call when available.
-
 - Cancellation cannot terminate an already suspended JavaScript continuation. Future accesses through the `figma` proxy throw, but direct writes through node objects already obtained can still occur if the pending call returns. Closing and reopening the plugin is required to terminate that continuation. Do not kill Figma or trigger global Undo as a generic recovery step.
 
 Progress timers and failure cleanup can themselves be throttled. The held-heartbeat cancellation channel does not depend on the panel's timer, but a synchronous loop must yield before the plugin can handle anything.
@@ -337,21 +313,13 @@ figma-agent-control run apply-prototype.js --lib prototype --data prototype.json
 ```
 
 - Edit `nodes[].reactions` and `flows`. Listed nodes are reconciled; `[]` clears reactions. Omitted nodes stay untouched. Omitted `flows` preserves current flows, including any Figma adds automatically. `overlays` is read-only; derived targets, frames, edges, and issues are ignored on apply.
-
 - A reaction is `{on, do: [actions]}`. Examples include `click`, `after 0.8`, `{navigate: "12:34"}`, and `transition: "smart-animate 0.3 ease-out"`. Times are seconds in the library. Prototype springs use `spring(mass,stiffness,damping)`, unlike Motion's `spring(bounce)`.
-
 - Navigate/swap/overlay targets must be top-level frames on the same page, directly under a page or Section. Scroll targets stay within the source frame; change-to targets stay in the same variant set. Overlay `position` requires Manual placement in Figma.
-
 - Reactions can be written to instances and instance sublayers; the latter are overrides merged by trigger with their main component. Sections and component sets do not expose `setReactionsAsync`.
-
 - Keep Figma in the foreground for writes. Background `setReactionsAsync` calls have been observed to time out. The library attempts rollback after rejection; read the error and inspect before deciding to retry.
-
 - `drag` requires Smart Animate, and URL actions accept click/after triggers. Multiple actions, variable actions, and conditionals may be plan-limited.
-
 - Figma may add a flow when a top-level frame first gets an outgoing reaction. The library writes explicit `flows` after reactions so the requested set wins.
-
 - `error` findings relevant to the requested write are rejected before writing. Warnings such as unmatched Smart Animate layers, unreachable frames, and dead ends need design judgment.
-
 - Validate the returned `changes` and reread `prototype`. A shallow page snapshot can miss deep reaction changes. `--expect` does not verify prototype behavior; test actual clicks in Figma.
 
 `variables` reports `prototypeRefs` separately from visual-property `bindings`. Check both before deleting a variable.
@@ -400,9 +368,7 @@ Fix position and text before baking. Copy `top[].fix` into the correct frame gro
 Font substitution needs the correct local font, not an override. `figmaMissing` means Figma also substituted it. Report systematic generator defects: the same blocking geometry class across multiple frames, missing or mismatched text, or any output `violations`. Do not hide them with raster crops.
 
 - `bake:"svg"` delegates a non-background-dependent shape to Figma. A new extract may be needed. SVG does not include the underlying background.
-
 - `bake:"ref"` crops the reference image and places that rectangle above the canvas. It freezes everything visible in the rectangle, including text, and suppresses the target subtree. Descendant overrides become stale with `inside-ref`; review suggested `replaces` entries first. A frame using reference crops cannot be `clean`.
-
 - Never hand-edit generated HTML: the next run overwrites it, and `html-check` reports a regeneration mismatch. Avoid pixel-score tricks such as thickening strokes or freezing fixable text/position differences.
 
 For a specific node, use `html-check <page.html> --node <id>`. For magnified comparison, first run `extract --node <id> --scale 4`, then `html-check <page.html> --zoom <extract-job-id>`. Zoom requires scale above 1 and at most 4, an unrotated node, and available evidence. Focus and zoom do not alter the overall verdict. Run `html-check` in the project that generated the page; it does not connect to Figma.
@@ -445,15 +411,10 @@ The flag is an assertion that the previous plugin has actually stopped. The insp
 ## Limits
 
 - Plugin API operations work within the current Figma file. Use a separate binding to work in another file.
-
 - Check cloud synchronization in Figma.
-
 - Test prototype playback in Figma, manually or through authorized UI automation. Configure overlay settings, Sticky behavior and presentation devices in the Prototype panel. Overlay action position uses Manual placement.
-
 - HTML exports contain fixed-size static nested DOM. Find nodes by `data-node`; SVG islands and reference crops replace their subtrees. Build responsive behavior and prototype interactions in the consuming application.
-
 - Motion requires the account's Beta/private APIs. Font discovery currently searches macOS directories; live Desktop acceptance is recorded separately from automated tests.
-
 - Store plugin data with namespaced `setSharedPluginData`, which works with the generated development manifest.
 
 Keep `.figma-agent-control/` out of version control. It includes credentials and design evidence. Deliver only the required result artifacts, retain unreviewed evidence, and stop bridges you started when their work is complete.

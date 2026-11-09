@@ -33,15 +33,10 @@ figma-agent-control doctor
 `connected` 为 `true` 后开始工作。当前工作目录就是项目根目录，CLI 不向上查找。
 
 - 绑定节点是默认 `target`；`--node` 必须位于它的范围内。脚本可使用完整 `figma` 对象。快照、变更集和画面判定覆盖选中的目标子树，也会反映主组件修改等间接影响。目标应覆盖全部授权写入。
-
 - 一个桥接同一时刻只执行一个任务。多个 Agent 应顺序取数，再离线并行分析。
-
 - 一份全局插件供所有项目使用。桥接选择 `32523`–`32530` 中的端口；空闲插件按当前文件选择桥接，持有待回传结果时按原绑定选择。配对失败时检查是否留有同名的旧开发插件。
-
 - 面板隐藏后长轮询仍可继续。桥接重启后的重连可能要等被节流的计时器；Figma 也可能限制不可见窗口或后台文件，见[任务迟迟不结束](#任务迟迟不结束)。
-
 - 插件文件变化可能触发 Figma 开发插件重载。面板提示版本过旧时重新运行插件；页脚版本应与 `status.pluginVersion` 一致。
-
 - 结束时，对本次启动且不再需要的桥接运行 `figma-agent-control stop`。它停止本机桥接，文档同步在 Figma 中检查。退出码 `2` 表示仍在收尾，稍后查看 `status`。
 
 ## 写脚本
@@ -122,27 +117,16 @@ for (const node of target.findAllWithCriteria({ types: ['INSTANCE'] })) {
 以下汇总开发中观察到的 Figma Desktop 行为。依赖关键属性前，先在当前文件中读回确认。
 
 - **字体：** 编辑混合字体文字前，加载 `getRangeAllFontNames(0, node.characters.length)` 返回的全部字体。看似统一的文字也可能有 `fontName === figma.mixed`；空文字单独处理。
-
 - **文字分段：** 整段赋值 `characters` 或 `fills` 可能抹掉区间颜色、字号。先读 `getStyledTextSegments`，再恢复需要的区间样式。
-
 - **尺寸：** 先 `resize()`，再设置 Fill/Hug，最后读回尺寸。自动高度文字还需要 Hug 容器，避免裁切。
-
 - **自动布局对齐：** 用 `MIN`/`MAX`，不用 `START`/`END`。主轴还支持 `CENTER`、`SPACE_BETWEEN`；交叉轴支持 `CENTER`，横向画框还支持 `BASELINE`。
-
 - **新节点：** `figma.create*` 把节点放在当前页面根的 `(0, 0)`。必须显式 `appendChild` 到目标。
-
 - **实例替换：** 嵌套覆盖按图层名迁移。新组件内部图层名不同，覆盖可能丢失；统一命名，或读回后恢复。
-
 - **Group：** Group 与 Frame 的布局和约束行为不同；实例内 Group 的 `rescale()` 可能失败。适合时，把响应式插画行为放在主组件中定义。
-
 - **宽高比：** `targetAspectRatio` 只读，使用 `lockAspectRatio()`。读回尺寸并检查导出，以区分缩放、裁切和拉伸。
-
 - **颜色绑定：** 使用 `setBoundVariableForPaint` 返回的新 paint。在变量值中保留需要的 alpha；半透明 paint 绑定到不透明变量会改变画面。节点自身的 opacity 另算。
-
 - **变量代码名：** 使用 `variable.setVariableCodeSyntax('WEB' | 'ANDROID' | 'iOS', name)`。
-
 - **JavaScript：** 插件使用 QuickJS。观察到的运行时没有 `Intl`，本地化格式化未必添加分隔符。不要给未声明变量赋值，run 与插件共享全局环境。`String(Object.create(null))` 会抛错，这类值用 JSON 序列化。
-
 - **错误：** QuickJS 可能丢失 `await` 之前的调用方；宿主 API 拒绝也可能只是无 stack 的字符串。诊断时结合现有堆栈和调用点证据。
 
 ## 读结果
@@ -211,13 +195,9 @@ done
 `executionStarted:true` 表示此前写入可能已生效。**禁止重放脚本。** 先 inspect 当前文档，只修正仍需要处理的部分。
 
 - `created` 列出目标页上新建、仍存在的最高层节点 `{id,name,type,parentId,size}`；后代随父节点处理。新容器可能装有已有内容，先检查其子树。
-
 - `clean <job-id>` 把符合条件的证据转换为普通 run。它复核原页面、名称、类型、父节点和自有后代数。不存在的记 `output.gone`，不匹配的记 `output.skipped` 并退出 `1`。原证据不改写；可以重复执行，但不能识别所有被移进新容器的已有图层。
-
 - `--clean-on-fail` 在脚本的结束 Undo 边界成功后立即尝试清理，并为清理单独提交边界。执行前已在目标页的节点及包含它们的新容器受保护。删除成功记 `cleaned`，受保护或失败记 `cleanFailed`。
-
 - `deletedExisting` 表示执行期间已有节点消失，同时清理又删了新节点。`detachInstance`、`flatten` 等会替换 ID，让已有内容看起来像新建。先 inspect；若清理删了应保留的内容，可在 Figma 中有意识地 Undo 一次恢复清理步骤，但不会撤销更早的脚本修改。
-
 - `createdAssets` 列出新集合、变量和样式，两种清理都不删除它们。应明确复用或删除，不要重建同名副本。
 
 清理后，已有节点的改名、修改、移动和删除仍然保留。先删后建的脚本经清理后可能留下空位；撤销清理步骤会恢复未完成的替代品。原有改动应单独 inspect 并明确修复。
@@ -235,13 +215,9 @@ done
 ```
 
 - `prepare` 包括取目标、快照、写前日志和前图；`approval` 等面板确认；`script` 执行正文；`finish` 收集证据。大目标会拖慢准备和收尾。
-
 - `waiting` 记录代理上的 `figma.*Async` 及支持的命名空间。节点方法如 `exportAsync`、脚本自己的 Promise 不在其中。
-
 - `changes` 增长说明仍有进展，继续等。调用长期停滞时，`cancel <job-id>` 请求取消并等待结果。
-
 - 开始前取消给 `executionStarted:false`。执行中取消走普通失败/清理路径，可取得位置时 trace 指向等待中的调用。
-
 - 取消不能终止所有挂起的 JavaScript 续体。之后经代理访问 `figma` 会抛错，但挂起调用恢复后，仍可能通过此前取得的节点直接写入。要终止该续体，需要关闭并重新运行插件。不要把杀掉 Figma 或全局 Undo 当成通用恢复步骤。
 
 进度计时器和失败清理本身也会被节流。挂起心跳的取消通道不依赖面板计时器，但同步长循环必须先让出控制。
@@ -337,21 +313,13 @@ figma-agent-control run apply-prototype.js --lib prototype --data prototype.json
 ```
 
 - 修改 `nodes[].reactions` 与 `flows`。列出的节点按 spec 对齐，`[]` 清空连线；省略的节点不动。省略 `flows` 保留当前起点，包括 Figma 自动新增的起点。`overlays` 只读；targets、frames、edges、issues 是派生信息，应用时忽略。
-
 - 连线是 `{on,do:[动作]}`。示例为 `click`、`after 0.8`、`{navigate:"12:34"}`、`transition:"smart-animate 0.3 ease-out"`。库内时间以秒计。原型弹簧使用 `spring(mass,stiffness,damping)`，不同于 Motion 的 `spring(bounce)`。
-
 - navigate/swap/overlay 目标须为同页顶层画框，即页面或 Section 的直接子节点。scroll 目标在源画框内；change-to 目标在同一变体集内。overlay 的 `position` 要求 Figma 中设为 Manual。
-
 - 实例和实例子图层可写 reactions；子图层写入为按 trigger 与主组件合并的覆盖。Section 与组件集本身没有 `setReactionsAsync`。
-
 - 写入时保持 Figma 在前台。后台 `setReactionsAsync` 曾出现超时。拒绝后库会尝试回滚；先读错误并 inspect，再决定是否重试。
-
 - `drag` 要求 Smart Animate，URL 动作接受 click/after；多个动作、变量动作、条件分支可能受套餐限制。
-
 - 顶层画框首次有出向连线时，Figma 可能自动加流程起点。库在连线之后写显式 `flows`，确保请求的集合最终生效。
-
 - 与本次写入有关的 `error` 在写前拒绝。Smart Animate 图层不匹配、不可达、死路等 warning 按设计判断。
-
 - 核验返回的 `changes` 和重读的 `prototype`。浅页面快照可能看不到深层连线变化。`--expect` 不验证交互效果，真实点击仍需在 Figma 中测试。
 
 `variables` 将原型的 `prototypeRefs` 与视觉属性的 `bindings` 分开报告。删变量前两者都要检查。
@@ -400,9 +368,7 @@ figma-agent-control html --node 12:34 --node 12:56 --out out
 字体替代要安装正确字体，不能靠 override 掩盖。`figmaMissing` 表示 Figma 自己也用了替代字体。多个帧出现同类阻断几何问题、文字丢失或不符、任何 `violations` 都应报告生成器缺陷，不要用参考裁图隐藏。
 
 - `bake:"svg"` 把不依赖背景的形状交给 Figma，可能需要新提取；SVG 不含背后内容。
-
 - `bake:"ref"` 裁参考图并放在画布最上方，矩形内全部可见内容连同文字都变成位图，目标子树停止生成。后代 override 以 `inside-ref` 标记陈旧，先处理建议的 `replaces`。用了参考裁图的帧不能是 `clean`。
-
 - 不要手改生成 HTML：下次运行会覆盖，`html-check` 也会报告与重生成不一致。不要加粗描边凑分数，或冻结本来能修好的文字/位置差异。
 
 指定节点用 `html-check <page.html> --node <id>`。放大比较先 `extract --node <id> --scale 4`，再 `html-check <page.html> --zoom <extract-job-id>`。倍率须大于 1 且不超过 4，节点不能旋转，证据需存在。focus/zoom 不改变整体结论。`html-check` 在原项目目录运行，不连接 Figma。
@@ -445,15 +411,10 @@ figma-agent-control resolve <original-job-id> --inspect <inspect-job-id> --previ
 ## 限制
 
 - Plugin API 操作在当前 Figma 文件中进行；处理另一个文件时使用独立绑定。
-
 - 云端同步在 Figma 中检查。
-
 - 原型播放在 Figma 中通过人工或已授权的 UI 自动化验证。浮层设置、Sticky 和演示设备在 Prototype 面板配置；overlay 动作位置使用 Manual 模式。
-
 - HTML 输出为固定尺寸的静态嵌套 DOM。通过 `data-node` 查节点，SVG 岛和参考裁图替换对应子树。响应式行为和原型交互由使用该产物的应用实现。
-
 - Motion 需要账户开放 Beta/private API，字体发现当前搜索 macOS 目录；真实 Desktop 验收与自动测试分别记录。
-
 - 插件数据使用命名空间 `setSharedPluginData`，适用于生成的开发插件 manifest。
 
 不要把 `.figma-agent-control/` 提交到版本控制，其中有凭证和设计证据。只交付需要的产物，保留尚未核验的证据，完成后停止本次启动且不再需要的桥接。

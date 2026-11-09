@@ -98,25 +98,15 @@ A repeated request ID returns the original job with HTTP `200` and `reused:true`
 The plugin follows this order:
 
 1. Verify file key and editing mode.
-
 2. Compile libraries and body into nested function scopes. Earlier libraries are outermost. Syntax failure is `executionStarted:false`.
-
 3. Resolve the target and verify that it belongs to the bound scope. Missing and out-of-scope targets are distinct errors.
-
 4. Capture the before snapshot, with a 2,000-node budget. Default depth is 32; an undeclared truncation rejects a run. Explicit `snapshotDepth` permits deliberately shallow evidence. Preview, variables, and extract snapshot only the root.
-
 5. For high-risk runs, await panel approval for at most 300 seconds. Rejection or timeout does not execute the script.
-
 6. Send the write-ahead checkpoint to the bridge. It atomically saves `before.json` and fixes its hash. A ten-second acknowledgement timeout prevents execution.
-
 7. Export a before image if `expect` is set. For cleanup, collect IDs already on the target page. For non-page targets, record direct page-root children.
-
 8. Record existing local collections, variables, and styles. After the final preparation `await`, recheck file, target, scope, page, and snapshot. Do not yield between that recheck and invoking the script.
-
 9. Commit an Undo boundary, listen for target-page node changes, enter the script phase, set `executionStarted:true`, evaluate libraries and body, and commit the closing Undo boundary. Boundary failures are reported, not automatically undone. A script failure records created nodes and optionally cleans them after a successful closing boundary.
-
 10. Capture the after snapshot and, if requested, after image. Compare page-root children for successful non-page-target runs. A too-large after snapshot makes the change set unavailable; a failed after export makes visual verification unavailable. Neither changes the script's own outcome.
-
 11. Serialize the result and extract nested binary data. Large plugin messages use the serialized envelope described below.
 
 Trusted scripts receive the full Plugin API for the current file. The binding defines valid targets; the selected target defines snapshot, change-set and visual-check coverage.
@@ -126,15 +116,10 @@ Trusted scripts receive the full Plugin API for the current file. The binding de
 Run output and extract output share a binary channel.
 
 - Byte views such as `Uint8Array`, plus complete PNG/JPEG integer arrays, are recognized anywhere inside nested output. They become `{"__figmaAgentControlBinary": index}` placeholders; returning that reserved key yourself fails the job.
-
 - A run permits at most 200 binaries. Combined base64 length, including before/after visual images, is at most 48 MB. Exceeding this limit fails the run after execution, retains no return value, and saves no output binaries; it must not be replayed.
-
 - The bridge writes `files/output-<n>.<type>`, starting at 1, then replaces placeholders with `{file, bytes, sha256, type, width?, height?, pixels?}`. Paths are relative to the job directory.
-
 - Content detection recognizes PNG, JPEG, GIF, WebP, PDF, SVG, MP4 (`ftyp` at bytes 4–8), and WebM (`1A 45 DF A3` prefix); unknown data uses `bin`. PNGs include dimensions. Run PNGs also have transparency/dominant-color summaries unless a single image exceeds 16 million pixels or the job exceeds 32 million analyzed pixels (`pixels.skipped: "too-large"`). Extract does not compute pixel summaries.
-
 - Invalid placeholders become `{binaryUnavailable:true}` and add `binaryErrors`; other evidence is preserved.
-
 - Binary data is excluded from the iframe's structured-result limit. Base64 strings returned by a script are not excluded and can cause the whole return value to be discarded.
 
 ### Preview by name
@@ -264,13 +249,9 @@ The export sees only the target: outside covering layers, outside instances, and
 Delivery is recorded as `running` atomically before `/poll` returns a job. Therefore a queued job is provably undelivered: shutdown or startup recovery records a failed result with `executionStarted:false`. A delivered job without a result is different:
 
 - Normal bridge shutdown writes `recovery.json` with `unknown-after-disconnect`.
-
 - Recovery after an abnormal exit writes `needs-document-review`.
-
 - At startup, unresolved jobs for the current binding are loaded as recovered. Recovered runs enter `unresolved` and block new runs; reads do not and can be resubmitted.
-
 - A run with valid `resolution.json` is not reloaded. Corrupt resolution records fail startup. An unresolved write for another binding also fails startup; unrelated read jobs are ignored.
-
 - Recovered jobs are never redelivered and cannot receive a new approval or checkpoint. A late completion for a loaded job may still land and clear its unresolved state.
 
 Resolve with `resolve <original-id> --inspect <inspection-id> --previous-plugin-stopped`. The inspection must directly query the original target in the current session, and the previous plugin must actually be stopped. Resolve closes the unresolved wait without claiming an outcome, replaying, or undoing the write.
@@ -357,15 +338,10 @@ While a result is awaiting delivery, the iframe sends `/complete` rather than he
 ```
 
 - A timeline ID belongs to its top-level frame or Section. Durations and key times are seconds. The root's own timeline is included even when empty; other timelines require motion content.
-
 - Track paths include property names (`OPACITY`, `TRANSLATION_X`), `fills.0`, `strokes.1`, `effects.0.RADIUS`, and component property paths such as `fills.0.properties.<property-id>`.
-
 - Values use numbers, booleans, `[x,y]`, `#RRGGBB` / `#RRGGBBAA`, or unchanged `{type,value}` objects for other kinds. Keys are `[seconds,value,easing?]`.
-
 - Easing controls the segment ending at the keyframe. Supported shorthand includes `linear`, standard ease-in/out/back variants, `hold`, `gentle`, `quick`, `bouncy`, `slow`, `cubic(x1,y1,x2,y2)`, `spring(bounce)`, and `$variable-name`. Unknown forms preserve their raw object. The default manual easing `cubic(0.5,0,0.5,1)` is omitted on read.
-
 - Presets use `{id,preset,at,dur,easing?,props?}`. `preset` comes from `figma.motion.figmaAnimationStyles()`. Default props and delay following the timeline offset are omitted. Custom styles use `{id,style:"@name",at}`. New styles omit `id`.
-
 - `refs` maps `$` / `@` notation to exact IDs; apply tries refs before local names. Duplicate variable names get an `#ID` suffix. Instance sublayers are marked `inherited`.
 
 Apply is declarative: supplied `tracks` or `styles` fully reconcile that field for the listed node, deleting extras and changing only differences. Omitted fields/nodes remain untouched. Changed timeline durations are written. Unchanged input causes no writes, including read-only inherited or component entries.
@@ -468,17 +444,11 @@ Issues have `{rule,level,node?,message}`:
 ### Processing order
 
 1. Preflight all inputs before writing files: require `--out`, 1–50 total unique frames across `--node` and `--from`, local scale-1 extract jobs for `--from`, a valid overrides file, and at most 500 SVG-bake IDs per frame.
-
 2. Process `--from` frames first, then `--node`, preserving order within each group. A frame error normally affects only that frame.
-
 3. Read an existing extract without waiting, or submit and wait for a new extract. New extracts include requested SVG-bake islands. Each occupies the bridge's single job slot.
-
 4. Assemble the page. Paint order respects Auto Layout `itemReverseZIndex`; root opacity applies to the whole canvas and is not multiplied twice into reference crops.
-
 5. If generated output needs missing SVG islands, a `--node` frame may get one second extract with those IDs and valid explicit SVG bakes. A `--from` frame is marked `needsExtract` instead. If the second extract fails, times out, exceeds limits, or still misses islands, preserve the first extraction/page basis and record `second-extract-failed` approximations and warnings.
-
 6. Write the page, run the check unless disabled, and record the frame.
-
 7. Rewrite `<out>/html.json` once the batch finishes. If the command is externally terminated, completed pages/evidence may exist without a final manifest.
 
 ### Output files
@@ -589,11 +559,8 @@ A reference crop freezes all content visible within the rectangle, including con
 Geometry types are `box`, `wrap`, `content-offset`, `overflow`, and reporting-only `ink-offset`. Verdict rules are:
 
 - `fail`: `diffRatio > 0.02`.
-
 - `pass-with-findings`: ratio passes, but structural blocks, reference crops, substituted fonts, blocking top-node geometry, structure findings, or triggered approximation clusters remain.
-
 - `clean`: none of those conditions. Focus and zoom do not affect the verdict.
-
 - `unchecked`: comparison could not run. `REFERENCE_SIZE` and `RENDER_TIMEOUT` appear in check reports. Chrome discovery/startup failure prevents checks for the run; protocol/exit failure affects the current frame and permits a fresh browser for the next frame. After a render timeout, remaining frames are also unchecked for that invocation.
 
 The HTML matcher uses pixelmatch-style YIQ comparison and antialiasing treatment. Run verification uses strict pixel-change detection. Structure and font checks supplement the HTML mismatch ratio.

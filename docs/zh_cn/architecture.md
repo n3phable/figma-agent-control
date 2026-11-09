@@ -48,7 +48,6 @@ iframe 在接受确认或结果前，逐条核对任务 ID 和随机 nonce。
 [project.mjs](../../src/project.mjs)定义两个根目录：
 
 - `<project>/.figma-agent-control/`：绑定、当前会话、锁、持久任务、恢复记录和比较证据。当前工作目录就是项目，不向父目录查找。
-
 - `~/.config/figma-agent-control/`，或 `FIGMA_AGENT_CONTROL_HOME`：共享插件凭证和生成的开发插件文件。
 
 共享插件避免留下多份同名安装。它只内嵌候选端口、凭证和版本；绑定身份由认证后的桥接响应头下发。空闲插件按当前文件选桥接；持有结果的插件寻找原绑定，即使其端口已变化。
@@ -203,6 +202,6 @@ overrides 是唯一支持的手工修正入口。文件先整体校验，basis �
 
 [提取契约](../../src/html/extract-contract.d.ts)区分插件字节、传输占位和落盘文件。外部 JSON 和动态 API 字段仍需断言，类型不能单独验证真实 Figma 行为。可选 `node tests/contract-samples.mjs <runs-directory>` 检查明确提供的提取证据，不需要或附带私有语料。
 
-## 阴影映射
+`npm run check` 先检查语法，再用锁定的本地编译器检查各环境。`npm test` 串行执行测试文件，避免浏览器性能检查抢资源。测试用隔离的真实桥接、VM 中的真实插件源码和合成文档；浏览器/字体条件不满足时可跳过。`npm run check:release` 检查语言规则、明显敏感数据和包内容。
 
-阴影外形考虑有效填充以及外侧/居中描边。spread 遵循矩形、椭圆、带填充裁切画框的实测规则；溢出内容可能需要按内容形状投影，并明确记录近似。
+CI 面向 Linux/macOS、Node.js 22/24。自动测试使用本机桥接、VM 中的插件和隔离 Chrome 渲染。本地开发命令见[贡献指南](../../CONTRIBUTING.md)，真实插件行为和云端同步在 Figma 中检查。

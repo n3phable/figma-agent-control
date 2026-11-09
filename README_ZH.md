@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-
+![Figma Agent Control](docs/brand/banner.png)
 
 为你的编程 Agent 提供操作 Figma Desktop 的本地 CLI。查看设计，通过 Plugin API 执行可信的 JavaScript，并保存可追溯的变更证据。还可以将画框导出为自包含 HTML，再将浏览器渲染结果与 Figma 参考图比较。
 
@@ -11,26 +11,33 @@ Figma Agent Control（FAC）通过 localhost 桥接，把本地 CLI 连接到 Fi
 ## 功能
 
 - **读取与编辑设计：** 查看节点树和变量，导出 PNG 预览，使用可复用的库和 JSON 输入执行 Plugin API 脚本。
-
 - **保留证据：** 保存执行前快照、失败现场快照、变更集、导出文件、执行堆栈，以及可选的画面检查结果。CLI 等待超时后，可按任务 ID 继续等待。
-
 - **按证据恢复：** 检查部分写入，清理本次新建的节点，取消卡住的 run，并核验结果未知的写入。
-
 - **导出静态 HTML：** 生成嵌入资源的嵌套 DOM，在 Chrome 中比图，按节点定位差异，并应用有记录的 overrides。
-
 - **处理动效与原型：** 通过内置库读取和应用声明式配置，导出动效视频，并查看取帧联系表。动效依赖 Figma 的 Beta/私有 API，需要这些接口可用。
 
 ## 环境要求
 
 - **Node.js 22 或更新版本。** 运行时没有 npm 依赖，开发依赖的版本锁定在 lockfile 中。
-
 - **Figma Desktop。** 在 Design 模式下打开目标文件，并运行开发插件；编辑需要该文件的编辑权限。
-
 - 运行 CLI 的 Agent 需要访问**本地 shell 和 localhost**。
-
 - HTML 比图和视频取帧需要 **Google Chrome 或 Chromium**。必要时将 `FIGMA_AGENT_CONTROL_CHROME` 设为可执行文件路径。使用 `--no-check` 生成 HTML 不需要 Chrome。
 
 字体查找搜索 macOS 字体目录。
+
+## 从 npm 安装
+
+npm 状态：等待首次发布。需要立即使用时，请[从源码安装](#从源码安装)。
+
+```sh
+npm install -g figma-agent-control
+figma-agent-control help
+
+# 或者不安装长期使用的全局命令，直接运行：
+npx figma-agent-control help
+```
+
+npm 包包含插件模板、内置库、文档、品牌资源和 Agent Skill。环境设置还包括 Figma Desktop，以及下方介绍的一次性插件导入。
 
 ## 从源码安装
 
@@ -58,6 +65,10 @@ ln -s "$PWD/skills/figma-agent-control" "$HOME/.agents/skills/figma-agent-contro
 ```
 
 如果 Agent 文档指定了其他 Skill 目录，请使用那个目录。软链接让 Skill 与当前仓库保持同步；覆盖已有安装前，先检查原路径。可能需要新建 Agent 会话才能发现 Skill。
+
+通过 npm 全局安装时，Skill 位于
+`$(npm root -g)/figma-agent-control/skills/figma-agent-control`；创建软链接时，
+使用这个安装目录作为来源，替代源码仓库路径。
 
 ## 快速开始
 
@@ -128,22 +139,20 @@ figma-agent-control frames <video-job-id> --dump
 
 写入随脚本执行逐步生效。失败后先读 `instruction` 和 `executionStarted`，检查部分改动，再清理符合条件的本次新建节点。已有节点的修改留待明确修复。`.figma-agent-control/` 保存在本机，其中包含设计证据和会话凭证。
 
-HTML 导出为固定尺寸的静态复刻页面。原型点击与云端同步在 Figma 中验证。操作细节见 [Agent 使用指南](docs/zh_cn/agent-guide.md#限制)和安全政策。
+HTML 导出为固定尺寸的静态复刻页面。原型点击与云端同步在 Figma 中验证。操作细节见 [Agent 使用指南](docs/zh_cn/agent-guide.md#限制)和[安全政策](SECURITY.md)。
 
 ## 文档与开发
 
 - [中文文档索引](docs/zh_cn/README.md)：浏览中文指南与参考文档。
-
 - [Agent 使用指南](docs/zh_cn/agent-guide.md)：操作流程、示例与恢复。
-
 - [协议与证据](docs/zh_cn/protocol.md)：请求、结果、文件与退出码。
-
 - [架构](docs/zh_cn/architecture.md)：进程边界、模块与设计决策。
+- [参与贡献](CONTRIBUTING.md)：本地检查与贡献流程。
 
-- 参与贡献：本地检查与贡献流程。
+```sh
+npm test
+npm run check
+npm run check:release
+```
 
-本项目采用 [MIT License](LICENSE)。所含材料的说明见第三方声明。由 [n3phable](https://github.com/n3phable) 维护。
-
-## 当前命令用法
-
-运行 `figma-agent-control help` 查看此版本可用命令。核心命令为 init、connect、stop、status、doctor、run、inspect、preview、variables、result、wait、resolve、image-diff 和 report。等待超时不代表可以重放写入。
+本项目采用 [MIT License](LICENSE)。所含材料的说明见[第三方声明](THIRD_PARTY_NOTICES.md)。由 [n3phable](https://github.com/n3phable) 维护。

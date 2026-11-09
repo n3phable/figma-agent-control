@@ -1,7 +1,7 @@
 {
   "name": "figma-agent-control",
-  "version": "0.11.1-rc",
-  "description": "Figma Agent Control",
+  "version": "0.11.1",
+  "description": "Run trusted Figma Plugin API scripts from local agents, with recorded evidence and visual checks.",
   "type": "module",
   "bin": {
     "figma-agent-control": "bin/figma-agent-control.mjs"
@@ -14,12 +14,21 @@
     "src/",
     "plugin/",
     "lib/",
+    "skills/",
     "docs/",
-    "README.md"
+    "README.md",
+    "AGENTS.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
+    "README_ZH.md"
   ],
   "scripts": {
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
-    "check": "node --check bin/figma-agent-control.mjs && node --check plugin/main.js && node --check plugin/extract.js && node tests/typecheck.mjs"
+    "check": "node --check bin/figma-agent-control.mjs && node --check plugin/main.js && node --check plugin/extract.js && node tests/typecheck.mjs",
+    "check:release": "node scripts/check-release.mjs"
   },
   "devDependencies": {
     "@figma/plugin-typings": "1.141.0",
@@ -34,5 +43,19 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/n3phable/figma-agent-control.git"
+  },
+  "homepage": "https://github.com/n3phable/figma-agent-control#readme",
+  "bugs": {
+    "url": "https://github.com/n3phable/figma-agent-control/issues"
+  },
+  "keywords": [
+    "figma",
+    "agents",
+    "cli",
+    "design",
+    "automation"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }
