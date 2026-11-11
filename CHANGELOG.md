@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.2 - 2026-11-11
+
+- Install the packaged CLI directly from a GitHub Release archive.
+- Capture video frames after decoding and presentation, including closely spaced sample times.
+- Speed up visual comparisons while preserving pixel counts and generated difference images.
+- Retry temporary Chrome profile cleanup when late subprocess writes block removal.
+- Update Figma API typings and GitHub Actions while keeping the Node.js 22 type baseline.
+
 ## 0.11.1 - 2026-11-10
 
 Current feature set.

@@ -25,9 +25,16 @@ Figma Agent Control (FAC) connects your local CLI to a Figma Desktop development
 
 Font discovery searches macOS font directories.
 
-## Install from npm
+## Install from a release
 
-npm status: awaiting first publication. For immediate use, [install from source](#install-from-source).
+Download the `.tgz` package from [GitHub Releases](https://github.com/n3phable/figma-agent-control/releases/latest), then install it:
+
+```sh
+npm install -g ./figma-agent-control-0.11.2.tgz
+figma-agent-control help
+```
+
+## Install from npm
 
 ```sh
 npm install -g figma-agent-control
