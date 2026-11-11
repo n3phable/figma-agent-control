@@ -1,7 +1,7 @@
 /**
  * [INPUT]: src/frames frames; src/html/chrome findChrome; src/png decodePng; two Figma-exported 64x32, 1 s WebM fixtures with a black block moving 48 px and 24 px.
  * [OUTPUT]: No exports; node:test cases.
- * [POS]: Frame-sampling tests. Invalid task sources fail before Chrome startup. Chrome-dependent cases cover sample times, contact-sheet geometry/content, file/task equivalence, comparisons and identical-byte warnings, original-size dumps, high-precision filenames, and out-of-duration times; skip with a reason when unavailable. Chrome profiles live in this suite's temporary directory so other suites can count system-temp profiles independently.
+ * [POS]: Frame-sampling tests. Invalid task sources fail before Chrome startup. Chrome-dependent cases cover sample times, contact-sheet geometry/content, file/task equivalence, comparisons and identical-byte warnings, original-size dumps, repeated and backward zero-time samples, high-precision filenames, and out-of-duration times; skip with a reason when unavailable. Chrome profiles live in this suite's temporary directory so other suites can count system-temp profiles independently.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test, before, after } from 'node:test';
@@ -107,5 +107,19 @@ describe('Frame sampling and contact sheets (requires Chrome)', { skip: chrome ?
       assert.deepEqual([png.width, png.height], [64, 32]);
     }
     assert.equal((await fs.readdir(path.dirname(files[0]))).filter(n => n.endsWith('.tmp')).length, 0);
+  });
+
+  test('Zero-time samples preserve the decoded first frame when repeated or revisited after a later frame', async t => {
+    const cwd = await project(t), times = [0, 0, 0.5, 0, 0];
+    const r = await frames(cwd, SLIDE_48, { atSeconds: times, dump: true }, cwd, opts());
+    const shots = await Promise.all(r.frames.map(async f => decodePng(await fs.readFile(f.file))));
+    assert.deepEqual(r.frames.map(f => f.t), times);
+    for (const shot of shots) assert.deepEqual([shot.width, shot.height], [64, 32]);
+    // The first frame is opaque, with a 16 px black block at the left of its center row.
+    const first = shots[0];
+    assert.ok(first.data.every((value, i) => i % 4 !== 3 || value === 255), 'The first frame must not be an empty transparent canvas');
+    assert.deepEqual(Array.from({ length: 64 }, (_, x) => first.data[(16 * 64 + x) * 4] < 128), Array.from({ length: 64 }, (_, x) => x < 16));
+    for (const i of [1, 3, 4]) assert.deepEqual(shots[i].data, first.data, `Sample ${i + 1} must contain the same first-frame pixels`);
+    assert.notDeepEqual(shots[2].data, first.data, 'The intervening sample must seek to a later frame');
   });
 });

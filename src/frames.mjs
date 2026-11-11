@@ -2,6 +2,7 @@
  * [INPUT]: Uses ./html/chrome.mjs launch for video decoding, frame capture and contact sheets; ./png.mjs diffPng; ./record.mjs localResult; and ./project.mjs root/hash/isJobId.
  * [OUTPUT]: frames(cwd, source, { atSeconds, frameCount, compareSource, dump }, invocationDir, chromeOptions) -> summary with contact-sheet paths, sample times, comparison pixel counts, and optional individual PNG paths.
  * [POS]: Converts run-exported MP4/WebM into timestamped PNG contact sheets that agents can inspect. --dump also saves full-size frames for quantitative checks; --compare compares both videos at identical sample times.
+ *        Reuses the decoded frame when the requested time is unchanged; changed times wait for seeked before capture.
  *        Shares diffPng's change definition with image-diff and run --expect; byte-identical videos trigger a possible stale-export hint. Sample indices prevent rounded-millisecond filename collisions. Runs offline without bridge access and uses only html/chrome, like doctor.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -38,7 +39,7 @@ async function source(cwd, value, invocationDir) {
 }
 
 // Page script: omit MIME type so Chrome detects the container; keep elements on window.__fac for later capture and contact-sheet assembly.
-// After setting currentTime, wait for seeked before drawing to canvas to capture the frame covering that time.
+// Reuse the loaded frame at unchanged times; an unnecessary seek can reset Chrome's first-frame readiness.
 /** @param {string[]} videos base64 */
 const LOAD = videos => `(async () => {
   window.__fac = { videos: [], frames: [] };
@@ -56,7 +57,7 @@ const CAPTURE = times => `(async () => {
   for (const v of window.__fac.videos) {
     const frames = [];
     for (const t of ${JSON.stringify(times)}) {
-      v.currentTime = t; await new Promise(ok => { v.onseeked = ok; });
+      if (v.currentTime !== t) await new Promise(ok => { v.onseeked = ok; v.currentTime = t; });
       const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d').drawImage(v, 0, 0);
       frames.push(c);
     }
