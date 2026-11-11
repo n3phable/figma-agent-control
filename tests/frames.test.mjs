@@ -1,7 +1,7 @@
 /**
  * [INPUT]: src/frames frames; src/html/chrome findChrome; src/png decodePng; two Figma-exported 64x32, 1 s WebM fixtures with a black block moving 48 px and 24 px.
  * [OUTPUT]: No exports; node:test cases.
- * [POS]: Frame-sampling tests. Invalid task sources fail before Chrome startup. Chrome-dependent cases cover sample times, contact-sheet geometry/content and original-frame agreement, file/task equivalence, comparisons and identical-byte warnings, original-size dumps, repeated and backward zero-time samples, high-precision filenames, out-of-duration times, and decode errors before a first-frame callback; skip with a reason when unavailable. Chrome profiles live in this suite's temporary directory so other suites can count system-temp profiles independently.
+ * [POS]: Frame-sampling tests. Invalid task sources fail before Chrome startup. Chrome-dependent cases cover sample times, contact-sheet geometry/content and original-frame agreement, file/task equivalence, comparisons and identical-byte warnings, original-size dumps, repeated and backward zero-time samples, high-precision filenames and same-frame seeks, out-of-duration times, and decode errors before a first-frame callback; skip with a reason when unavailable. Chrome profiles live in this suite's temporary directory so other suites can count system-temp profiles independently.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test, before, after } from 'node:test';
@@ -82,9 +82,9 @@ describe('Frame sampling and contact sheets (requires Chrome)', { skip: chrome ?
   });
 
   test('--compare samples matching times with diffPng semantics: self-comparison is zero, both videos match at t=0 then diverge, and out-of-duration --at fails', async t => {
-    const cwd = await project(t);
-    const self = await frames(cwd, SLIDE_48, { atSeconds: [0, 0.5], compareSource: SLIDE_48 }, cwd, opts());
-    assert.deepEqual([self.changed, self.frames.map(f => f.changedPixels)], [false, [0, 0]]);
+    const cwd = await project(t), selfTimes = [0, 0.5, 0.50000001, 0.1, 0.1, 0.1000001, 0.1001, 0.1002];
+    const self = await frames(cwd, SLIDE_48, { atSeconds: selfTimes, compareSource: SLIDE_48 }, cwd, opts());
+    assert.deepEqual([self.changed, self.frames.map(f => f.changedPixels)], [false, selfTimes.map(() => 0)]);
     assert.match(self.warning, /two videos are byte-identical/, 'The updated export may still be the old video');
     const r = await frames(cwd, SLIDE_48, { atSeconds: [0, 0.5, 0.9], compareSource: SLIDE_24 }, cwd, opts());
     assert.equal(r.changed, true);
@@ -106,15 +106,22 @@ describe('Frame sampling and contact sheets (requires Chrome)', { skip: chrome ?
   });
 
   test('--dump keeps distinct samples even when rounded to the same millisecond, with one returned path per comparison frame', async t => {
-    const cwd = await project(t), times = [0.1, 0.1001, 0.1002];
+    const cwd = await project(t), times = [0.1, 0.1, 0.1000001, 0.1001, 0.1002, 0.5, 0.50000001];
     const r = await frames(cwd, SLIDE_48, { atSeconds: times, compareSource: SLIDE_24, dump: true }, cwd, opts());
     const files = r.frames.flatMap(f => [f.file, f.compareFile]);
     assert.deepEqual(r.frames.map(f => f.t), times);
     assert.equal(new Set(files).size, times.length * 2);
-    for (const file of files) {
-      const png = decodePng(await fs.readFile(file));
+    const shots = await Promise.all(files.map(async file => decodePng(await fs.readFile(file))));
+    for (const png of shots) {
       assert.deepEqual([png.width, png.height], [64, 32]);
+      assert.ok(png.data.every((value, i) => i % 4 !== 3 || value === 255), 'Every sampled frame must be opaque');
     }
+    for (const group of [[0, 1, 2, 3, 4], [5, 6]]) for (const i of group.slice(1)) {
+      assert.deepEqual(shots[i * 2].data, shots[group[0] * 2].data, `Source sample ${i + 1} must preserve the same encoded frame`);
+      assert.deepEqual(shots[i * 2 + 1].data, shots[group[0] * 2 + 1].data, `Comparison sample ${i + 1} must preserve the same encoded frame`);
+    }
+    assert.notDeepEqual(shots[0].data, shots[10].data, 'Later times must contain the later video frame');
+    assert.ok(r.frames.every(f => f.changedPixels > 0), 'The two motion clips must differ at every nonzero sample');
     assert.equal((await fs.readdir(path.dirname(files[0]))).filter(n => n.endsWith('.tmp')).length, 0);
   });
 

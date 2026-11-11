@@ -2,7 +2,7 @@
  * [INPUT]: Uses ./html/chrome.mjs launch for video decoding, frame capture and contact sheets; ./png.mjs diffPng; ./record.mjs localResult; and ./project.mjs root/hash/isJobId.
  * [OUTPUT]: frames(cwd, source, { atSeconds, frameCount, compareSource, dump }, invocationDir, chromeOptions) -> summary with contact-sheet paths, sample times, comparison pixel counts, and optional individual PNG paths.
  * [POS]: Converts run-exported MP4/WebM into timestamped PNG contact sheets that agents can inspect. --dump also saves full-size frames for quantitative checks; --compare compares both videos at identical sample times.
- *        Waits for loadeddata and the first presented-frame callback before sampling; reuses that frame at unchanged times, while changed times wait for seeked.
+ *        Waits for loadeddata and the first presented-frame callback before sampling; subsequent seeks wait for seeked and a presented frame, unless Chrome's settled time is unchanged and the ready frame can be reused.
  *        Serializes each canvas before the next seek so dumps and contact sheets consume the captured pixels.
  *        Shares diffPng's change definition with image-diff and run --expect; byte-identical videos trigger a possible stale-export hint. Sample indices prevent rounded-millisecond filename collisions. Runs offline without bridge access and uses only html/chrome, like doctor.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -60,7 +60,16 @@ const CAPTURE = times => `(async () => {
   for (const v of window.__fac.videos) {
     const frames = [], pngs = [];
     for (const t of ${JSON.stringify(times)}) {
-      if (v.currentTime !== t) await new Promise(ok => { v.onseeked = ok; v.currentTime = t; });
+      if (v.currentTime !== t) {
+        const previous = v.currentTime;
+        let callback;
+        const sought = new Promise(ok => { v.onseeked = ok; });
+        const presented = new Promise(ok => { callback = v.requestVideoFrameCallback(ok); });
+        v.currentTime = t; await sought;
+        // Chrome can settle very close times at the same position without presenting another frame.
+        if (v.currentTime !== previous) await presented;
+        else v.cancelVideoFrameCallback(callback);
+      }
       const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d').drawImage(v, 0, 0);
       // Materialize this frame's pixels before another seek changes the video.
       pngs.push(c.toDataURL('image/png').split(',')[1]);
