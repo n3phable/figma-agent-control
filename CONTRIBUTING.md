@@ -8,6 +8,10 @@ npm test
 npm run check:release
 ```
 
+Keep `@types/node` on the Node.js 22 major version to match the minimum supported
+runtime. Dependabot proposes minor and patch updates and ignores major upgrades;
+revisit this policy when raising the minimum Node.js version.
+
 Tests run serially to keep browser performance measurements consistent. Use
 isolated temporary directories, random local ports, synthetic Figma documents
 and a test-specific `FIGMA_AGENT_CONTROL_HOME`. Clean up owned processes and
