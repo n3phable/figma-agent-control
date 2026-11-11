@@ -25,9 +25,16 @@ Figma Agent Control（FAC）通过 localhost 桥接，把本地 CLI 连接到 Fi
 
 字体查找搜索 macOS 字体目录。
 
-## 从 npm 安装
+## 从 Release 安装
 
-npm 状态：等待首次发布。需要立即使用时，请[从源码安装](#从源码安装)。
+从 [GitHub Releases](https://github.com/n3phable/figma-agent-control/releases/latest) 下载 `.tgz` 安装包，然后执行：
+
+```sh
+npm install -g ./figma-agent-control-0.11.2.tgz
+figma-agent-control help
+```
+
+## 从 npm 安装
 
 ```sh
 npm install -g figma-agent-control
