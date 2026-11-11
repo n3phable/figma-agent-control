@@ -1,12 +1,12 @@
 /**
- * [INPUT]: Uses ./match.mjs match/differing/crop and ./css.mjs num/place, with Rect from attrib and Matrix from css.
+ * [INPUT]: Uses ./match.mjs countMismatches/differing/crop and ./css.mjs num/place, with Rect from attrib and Matrix from css.
  * [OUTPUT]: SHIFT, region(boxes, own, mask, width, height, pad?) -> search area or reason, search(ref, act, rect, k?) -> { s, before, after },
  *           worth(r, k?), relocate(placement, dx, dy, basis?) -> { fix?, flat, hint? }, advise(r, k, placement, basis?) -> { shift?, fix?, flat?, hints }, moved(dx, dy), and Placement.
  * [POS]: Pure checker corrections: finds alignment shifts and converts them to local CSS coordinates. 1x top diagnostics and zoom share search/advise with scale k.
- *        A sparse byte comparison seeds the search bound; full perceptual counts and the original candidate order decide the winner. match measures before/after; css.place serializes transforms consistently with generation. No browser or file access.
+ *        A sparse byte comparison seeds the search bound; full perceptual counts and the original candidate order decide the winner. countMismatches measures before/after without drawing unused images; css.place serializes transforms consistently with generation. No browser or file access.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
-import { match, differing, crop } from './match.mjs';
+import { countMismatches, differing, crop } from './match.mjs';
 import { num, place } from './css.mjs';
 /** @import { Rect } from './attrib.mjs' */
 /** @import { Matrix } from './css.mjs' */
@@ -58,7 +58,7 @@ function cropPad(rgba, width, height, [x0, y0, x1, y1]) {
 }
 // Shift s means rendered content lies at reference position +s: compare ref(x, y) with act(x + sx, y + sy), in device pixels. Let K = round(k); coarse search uses shifts(3K, K)
 // at roughly 1 CSS px per step (49 shifts when K = 1), then K > 1 refines around the best candidate in device-pixel steps. Sampled byte differences choose one promising candidate to establish a low bound;
-// differing still checks every possible winner with full perceptual counts, retaining the first minimum in the original order. match computes before/after on crops with identical semantics, though translucent pixels may differ slightly from full-frame mismatch counts.
+// differing still checks every possible winner with full perceptual counts, retaining the first minimum in the original order. The shared matcher counts before/after on crops with identical semantics, though translucent pixels may differ slightly from full-frame mismatch counts.
 /** @param {{ data: Uint8Array, width: number, height: number }} ref @param {{ data: Uint8Array }} act @param {Rect} rect @param {number} [k]
  *  @returns {{ s: [number, number], before: number, after: number }} */
 export function search(ref, act, rect, k = 1) {
@@ -96,7 +96,7 @@ export function search(ref, act, rect, k = 1) {
   if (K > 1) s = pick(shifts(K - 1, 1, s));
   const w = rect[2] - rect[0], h = rect[3] - rect[1], base = crop(ref.data, width, rect);
   /** @param {[number, number]} d */
-  const count = ([sx, sy]) => match(base, cropPad(act.data, width, height, [rect[0] + sx, rect[1] + sy, rect[2] + sx, rect[3] + sy]), w, h).mismatched;
+  const count = ([sx, sy]) => countMismatches(base, cropPad(act.data, width, height, [rect[0] + sx, rect[1] + sy, rect[2] + sx, rect[3] + sy]), w, h);
   const before = count([0, 0]);
   return { s, before, after: s[0] || s[1] ? count(s) : before };
 }

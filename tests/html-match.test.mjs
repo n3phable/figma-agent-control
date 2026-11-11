@@ -1,5 +1,5 @@
 /**
- * [INPUT]: src/html/match match/blockscan/crop/differing/upscale/stack; src/png decodePng; helpers/match PNG pairs and expected.json generated with pixelmatch 7.2.0.
+ * [INPUT]: src/html/match match/countMismatches/blockscan/crop/differing/upscale/stack; src/png decodePng; helpers/match PNG pairs and expected.json generated with pixelmatch 7.2.0.
  * [OUTPUT]: No exports; node:test cases.
  * [POS]: Matches reproducible synthetic reference pairs against upstream pixelmatch counts, antialiasing, diff/mask hashes, and structural blocks. Focused cases cover identical/single-pixel/YIQ/transparent boundaries, block density and 8-connectivity, RGBA crop copy/bounds, shifted comparison with transparent overflow and early exit, nearest-neighbor scaling, and vertical stacking.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { match, blockscan, crop, differing, upscale, stack } from '../src/html/match.mjs';
+import { match, countMismatches, blockscan, crop, differing, upscale, stack } from '../src/html/match.mjs';
 import { decodePng } from '../src/png.mjs';
 
 const DIR = new URL('./helpers/match/', import.meta.url);
@@ -30,6 +30,7 @@ test('Synthetic pairs match pixelmatch 7.2.0 counts, antialiasing, diff images, 
     const m = match(a.data, b.data, a.width, a.height, { threshold: 0.1 });
     assert.deepEqual({ name: f.name, mismatched: m.mismatched, aa: m.aa, image: sha(m.image), mask: sha(m.mask) },
       { name: f.name, mismatched: f.mismatched, aa: f.aa, image: f.imageSha256, mask: f.maskSha256 });
+    assert.equal(countMismatches(a.data, b.data, a.width, a.height), f.mismatched, 'Counting without rendering keeps the upstream antialias semantics');
     assert.deepEqual(blockscan(m.mask, a.width, a.height), f.blocks, f.name);
   }
   // Exercise transparency in at least four pairs, including alpha-shift's overlapping translucent shapes.
@@ -56,6 +57,7 @@ test('Synthetic boundaries: identical images yield zero and gray diff, one chang
   // Copy inputs that are not 4-byte aligned, such as pooled Buffer slices, before comparison.
   const shifted = new Uint8Array(base.length + 1); shifted.set(base, 1);
   assert.equal(match(shifted.subarray(1), base, 9, 9).mismatched, 0);
+  assert.equal(countMismatches(shifted.subarray(1), base, 9, 9), 0);
 });
 
 test('blockscan uses density 0.22 (57/256 passes, 56 fails), 8-connected merging, a 150 px reporting minimum, and descending difference counts', () => {

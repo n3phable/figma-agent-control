@@ -1,10 +1,10 @@
 /**
  * [INPUT]: No dependencies; accepts equally sized RGBA buffers from ../png.mjs decodePng.
- * [OUTPUT]: match(a, b, width, height, { threshold }) -> { mismatched, aa, mask, image }, blockscan(mask, width, height, opts) -> structural blocks,
+ * [OUTPUT]: match(a, b, width, height, { threshold }) -> { mismatched, aa, mask, image }, countMismatches(a, b, width, height, { threshold }) -> count with the same antialias rules and no image allocation, blockscan(mask, width, height, opts) -> structural blocks,
  *           differing(a, b, width, height, rect, sx, sy, threshold?, limit?) -> shifted difference count, crop(rgba, width, [x0, y0, x1, y1]) -> cropped RGBA,
  *           upscale(rgba, width, height, f) -> nearest-neighbor RGBA, stack(parts, width) -> vertically combined RGBA.
  * [POS]: Visual similarity definition shared by check, shift and zoom. png.mjs diffPng instead measures whether an image changed, using zero threshold and premultiplied alpha for --expect/image-diff;
- *        never mix the two comparisons. differing cheaply scores shift candidates; page uses crop for baked references;
+ *        never mix the two comparisons. differing cheaply scores shift candidates; countMismatches measures their final scores without drawing unused evidence; page uses crop for baked references;
  *        upscale and stack assemble structural-block evidence crops.
  *
  * match is ported from pixelmatch 7.2.0 (https://github.com/mapbox/pixelmatch), preserving squared YIQ thresholds, antialias detection,
@@ -35,20 +35,43 @@
 // 35215 is maximum squared YIQ distance; threshold 0.1 matches ui2html acceptance. Uint32 views require 4-byte alignment, so copy unaligned buffers first.
 /** @param {Uint8Array} bytes */
 const aligned = bytes => bytes.byteOffset % 4 ? new Uint8Array(bytes) : bytes;
+const LITTLE_ENDIAN = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1, EMPTY = new Uint8Array(0);
+const RED = 0xff0000ff, YELLOW = LITTLE_ENDIAN ? 0xff00ffff : 0xffff00ff;
+const Y_R = 0.29889531, Y_G = 0.58662247, Y_B = 0.11448223;
 
 /** @param {Uint8Array} a @param {Uint8Array} b @param {number} width @param {number} height @param {{ threshold?: number }} [options] */
 export function match(a, b, width, height, { threshold = 0.1 } = {}) {
+  return compare(a, b, width, height, threshold, true);
+}
+/** @param {Uint8Array} a @param {Uint8Array} b @param {number} width @param {number} height @param {{ threshold?: number }} [options] */
+export function countMismatches(a, b, width, height, { threshold = 0.1 } = {}) {
+  return compare(a, b, width, height, threshold, false).mismatched;
+}
+/** @param {Uint8Array} a @param {Uint8Array} b @param {number} width @param {number} height @param {number} threshold @param {boolean} render */
+function compare(a, b, width, height, threshold, render) {
   const len = width * height;
   if (a.length !== len * 4 || b.length !== len * 4) throw Error('Image sizes differ');
   a = aligned(a); b = aligned(b);
   const a32 = new Uint32Array(a.buffer, a.byteOffset, len), b32 = new Uint32Array(b.buffer, b.byteOffset, len);
-  const mask = new Uint8Array(len), image = new Uint8Array(len * 4), maxDelta = 35215 * threshold * threshold;
-  let mismatched = 0, aa = 0;
+  const mask = render ? new Uint8Array(len) : EMPTY, image = render ? new Uint8Array(len * 4) : EMPTY;
+  const pixels = new Uint32Array(image.buffer), maxDelta = 35215 * threshold * threshold;
+  let mismatched = 0, aa = 0, previous = -1, shade = 0;
   for (let i = 0, pos = 0; i < len; i++, pos += 4) {
-    if (a32[i] === b32[i] || colorDelta(a, b, pos, pos, false) <= maxDelta) { gray(a, pos, image); continue; }
+    if (a32[i] === b32[i] || colorDelta(a, b, pos, pos, false) <= maxDelta) {
+      if (render) {
+        // Flat backgrounds reuse the same grayscale pixel; packed writes preserve RGBA on either byte order.
+        if (a32[i] !== previous) {
+          const v = (255 + (a[pos] * Y_R + a[pos + 1] * Y_G + a[pos + 2] * Y_B - 255) * 0.1 * a[pos + 3] / 255) | 0;
+          shade = LITTLE_ENDIAN ? (v * 0x010101) | 0xff000000 : (v * 0x01010100) | 255;
+          previous = a32[i];
+        }
+        pixels[i] = shade;
+      }
+      continue;
+    }
     const x = i % width, y = (i / width) | 0;
-    if (antialiased(a, x, y, width, height, a32, b32) || antialiased(b, x, y, width, height, b32, a32)) { mask[i] = 2; aa++; paint(image, pos, 255, 255, 0); }
-    else { mask[i] = 1; mismatched++; paint(image, pos, 255, 0, 0); }
+    if (antialiased(a, x, y, width, height, a32, b32) || antialiased(b, x, y, width, height, b32, a32)) { aa++; if (render) { mask[i] = 2; pixels[i] = YELLOW; } }
+    else { mismatched++; if (render) { mask[i] = 1; pixels[i] = RED; } }
   }
   return { mismatched, aa, mask, image };
 }
@@ -64,7 +87,7 @@ function colorDelta(p, q, k, m, yOnly) {
     const da = a1 - a2, rb = 48 + 159 * (k % 2), gb = 48 + 159 * ((k / 1.618033988749895 | 0) % 2), bb = 48 + 159 * ((k / 2.618033988749895 | 0) % 2);
     dr = (p[k] * a1 - q[m] * a2 - rb * da) / 255; dg = (p[k + 1] * a1 - q[m + 1] * a2 - gb * da) / 255; db = (p[k + 2] * a1 - q[m + 2] * a2 - bb * da) / 255;
   }
-  const y = dr * 0.29889531 + dg * 0.58662247 + db * 0.11448223;
+  const y = dr * Y_R + dg * Y_G + db * Y_B;
   if (yOnly) return y;
   const i = dr * 0.59597799 - dg * 0.27417610 - db * 0.32180189, v = dr * 0.21147017 - dg * 0.52261711 + db * 0.31114694;
   return 0.5053 * y * y + 0.299 * i * i + 0.1957 * v * v;
@@ -74,12 +97,26 @@ function colorDelta(p, q, k, m, yOnly) {
 // Preserve x-outer/y-inner traversal and strict comparisons: they determine which tied extreme wins.
 /** @param {Uint8Array} img @param {number} x1 @param {number} y1 @param {number} width @param {number} height @param {Uint32Array} a32 @param {Uint32Array} b32 */
 function antialiased(img, x1, y1, width, height, a32, b32) {
-  const x0 = Math.max(x1 - 1, 0), y0 = Math.max(y1 - 1, 0), x2 = Math.min(x1 + 1, width - 1), y2 = Math.min(y1 + 1, height - 1), pos = (y1 * width + x1) * 4;
+  const x0 = Math.max(x1 - 1, 0), y0 = Math.max(y1 - 1, 0), x2 = Math.min(x1 + 1, width - 1), y2 = Math.min(y1 + 1, height - 1), center = y1 * width + x1, pos = center * 4;
+  const value = a32[center], r = img[pos], g = img[pos + 1], b = img[pos + 2], alpha = img[pos + 3];
+  const pr = r * alpha, pg = g * alpha, pb = b * alpha;
+  let bg = 0, bb = 0;
   let zeroes = x1 === x0 || x1 === x2 || y1 === y0 || y1 === y2 ? 1 : 0, min = 0, max = 0, minX = 0, minY = 0, maxX = 0, maxY = 0;
   for (let x = x0; x <= x2; x++) for (let y = y0; y <= y2; y++) {
     if (x === x1 && y === y1) continue;
-    const m = (y * width + x) * 4;
-    const delta = img[pos] === img[m] && img[pos + 1] === img[m + 1] && img[pos + 2] === img[m + 2] && img[pos + 3] === img[m + 3] ? 0 : colorDelta(img, img, pos, m, true);
+    const neighbor = y * width + x, m = neighbor * 4;
+    // Reuse the center and its checkerboard across all neighbors, preserving colorDelta's arithmetic and traversal order.
+    let delta = 0;
+    if (value !== a32[neighbor]) {
+      const a2 = img[m + 3];
+      let dr = r - img[m], dg = g - img[m + 1], db = b - img[m + 2];
+      if (alpha < 255 || a2 < 255) {
+        if (!bg) { bg = 48 + 159 * ((pos / 1.618033988749895 | 0) % 2); bb = 48 + 159 * ((pos / 2.618033988749895 | 0) % 2); }
+        const da = alpha - a2;
+        dr = (pr - img[m] * a2 - 48 * da) / 255; dg = (pg - img[m + 1] * a2 - bg * da) / 255; db = (pb - img[m + 2] * a2 - bb * da) / 255;
+      }
+      delta = dr * Y_R + dg * Y_G + db * Y_B;
+    }
     if (delta === 0) { if (++zeroes > 2) return false; }
     else if (delta < min) { min = delta; minX = x; minY = y; }
     else if (delta > max) { max = delta; maxX = x; maxY = y; }
@@ -97,15 +134,6 @@ function siblings(img, x1, y1, width, height) {
   }
   return false;
 }
-/** @param {Uint8Array} out @param {number} i @param {number} r @param {number} g @param {number} b */
-const paint = (out, i, r, g, b) => { out[i] = r; out[i + 1] = g; out[i + 2] = b; out[i + 3] = 255; };
-// Draw equal pixels as grayscale blended with white at alpha 0.1. Uint8Array truncation keeps the difference image byte-identical to pixelmatch.
-/** @param {Uint8Array} img @param {number} i @param {Uint8Array} out */
-function gray(img, i, out) {
-  const v = 255 + (img[i] * 0.29889531 + img[i + 1] * 0.58662247 + img[i + 2] * 0.11448223 - 255) * 0.1 * img[i + 3] / 255;
-  paint(out, i, v, v, v);
-}
-
 // -- Structural blocks --------------------------------------------------
 // Count mask-1 differences, excluding antialiasing, per cell. Merge cells with density >= minDensity by eight-way connectivity and report blocks with at least minPixels differences;
 // catch local damage hidden by a passing whole-frame ratio, such as missing headings or overlapping flags. Parameters are calibrated at 1x; callers scale them for other resolutions.
