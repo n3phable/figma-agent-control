@@ -54,6 +54,30 @@ test('Non-CDP pipe messages terminate the child with CHROME_LAUNCH_FAILED withou
   assert.equal(profiles(), before);
 });
 
+test('Signal cleanup rescans a profile when a subprocess creates an entry during removal', needs, async t => {
+  const browser = await launch({ executable: chrome }), remove = fs.rmSync;
+  let attempts = 0;
+  const keepAlive = () => {};
+  process.on('SIGTERM', keepAlive);
+  const removal = t.mock.method(fs, 'rmSync', (...args) => {
+    if (args[0] === browser.profile && ++attempts === 1) {
+      fs.writeFileSync(path.join(browser.profile, 'late-entry'), 'A subprocess finished a write after enumeration');
+      throw Object.assign(Error('Profile changed during removal'), { code: 'ENOTEMPTY' });
+    }
+    return remove(...args);
+  });
+  try {
+    process.emit('SIGTERM', 'SIGTERM');
+    await browser.close();
+    assert.ok(attempts >= 2, 'Rescan and remove late-created profile entries');
+    assert.equal(fs.existsSync(browser.profile), false);
+  } finally {
+    removal.mock.restore();
+    process.off('SIGTERM', keepAlive);
+    await browser.close();
+  }
+});
+
 test('raster respects paint order, rounds partially covered pixels outward, and clips to the canvas', () => {
   const owner = raster([0, 0, 0, 4, 3, 1, 1.5, 0.5, 1, 1, 2, -5, 2, 100, 9], 4, 3);
   assert.deepEqual([...owner], [0, 1, 1, 0, 0, 1, 1, 0, 2, 2, 2, 2]);

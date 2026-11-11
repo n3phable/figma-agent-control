@@ -1,7 +1,7 @@
 /**
  * [INPUT]: src/frames frames; src/html/chrome findChrome; src/png decodePng; two Figma-exported 64x32, 1 s WebM fixtures with a black block moving 48 px and 24 px.
  * [OUTPUT]: No exports; node:test cases.
- * [POS]: Frame-sampling tests. Invalid task sources fail before Chrome startup. Chrome-dependent cases cover sample times, contact-sheet geometry/content, file/task equivalence, comparisons and identical-byte warnings, original-size dumps, repeated and backward zero-time samples, high-precision filenames, and out-of-duration times; skip with a reason when unavailable. Chrome profiles live in this suite's temporary directory so other suites can count system-temp profiles independently.
+ * [POS]: Frame-sampling tests. Invalid task sources fail before Chrome startup. Chrome-dependent cases cover sample times, contact-sheet geometry/content and original-frame agreement, file/task equivalence, comparisons and identical-byte warnings, original-size dumps, repeated and backward zero-time samples, high-precision filenames, and out-of-duration times; skip with a reason when unavailable. Chrome profiles live in this suite's temporary directory so other suites can count system-temp profiles independently.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test, before, after } from 'node:test';
@@ -61,13 +61,22 @@ describe('Frame sampling and contact sheets (requires Chrome)', { skip: chrome ?
   const opts = () => ({ executable: chrome });
 
   test('Sample uniformly through duration minus 0.05 s; use four 160 px cells per row showing matching frames, with identical task/file results', async t => {
-    const cwd = await project(t), r = await frames(cwd, SLIDE_48, { frameCount: 4 }, cwd, opts());
+    const cwd = await project(t), r = await frames(cwd, SLIDE_48, { frameCount: 4, dump: true }, cwd, opts());
     assert.deepEqual([r.width, r.height, r.duration, r.frames.map(f => f.t)], [64, 32, 1.033, [0, 0.328, 0.655, 0.983]]);
     assert.equal(path.dirname(r.sheet), path.join(cwd, '.figma-agent-control', 'frames'));
     // Cell width 160 (2.5x), label height 22 px, gap 8 px: four cells form 664x102. The 16 px block starts left at t=0 and approaches the right edge near the end.
-    const sheet = decodePng(await fs.readFile(r.sheet)), dark = (x, y) => sheet.data[(y * sheet.width + x) * 4] < 128;
+    const sheet = decodePng(await fs.readFile(r.sheet)), first = decodePng(await fs.readFile(r.frames[0].file));
+    const rgba = (png, x, y) => Array.from(png.data.subarray((y * png.width + x) * 4, (y * png.width + x + 1) * 4));
+    const dark = (x, y) => rgba(sheet, x, y)[0] < 128;
+    const block = (png, y) => Array.from({ length: png.width }, (_, x) => x).filter(x => rgba(png, x, y)[0] < 128);
+    const rawBlock = block(first, 16), sheetBlock = block(sheet, 62).filter(x => x < 160);
+    const diagnostic = JSON.stringify({ raw: { left: rgba(first, 4, 16), right: rgba(first, 52, 16), block: [rawBlock[0], rawBlock.at(-1)] }, sheet: { left: rgba(sheet, 10, 62), right: rgba(sheet, 130, 62), block: [sheetBlock[0], sheetBlock.at(-1)] } });
     assert.deepEqual([sheet.width, sheet.height], [664, 102]);
-    assert.deepEqual([dark(10, 62), dark(130, 62), dark(3 * 168 + 10, 62), dark(3 * 168 + 140, 62)], [true, false, false, true]);
+    assert.deepEqual([dark(10, 62), dark(130, 62), dark(3 * 168 + 10, 62), dark(3 * 168 + 140, 62)], [true, false, false, true], diagnostic);
+    assert.deepEqual([first.width, first.height], [64, 32]);
+    assert.ok(first.data.every((value, i) => i % 4 !== 3 || value === 255), diagnostic);
+    assert.deepEqual(rawBlock, Array.from({ length: 16 }, (_, x) => x), diagnostic);
+    assert.deepEqual(Array.from({ length: 64 }, (_, x) => rgba(sheet, Math.floor((x + 0.5) * 2.5), 63)), Array.from({ length: 64 }, (_, x) => rgba(first, x, 16)), diagnostic);
     const byId = await frames(cwd, await evidence(cwd, { output: { video: video(1) } }), { frameCount: 4 }, cwd, opts());
     assert.equal(byId.sheet, r.sheet, 'The same video and times produce the same sheet');
   });

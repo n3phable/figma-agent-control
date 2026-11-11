@@ -5,7 +5,7 @@
  *           page() -> { browser, open(url, width, height, dsf?), shot(clip?), evaluate(expression), cdp(method, params?), close() }.
  * [POS]: Minimal dependency-free CDP rendering layer. command launches it for check/zoom; doctor uses it for diagnostics. Uses Node built-ins only.
  *        Uses --remote-debugging-pipe exclusively: Chrome exits when SIGKILL closes its parent's pipe, unlike port mode, which can leave orphans.
- *        Registers SIGINT/SIGTERM/SIGHUP and exit cleanup before profile creation through browser shutdown; termination or process.exit kills Chrome and removes profiles. Normal close retries recursive profile removal while Chrome subprocesses finish writing. Only SIGKILL can leave fac-chrome-* directories.
+ *        Registers SIGINT/SIGTERM/SIGHUP and exit cleanup before profile creation through browser shutdown; termination or process.exit kills Chrome and removes profiles. Normal close and synchronous exit cleanup retry whole-directory removal while subprocesses finish writing. Only SIGKILL can leave fac-chrome-* directories.
  *        Errors: CHROME_NOT_FOUND during lookup, CHROME_LAUNCH_FAILED during startup, CHROME_PROTOCOL for non-CDP pipe messages,
  *        CHROME_EXITED for unexpected exit (rejecting pending and later commands), and RENDER_TIMEOUT for command/event deadlines.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -56,9 +56,20 @@ export async function chromeVersion(file) {
 // if another handler exists, let it decide whether to continue. SIGKILL cannot be caught: Chrome exits when the pipe closes, leaving profile cleanup to the system temporary-directory policy.
 /** @typedef {{ proc: import('node:child_process').ChildProcess, profile: string }} Live */
 const live = /** @type {Set<Live>} */ (new Set()), SIGNALS = /** @type {const} */ (['SIGINT', 'SIGTERM', 'SIGHUP']);
+const PROFILE_RETRIES = 3;
 let listening = false;
+/** @param {string} profile */
+function removeProfileSync(profile) {
+  for (let attempt = 0; ; attempt++) {
+    try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: PROFILE_RETRIES }); return; }
+    catch (error) {
+      // rmSync retries rmdir without enumerating again; a late-created child requires a fresh recursive scan.
+      if (error.code !== 'ENOTEMPTY' || attempt === PROFILE_RETRIES) throw error;
+    }
+  }
+}
 function reap() {
-  for (const b of live) { b.proc.kill('SIGKILL'); fs.rmSync(b.profile, { recursive: true, force: true, maxRetries: 3 }); }
+  for (const b of live) { b.proc.kill('SIGKILL'); removeProfileSync(b.profile); }
   live.clear(); listen(false);
 }
 /** @param {NodeJS.Signals} signal */
@@ -151,7 +162,7 @@ export async function launch({ executable = findChrome(), timeout = 30000 } = {}
     send('Browser.close').catch(() => {});
     const kill = setTimeout(() => proc.kill('SIGKILL'), 5000);
     await exited; clearTimeout(kill);
-    await fs.promises.rm(profile, { recursive: true, force: true, maxRetries: 3 });
+    await fs.promises.rm(profile, { recursive: true, force: true, maxRetries: PROFILE_RETRIES });
     unwatch(self);
   }
 

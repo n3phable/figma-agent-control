@@ -504,6 +504,11 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     try {
       // The script remains in hold: pump one heartbeat but do not settle, which would wait for execution.
       await h.tick();
+      // A tick can coalesce into an in-flight heartbeat; wait for that request's observable panel update.
+      const deadline = Date.now() + 3000;
+      while (h.element('state').textContent !== 'Waiting for original project' && Date.now() < deadline) {
+        await delay(10); await h.tick();
+      }
       assert.equal(h.element('state').textContent, 'Waiting for original project');
       assert.match(h.element('state-detail').textContent, new RegExp(path.basename(h.cwd)));
       const status = async () => (await cli(other, 'status')).json;
