@@ -58,6 +58,14 @@ test('Synthetic boundaries: identical images yield zero and gray diff, one chang
   const shifted = new Uint8Array(base.length + 1); shifted.set(base, 1);
   assert.equal(match(shifted.subarray(1), base, 9, 9).mismatched, 0);
   assert.equal(countMismatches(shifted.subarray(1), base, 9, 9), 0);
+  // One-pixel-wide images clip most neighbors; the changed middle pixel remains a difference, not antialiasing.
+  const narrow = Uint8Array.from([0, 0, 0, 255, 128, 128, 128, 255, 255, 255, 255, 255]), changed = narrow.slice();
+  changed.set([160, 160, 160, 255], 4);
+  for (const [width, height] of [[1, 3], [3, 1]]) {
+    const m = match(narrow, changed, width, height);
+    assert.deepEqual([m.mismatched, m.aa, [...m.mask]], [1, 0, [0, 1, 0]]);
+    assert.deepEqual([...m.image], [229, 229, 229, 255, 255, 0, 0, 255, 255, 255, 255, 255]);
+  }
 });
 
 test('blockscan uses density 0.22 (57/256 passes, 56 fails), 8-connected merging, a 150 px reporting minimum, and descending difference counts', () => {

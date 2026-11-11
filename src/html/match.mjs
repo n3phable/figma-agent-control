@@ -38,6 +38,7 @@ const aligned = bytes => bytes.byteOffset % 4 ? new Uint8Array(bytes) : bytes;
 const LITTLE_ENDIAN = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1, EMPTY = new Uint8Array(0);
 const RED = 0xff0000ff, YELLOW = LITTLE_ENDIAN ? 0xff00ffff : 0xffff00ff;
 const Y_R = 0.29889531, Y_G = 0.58662247, Y_B = 0.11448223;
+const NEIGHBOR_X = [-1, -1, -1, 0, 0, 1, 1, 1], NEIGHBOR_Y = [-1, 0, 1, -1, 1, -1, 0, 1];
 
 /** @param {Uint8Array} a @param {Uint8Array} b @param {number} width @param {number} height @param {{ threshold?: number }} [options] */
 export function match(a, b, width, height, { threshold = 0.1 } = {}) {
@@ -55,6 +56,7 @@ function compare(a, b, width, height, threshold, render) {
   const a32 = new Uint32Array(a.buffer, a.byteOffset, len), b32 = new Uint32Array(b.buffer, b.byteOffset, len);
   const mask = render ? new Uint8Array(len) : EMPTY, image = render ? new Uint8Array(len * 4) : EMPTY;
   const pixels = new Uint32Array(image.buffer), maxDelta = 35215 * threshold * threshold;
+  const offsets = [-width - 1, -1, width - 1, -width, width, -width + 1, 1, width + 1];
   let mismatched = 0, aa = 0, previous = -1, shade = 0;
   for (let i = 0, pos = 0; i < len; i++, pos += 4) {
     if (a32[i] === b32[i] || colorDelta(a, b, pos, pos, false) <= maxDelta) {
@@ -70,7 +72,7 @@ function compare(a, b, width, height, threshold, render) {
       continue;
     }
     const x = i % width, y = (i / width) | 0;
-    if (antialiased(a, x, y, width, height, a32, b32) || antialiased(b, x, y, width, height, b32, a32)) { aa++; if (render) { mask[i] = 2; pixels[i] = YELLOW; } }
+    if (antialiased(a, x, y, width, height, a32, b32, offsets) || antialiased(b, x, y, width, height, b32, a32, offsets)) { aa++; if (render) { mask[i] = 2; pixels[i] = YELLOW; } }
     else { mismatched++; if (render) { mask[i] = 1; pixels[i] = RED; } }
   }
   return { mismatched, aa, mask, image };
@@ -94,17 +96,20 @@ function colorDelta(p, q, k, m, yOnly) {
 }
 
 // Antialias detection (Vysniauskas 2009): the center's eight neighbors include both lighter/darker pixels, and the brightest or darkest has at least three equal-color neighbors in both images.
-// Preserve x-outer/y-inner traversal and strict comparisons: they determine which tied extreme wins.
-/** @param {Uint8Array} img @param {number} x1 @param {number} y1 @param {number} width @param {number} height @param {Uint32Array} a32 @param {Uint32Array} b32 */
-function antialiased(img, x1, y1, width, height, a32, b32) {
-  const x0 = Math.max(x1 - 1, 0), y0 = Math.max(y1 - 1, 0), x2 = Math.min(x1 + 1, width - 1), y2 = Math.min(y1 + 1, height - 1), center = y1 * width + x1, pos = center * 4;
+// Precomputed offsets retain x-outer/y-inner traversal and strict comparisons, which determine tied extrema; only border pixels need per-neighbor bounds checks.
+/** @param {Uint8Array} img @param {number} x1 @param {number} y1 @param {number} width @param {number} height @param {Uint32Array} a32 @param {Uint32Array} b32 @param {number[]} offsets */
+function antialiased(img, x1, y1, width, height, a32, b32, offsets) {
+  const interior = x1 > 0 && y1 > 0 && x1 < width - 1 && y1 < height - 1, center = y1 * width + x1, pos = center * 4;
   const value = a32[center], r = img[pos], g = img[pos + 1], b = img[pos + 2], alpha = img[pos + 3];
   const pr = r * alpha, pg = g * alpha, pb = b * alpha;
   let bg = 0, bb = 0;
-  let zeroes = x1 === x0 || x1 === x2 || y1 === y0 || y1 === y2 ? 1 : 0, min = 0, max = 0, minX = 0, minY = 0, maxX = 0, maxY = 0;
-  for (let x = x0; x <= x2; x++) for (let y = y0; y <= y2; y++) {
-    if (x === x1 && y === y1) continue;
-    const neighbor = y * width + x, m = neighbor * 4;
+  let zeroes = interior ? 0 : 1, min = 0, max = 0, minIndex = 0, maxIndex = 0;
+  for (let n = 0; n < offsets.length; n++) {
+    if (!interior) {
+      const x = x1 + NEIGHBOR_X[n], y = y1 + NEIGHBOR_Y[n];
+      if (x < 0 || y < 0 || x >= width || y >= height) continue;
+    }
+    const neighbor = center + offsets[n], m = neighbor * 4;
     // Reuse the center and its checkerboard across all neighbors, preserving colorDelta's arithmetic and traversal order.
     let delta = 0;
     if (value !== a32[neighbor]) {
@@ -118,14 +123,28 @@ function antialiased(img, x1, y1, width, height, a32, b32) {
       delta = dr * Y_R + dg * Y_G + db * Y_B;
     }
     if (delta === 0) { if (++zeroes > 2) return false; }
-    else if (delta < min) { min = delta; minX = x; minY = y; }
-    else if (delta > max) { max = delta; maxX = x; maxY = y; }
+    else if (delta < min) { min = delta; minIndex = neighbor; }
+    else if (delta > max) { max = delta; maxIndex = neighbor; }
   }
   if (min === 0 || max === 0) return false;
+  const minX = minIndex % width, minY = (minIndex / width) | 0, maxX = maxIndex % width, maxY = (maxIndex / width) | 0;
   return (siblings(a32, minX, minY, width, height) && siblings(b32, minX, minY, width, height)) || (siblings(a32, maxX, maxY, width, height) && siblings(b32, maxX, maxY, width, height));
 }
 /** @param {Uint32Array} img @param {number} x1 @param {number} y1 @param {number} width @param {number} height */
 function siblings(img, x1, y1, width, height) {
+  // Interior pixels have exactly eight neighbors; borders retain the clipped-neighborhood rules below.
+  if (x1 > 0 && y1 > 0 && x1 < width - 1 && y1 < height - 1) {
+    const i = y1 * width + x1, v = img[i];
+    let count = 0;
+    if (v === img[i - width - 1]) count++;
+    if (v === img[i - 1]) count++;
+    if (v === img[i + width - 1] && ++count > 2) return true;
+    if (v === img[i - width] && ++count > 2) return true;
+    if (v === img[i + width] && ++count > 2) return true;
+    if (v === img[i - width + 1] && ++count > 2) return true;
+    if (v === img[i + 1] && ++count > 2) return true;
+    return v === img[i + width + 1] && ++count > 2;
+  }
   const x0 = Math.max(x1 - 1, 0), y0 = Math.max(y1 - 1, 0), x2 = Math.min(x1 + 1, width - 1), y2 = Math.min(y1 + 1, height - 1), v = img[y1 * width + x1];
   let zeroes = x1 === x0 || x1 === x2 || y1 === y0 || y1 === y2 ? 1 : 0;
   for (let x = x0; x <= x2; x++) for (let y = y0; y <= y2; y++) {
