@@ -1,6 +1,6 @@
 /**
  * [INPUT]: src/bridge start/pluginMain; src/project init/installPlugin; src/session pairingToken; src/png encodePng; node:vm runs the real combined main.js/extract.js and ui.html.
- * [OUTPUT]: Exports harness(t, options) with temporary cwd/home, bridge, mock document/DOM, errors/requests, CLI and polling controls, injected plugin files, and lifecycle controls; also cliFile, pluginSource, createDoc, fakeFigma, fakeElement, and writeScript. CLI subprocesses use the test-owned home through FIGMA_AGENT_CONTROL_HOME. createDoc emits batched asynchronous CREATE/DELETE nodechange events; fakeFigma creates exportable nodes through it.
+ * [OUTPUT]: Exports harness(t, options) with temporary cwd/home, bridge, mock document/DOM, errors/requests, CLI and polling controls, injected plugin files, and lifecycle controls; also cliFile, pluginSource, createDoc, fakeFigma, fakeElement, and writeScript. drive/run await in-flight completion uploads before returning. CLI subprocesses use the test-owned home through FIGMA_AGENT_CONTROL_HOME. createDoc emits batched asynchronous CREATE/DELETE nodechange events; fakeFigma creates exportable nodes through it.
  * [POS]: Shared real-bridge (port 0), real-plugin, mock-Figma fixture. End-to-end tests use harness directly; plugin and generate helpers reuse mock Figma and plugin source, with plugin also using createDoc. options.doc supports alternate mock documents.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -99,7 +99,7 @@ export function fakeFigma(doc, { fileKey = 'example', onUi = () => {} } = {}) {
 
 // -- End-to-end fixture ---------------------------------------------------
 // Real bridge on a random port with real main.js and ui.html in VMs. Replace UI setInterval with manual tick;
-// drive(promise) pumps polling until the promise settles.
+// drive(promise) pumps polling until the promise settles, then drains result uploads so subsequent jobs see a released bridge slot.
 // doc can replace the mock document (for example tests/helpers/doc.mjs); attach its globals, such as mixed and getImageByHash, to figma.
 export async function harness(t, { url = 'https://www.figma.com/design/example/Test?node-id=1-2', fileKey = 'example', doc: given } = {}) {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'figma-agent-control-test-'));
@@ -120,13 +120,15 @@ export async function harness(t, { url = 'https://www.figma.com/design/example/T
   const parent = { postMessage: message => track(figma.ui.onmessage(structuredClone(message.pluginMessage))) };
   // Gate continuous long-poll delivery: pause() blocks new plugin requests and drains in-flight ones, leaving tasks queued. drive releases the gate automatically.
   // requests records each plugin request path and JSON body in send order, avoiding panel-refresh timing dependencies in retry assertions.
-  const gate = { open: true, inflight: new Set(), waiters: [] }, requests = [];
+  const gate = { open: true, inflight: new Set(), waiters: [] }, requests = [], completions = new Set();
   const gatedFetch = async (...args) => {
     while (!gate.open) await new Promise(resolve => gate.waiters.push(resolve));
-    requests.push({ path: new URL(args[0]).pathname, body: args[1]?.body === undefined ? undefined : JSON.parse(args[1].body) });
+    const pathname = new URL(args[0]).pathname;
+    requests.push({ path: pathname, body: args[1]?.body === undefined ? undefined : JSON.parse(args[1].body) });
     const request = fetch(...args);
     gate.inflight.add(request);
-    try { return await request; } finally { gate.inflight.delete(request); }
+    if (pathname === '/complete') completions.add(request);
+    try { return await request; } finally { gate.inflight.delete(request); completions.delete(request); }
   };
   const pause = async () => { gate.open = false; await Promise.allSettled([...gate.inflight]); };
   const resume = () => { gate.open = true; for (const wake of gate.waiters.splice(0)) wake(); };
@@ -141,6 +143,8 @@ export async function harness(t, { url = 'https://www.figma.com/design/example/T
     resume();
     let done = false; const result = promise.finally(() => { done = true; });
     while (!done) { await tick(); await settle(); await delay(10); }
+    // CLI readers can observe result.json before the same upload finishes job.json and releases the bridge's active slot.
+    await Promise.allSettled([...completions]);
     return result;
   };
   const cli = async (...args) => {
