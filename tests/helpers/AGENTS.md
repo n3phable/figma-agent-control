@@ -6,7 +6,7 @@ Fixtures serve test files and depend on production source/plugin code. The harne
 
 ## Members
 
-- `harness.mjs`: real bridge plus concatenated VM main/UI, small fake document, deterministic polling gates, and CLI helpers. Supports hidden document state and manually driven UI ticks. Timers are unref'd so a suspended script does not retain the process; subprocesses inherit an isolated plugin home.
+- `harness.mjs`: real bridge plus concatenated VM main/UI, small fake document, deterministic polling gates, and CLI helpers that drain in-flight result uploads before returning. Supports hidden document state and manually driven UI ticks. Timers are unref'd so a suspended script does not retain the process; subprocesses inherit an isolated plugin home.
 - `doc.mjs`: richer extraction document with two synthetic 160×160 frames. One is the extraction-contract baseline; the other exercises generator masks, rotated groups, islands, gradients/images, and typography. Export parameters and extra globals make contract drift visible.
 - `generate.mjs`: runs real extraction on the synthetic document, lands binary descriptors, and supplies deterministic hand-written font metrics to generation. Cached extracts are copied before use, avoiding test mutation leaks.
 - `bridge.mjs`: real-service HTTP fixture with injectable clock and restart; fetch acts as CLI/plugin with the corresponding temporary credentials. Does not execute plugin code.

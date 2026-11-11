@@ -4,6 +4,8 @@
 
 `npm test` runs `node --test --test-concurrency=1 tests/*.test.mjs`. Serial test files avoid competing browser performance workloads. The test suite itself does not require npm runtime packages; `npm run check` and the manual contract sampler require `npm ci`.
 
+Elapsed-time budgets are enabled by default. CI sets `FAC_PERFORMANCE_GATE=1` on Ubuntu/Node.js 22 as the performance baseline and `0` on the other matrix jobs. Every job checks the same functional and pixel results and records timings; the baseline also enforces the existing time limits.
+
 Tests depend on production modules, never the reverse. Plugin tests run the actual concatenated main source and iframe template in `node:vm` against synthetic Figma objects. Bridge tests start the real HTTP service. These tests exercise the local execution and transport contracts.
 
 Isolation is mandatory: use port `0`, or explicitly injected test-owned candidate ports; never take the user's 32523–32530 bridge ports. Set `FIGMA_AGENT_CONTROL_HOME` to a test temporary directory. Do not touch the real shared plugin directory. Clean temporary directories with test hooks/finally. Inject clocks for lease/long-timeout behavior; retain real time only for short scheduling, process, and browser checks. Lock tests stub process probes rather than signaling unrelated processes. Each browser suite closes only Chrome instances it started.

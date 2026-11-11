@@ -1,5 +1,5 @@
 /**
- * [INPUT]: src/html/attrib figmaPainted/inlinedIslands/raster/frameBox/tally/boxes/rank/GAP_PX/GAP_RATIO; src/html/shift SHIFT/region/search/worth/relocate/advise/moved; src/html/match match/crop; generate; helpers/generate extracted/run.
+ * [INPUT]: src/html/attrib figmaPainted/inlinedIslands/raster/frameBox/tally/boxes/rank/GAP_PX/GAP_RATIO; src/html/shift SHIFT/region/search/worth/relocate/advise/moved; src/html/match match/crop/differing; generate; helpers/generate extracted/run.
  * [OUTPUT]: No exports; node:test cases.
  * [POS]: Chrome-free attribution and shift tests: Figma paint rectangles/order, masks/clipping/islands/skip/ref, vectors and zero-height lines; shared frameBox/generator origins; two-sided ranking and gaps; search regions/reasons/candidates/scales/thresholds, local coordinate conversion including rotated/flipped/singular parents, fixes/hints, and direction text.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { figmaPainted, inlinedIslands, raster, frameBox, tally, boxes, rank, GAP_PX, GAP_RATIO } from '../src/html/attrib.mjs';
 import { SHIFT, region, search, worth, relocate, advise, moved } from '../src/html/shift.mjs';
 import { generate } from '../src/html/generate.mjs';
-import { match, crop } from '../src/html/match.mjs';
+import { match, crop, differing } from '../src/html/match.mjs';
 import { extracted, run } from './helpers/generate.mjs';
 
 // Handwritten extracted tree: nodes use frame coordinates (x, y), and renderBounds defaults to the node box.
@@ -179,6 +179,28 @@ describe('shift: displacement search and local conversion', () => {
     const r = search(bar(40, 40, range(10, 20), 4, 36), bar(40, 40, range(15, 25), 4, 36), [2, 2, 38, 30], 4);
     assert.deepEqual([r.s, r.before, r.after], [[0, 5], 320, 0]);
     assert.deepEqual([worth(r), worth(r, 4), worth({ before: 800, after: 560 }, 4), worth({ before: 800, after: 561 }, 4), worth({ before: 49, after: 0 })], [true, false, true, false, false]);
+  });
+
+  test('sample-guided search keeps the exhaustive perceptual minimum and tie order with sparse, translucent, and clipped pixels', () => {
+    const width = 64, height = 64, candidates = [];
+    for (let y = -3; y <= 3; y++) for (let x = -3; x <= 3; x++) candidates.push([x, y]);
+    candidates.sort((a, b) => Math.abs(a[0]) + Math.abs(a[1]) - Math.abs(b[0]) - Math.abs(b[1]) || a[1] - b[1] || a[0] - b[0]);
+    for (const alpha of [64, 255]) for (const [dx, dy] of [[2, 0], [-2, 3], [0, -3]]) {
+      // Leave the regular sample grid white; the full comparison must still find the sparse changes.
+      const data = new Uint8Array(width * height * 4).fill(255), shifted = new Uint8Array(data.length).fill(255);
+      for (let y = 1; y < height; y += 4) for (let x = 1; x < width; x += 4) {
+        const color = [x * 3, y * 3, 20, alpha];
+        data.set(color, (y * width + x) * 4);
+        if (x + dx >= 0 && x + dx < width && y + dy >= 0 && y + dy < height) shifted.set(color, ((y + dy) * width + x + dx) * 4);
+      }
+      const ref = { data, width, height }, act = { data: shifted }, rect = [0, 0, width, height];
+      const scored = candidates.map(s => ({ s, score: differing(data, shifted, width, height, rect, ...s) }));
+      const minimum = Math.min(...scored.map(x => x.score));
+      assert.deepEqual(search(ref, act, rect).s, scored.find(x => x.score === minimum).s);
+    }
+    const ref = bar(40, 12, [5]), act = bar(40, 12, [6, 7]);
+    for (let x = 0; x < 40; x++) act.data.set([25, 25, 25, 255], (6 * 40 + x) * 4);
+    assert.deepEqual(search(ref, act, [3, 5, 37, 6]).s, [0, 1], 'Prefer the earlier perceptual tie over the byte-identical row two pixels away');
   });
 
   test('relocate adds deltas to translate or matrix translation, converts left/top to flat translate, applies inverse rotated/flipped parent bases, and gives only hints for singular bases', () => {

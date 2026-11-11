@@ -32,10 +32,10 @@ Dependencies are one-way: command orchestrates extracts/page/overrides/check/sum
 - `css.mjs`: pure single-value CSS/SVG mappings plus shared paint-order and background-dependency decisions. Fixed numeric precision preserves deterministic output.
 - `check.mjs`: comparison/diagnostic sequence and sole verdict authority. More than 2% mismatch fails; blocking diagnostics distinguish clean from pass-with-findings. Writes reports and evidence images.
 - `chrome.mjs`: minimal CDP pipe client using Node built-ins, software rasterization/sRGB, isolated page contexts, bounded requests, and owned-process/profile cleanup on normal termination/signals.
-- `match.mjs`: pixelmatch-derived perceptual comparison, antialias classification, dense-block scanning, translation counts, and crop/upscale/stack helpers. Distinct from strict `png.diffPng` change detection.
+- `match.mjs`: pixelmatch-derived perceptual comparison and count-only scoring with shared antialias rules, dense-block scanning, translation counts, and crop/upscale/stack helpers. Distinct from strict `png.diffPng` change detection.
 - `attrib.mjs`: pure rectangle rasterization and Figma/HTML-side attribution, merged by max contribution to identify missing or displaced content.
 - `layout.mjs`: browser geometry/font/structure collection and findings. Box/wrap/content-offset/overflow block clean; ink-offset is informational.
-- `shift.mjs`: pure local translation search and conversion to override transforms/bases; fixes require at least fifty original differing pixels and 30% improvement.
+- `shift.mjs`: sample-seeded exact translation search and conversion to override transforms/bases; full perceptual counts preserve tie order, and fixes require at least fifty original differing pixels and 30% improvement.
 - `structure.mjs`: pure data-node/text correspondence checks with explicit exemptions for intentionally omitted or baked subtrees.
 - `suggest.mjs`: groups background-dependent approximations, proposes component-level reference crops using generator-derived geometry, and measures crop-edge seams.
 - `zoom.mjs`: magnified single-node preflight/render/comparison, neutralizing ancestor effects and reusing translation search at device-pixel precision; focus/zoom do not change the frame verdict.

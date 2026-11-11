@@ -204,4 +204,4 @@ The [extract contract](../src/html/extract-contract.d.ts) distinguishes plugin b
 
 `npm run check` verifies syntax then checks all environments with the pinned local compiler. `npm test` runs files serially so browser performance checks do not compete. Tests use isolated real bridges, real plugin source in VM, and synthetic documents. Browser/font-dependent cases may skip when requirements are unavailable. `npm run check:release` checks English text, obvious sensitive-data patterns, and package contents.
 
-CI targets Linux/macOS and Node.js 22/24. Automated tests use local bridges, VM plugin execution and isolated Chrome rendering. See [Contributing](../CONTRIBUTING.md) for local development commands. Check live plugin behavior and cloud synchronization in Figma.
+CI targets Linux/macOS and Node.js 22/24, with Ubuntu/Node.js 22 as the elapsed-time performance baseline. All matrix jobs check the same functional and pixel results. Automated tests use local bridges, VM plugin execution and isolated Chrome rendering. See [Contributing](../CONTRIBUTING.md) for local development commands. Check live plugin behavior and cloud synchronization in Figma.

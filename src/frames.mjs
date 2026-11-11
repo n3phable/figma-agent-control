@@ -2,6 +2,8 @@
  * [INPUT]: Uses ./html/chrome.mjs launch for video decoding, frame capture and contact sheets; ./png.mjs diffPng; ./record.mjs localResult; and ./project.mjs root/hash/isJobId.
  * [OUTPUT]: frames(cwd, source, { atSeconds, frameCount, compareSource, dump }, invocationDir, chromeOptions) -> summary with contact-sheet paths, sample times, comparison pixel counts, and optional individual PNG paths.
  * [POS]: Converts run-exported MP4/WebM into timestamped PNG contact sheets that agents can inspect. --dump also saves full-size frames for quantitative checks; --compare compares both videos at identical sample times.
+ *        Waits for loadeddata and the first presented-frame callback before sampling; subsequent seeks wait for seeked and a presented frame, unless Chrome's settled time is unchanged and the ready frame can be reused.
+ *        Serializes each canvas before the next seek so dumps and contact sheets consume the captured pixels.
  *        Shares diffPng's change definition with image-diff and run --expect; byte-identical videos trigger a possible stale-export hint. Sample indices prevent rounded-millisecond filename collisions. Runs offline without bridge access and uses only html/chrome, like doctor.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
@@ -38,14 +40,16 @@ async function source(cwd, value, invocationDir) {
 }
 
 // Page script: omit MIME type so Chrome detects the container; keep elements on window.__fac for later capture and contact-sheet assembly.
-// After setting currentTime, wait for seeked before drawing to canvas to capture the frame covering that time.
+// loadeddata can precede a drawable first frame for detached videos; register both readiness signals before loading.
 /** @param {string[]} videos base64 */
 const LOAD = videos => `(async () => {
   window.__fac = { videos: [], frames: [] };
   for (const b64 of ${JSON.stringify(videos)}) {
     const v = document.createElement('video'); v.muted = true; v.preload = 'auto';
+    const loaded = new Promise((ok, no) => { v.onloadeddata = ok; v.onerror = () => no(new Error('Cannot decode the video (' + ((v.error && v.error.message) || 'unknown reason') + '): only MP4 (H.264, depending on the Chrome build) and WebM are supported; for GIF or decode failures, export as WEBM instead')); });
+    const presented = new Promise(ok => v.requestVideoFrameCallback(ok));
     v.src = URL.createObjectURL(new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))]));
-    await new Promise((ok, no) => { v.onloadeddata = ok; v.onerror = () => no(new Error('Cannot decode the video (' + ((v.error && v.error.message) || 'unknown reason') + '): only MP4 (H.264, depending on the Chrome build) and WebM are supported; for GIF or decode failures, export as WEBM instead')); });
+    await Promise.all([loaded, presented]);
     window.__fac.videos.push(v);
   }
   return window.__fac.videos.map(v => ({ width: v.videoWidth, height: v.videoHeight, duration: v.duration }));
@@ -54,14 +58,25 @@ const LOAD = videos => `(async () => {
 const CAPTURE = times => `(async () => {
   const out = [];
   for (const v of window.__fac.videos) {
-    const frames = [];
+    const frames = [], pngs = [];
     for (const t of ${JSON.stringify(times)}) {
-      v.currentTime = t; await new Promise(ok => { v.onseeked = ok; });
+      if (v.currentTime !== t) {
+        const previous = v.currentTime;
+        let callback;
+        const sought = new Promise(ok => { v.onseeked = ok; });
+        const presented = new Promise(ok => { callback = v.requestVideoFrameCallback(ok); });
+        v.currentTime = t; await sought;
+        // Chrome can settle very close times at the same position without presenting another frame.
+        if (v.currentTime !== previous) await presented;
+        else v.cancelVideoFrameCallback(callback);
+      }
       const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d').drawImage(v, 0, 0);
+      // Materialize this frame's pixels before another seek changes the video.
+      pngs.push(c.toDataURL('image/png').split(',')[1]);
       frames.push(c);
     }
     window.__fac.frames.push(frames);
-    out.push(frames.map(c => c.toDataURL('image/png').split(',')[1]));
+    out.push(pngs);
   }
   return out;
 })()`;

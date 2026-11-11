@@ -14,6 +14,11 @@ and a test-specific `FIGMA_AGENT_CONTROL_HOME`. Clean up owned processes and
 files after each test. Browser tests require Chrome; font tests report skips
 when their named font is unavailable.
 
+CI checks the same functional and pixel results on Linux/macOS with Node.js
+22/24. Ubuntu/Node.js 22 enforces the elapsed-time budgets; the other jobs set
+`FAC_PERFORMANCE_GATE=0` and record timings. Local `npm test` enforces the budgets
+by default.
+
 Work on a focused feature or fix branch. Each change includes its implementation,
 regression coverage and affected English and Simplified Chinese documentation.
 Keep commits reviewable and describe the observable result in the pull request.

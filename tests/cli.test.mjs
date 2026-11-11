@@ -1,7 +1,7 @@
 /**
  * [INPUT]: helpers/harness harness/writeScript/fakeFigma/cliFile; src/bridge start; src/project root/json/save/hash/init/installPlugin; src/session pairingToken; src/png encodePng/decodePng; CLI subprocesses execute bin/figma-agent-control.mjs and node:vm runs reopened plugin instances.
  * [OUTPUT]: No exports; node:test cases.
- * [POS]: CLI end-to-end coverage for submit/wait/pageRoot, pre-submission file/option failures, requestId reuse, evidence and binaries, named previews, approval, visuals, unknown-write resolution and later reads, stop/network errors, doctor stages, late results across projects, image-diff, and reports. Library/data/syntax basics remain in smoke.test.mjs.
+ * [POS]: CLI end-to-end coverage for submit/wait/pageRoot, result-upload synchronization, pre-submission file/option failures, requestId reuse, evidence and binaries, named previews, approval, visuals, unknown-write resolution and later reads, stop/network errors, doctor stages, late results across projects, image-diff, and reports. Library/data/syntax basics remain in smoke.test.mjs.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test } from 'node:test';
@@ -98,6 +98,35 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     assert.equal((await json(big.json.resultFile)).output.length, 20000);
     const stored = await h.cli('result', big.json.id, '--full');
     assert.equal(stored.json.result.output, 'x'.repeat(20000));
+  });
+
+  test('drive waits for an in-flight result upload to finish journaling before the next CLI job', async t => {
+    const journalStarted = Promise.withResolvers(), releaseJournal = Promise.withResolvers();
+    t.after(() => releaseJournal.resolve());
+    const h = await harness(t), id = randomUUID();
+    const journal = path.join(runsDir(h.cwd), id, 'job.json'), rename = fs.rename;
+    // Hold only this test's derived journal update after result.json has committed.
+    t.mock.method(fs, 'rename', async (from, to) => {
+      if (to === journal && (await json(from)).state === 'done') {
+        journalStarted.resolve();
+        await releaseJournal.promise;
+      }
+      return rename(from, to);
+    });
+    let finished = false;
+    const command = h.cli('run', await writeScript(h.cwd, 'first.js', 'return 1;'), '--request-id', id);
+    const driven = h.drive(command).then(result => { finished = true; return result; });
+    await journalStarted.promise;
+    const committed = await command;
+    assert.equal(committed.code, 0, JSON.stringify(committed.json));
+    const status = await h.cli('status');
+    assert.equal(status.json.active, id);
+    assert.equal(finished, false, 'drive returned while the completion request was still writing job.json');
+    releaseJournal.resolve();
+    assert.equal((await driven).code, 0);
+    const next = await h.run('run', await writeScript(h.cwd, 'next.js', 'return 2;'));
+    assert.equal(next.code, 0, JSON.stringify(next.json));
+    assert.equal(next.json.output, 2);
   });
 
   test('After snapshots above 2000 nodes keep script success/output but mark changes unavailable', async t => {
@@ -344,7 +373,7 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     assert.match(red.json.instruction, /do not replay the script/);
     // A changed 2x2 export differs at all four pixels, so tolerance 4 passes.
     const green = await h.run('run', await paint('green.js', { r: 0, g: 1, b: 0 }), '--node', '1:4', '--expect', 'unchanged', '--tolerance', '4');
-    assert.equal(green.code, 0, JSON.stringify(green.json.verify));
+    assert.equal(green.code, 0, JSON.stringify(green.json));
     assert.deepEqual([green.json.verify.pass, green.json.verify.changedPixels, green.json.verify.tolerance], [true, 4, 4]);
   });
 
@@ -504,6 +533,11 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     try {
       // The script remains in hold: pump one heartbeat but do not settle, which would wait for execution.
       await h.tick();
+      // A tick can coalesce into an in-flight heartbeat; wait for that request's observable panel update.
+      const deadline = Date.now() + 3000;
+      while (h.element('state').textContent !== 'Waiting for original project' && Date.now() < deadline) {
+        await delay(10); await h.tick();
+      }
       assert.equal(h.element('state').textContent, 'Waiting for original project');
       assert.match(h.element('state-detail').textContent, new RegExp(path.basename(h.cwd)));
       const status = async () => (await cli(other, 'status')).json;
@@ -637,9 +671,10 @@ describe('figma-agent-control CLI', { concurrency: true, timeout: 20000 }, () =>
     const h = await harness(t);
     const since = new Date().toISOString();
     const bump = await writeScript(h.cwd, 'bump.js', 'target.characters += "+";');
-    await h.run('run', bump, '--node', '1:3');
-    await h.run('run', bump, '--node', '1:3');
-    await h.run('inspect', '--node', '1:2');
+    for (const args of [['run', bump, '--node', '1:3'], ['run', bump, '--node', '1:3'], ['inspect', '--node', '1:2']]) {
+      const result = await h.run(...args);
+      assert.equal(result.code, 0, JSON.stringify(result.json));
+    }
     // Start the window at the second persisted task's createdAt without depending on wall-clock or directory-mtime precision.
     const created = (await Promise.all((await fs.readdir(runsDir(h.cwd))).map(id => json(path.join(runsDir(h.cwd), id, 'job.json'))))).map(job => job.createdAt).sort();
     const mid = created[1];

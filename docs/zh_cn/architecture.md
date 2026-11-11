@@ -204,4 +204,4 @@ overrides 是唯一支持的手工修正入口。文件先整体校验，basis �
 
 `npm run check` 先检查语法，再用锁定的本地编译器检查各环境。`npm test` 串行执行测试文件，避免浏览器性能检查抢资源。测试用隔离的真实桥接、VM 中的真实插件源码和合成文档；浏览器/字体条件不满足时可跳过。`npm run check:release` 检查语言规则、明显敏感数据和包内容。
 
-CI 面向 Linux/macOS、Node.js 22/24。自动测试使用本机桥接、VM 中的插件和隔离 Chrome 渲染。本地开发命令见[贡献指南](../../CONTRIBUTING.md)，真实插件行为和云端同步在 Figma 中检查。
+CI 面向 Linux/macOS、Node.js 22/24，耗时门槛以 Ubuntu/Node.js 22 为性能基准。所有组合保留相同的功能和像素断言。自动测试使用本机桥接、VM 中的插件和隔离 Chrome 渲染。本地开发命令见[贡献指南](../../CONTRIBUTING.md)，真实插件行为和云端同步在 Figma 中检查。
