@@ -1,7 +1,7 @@
 /**
  * [INPUT]: src/frames frames; src/html/chrome findChrome; src/png decodePng; two Figma-exported 64x32, 1 s WebM fixtures with a black block moving 48 px and 24 px.
  * [OUTPUT]: No exports; node:test cases.
- * [POS]: Frame-sampling tests. Invalid task sources fail before Chrome startup. Chrome-dependent cases cover sample times, contact-sheet geometry/content and original-frame agreement, file/task equivalence, comparisons and identical-byte warnings, original-size dumps, repeated and backward zero-time samples, high-precision filenames, and out-of-duration times; skip with a reason when unavailable. Chrome profiles live in this suite's temporary directory so other suites can count system-temp profiles independently.
+ * [POS]: Frame-sampling tests. Invalid task sources fail before Chrome startup. Chrome-dependent cases cover sample times, contact-sheet geometry/content and original-frame agreement, file/task equivalence, comparisons and identical-byte warnings, original-size dumps, repeated and backward zero-time samples, high-precision filenames, out-of-duration times, and decode errors before a first-frame callback; skip with a reason when unavailable. Chrome profiles live in this suite's temporary directory so other suites can count system-temp profiles independently.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { describe, test, before, after } from 'node:test';
@@ -130,5 +130,11 @@ describe('Frame sampling and contact sheets (requires Chrome)', { skip: chrome ?
     assert.deepEqual(Array.from({ length: 64 }, (_, x) => first.data[(16 * 64 + x) * 4] < 128), Array.from({ length: 64 }, (_, x) => x < 16));
     for (const i of [1, 3, 4]) assert.deepEqual(shots[i].data, first.data, `Sample ${i + 1} must contain the same first-frame pixels`);
     assert.notDeepEqual(shots[2].data, first.data, 'The intervening sample must seek to a later frame');
+  });
+
+  test('Undecodable video reports its decode error without waiting for a first-frame callback', async t => {
+    const cwd = await project(t), file = path.join(cwd, 'invalid.webm');
+    await fs.writeFile(file, 'not a video');
+    await assert.rejects(frames(cwd, file, { atSeconds: [0] }, cwd, opts()), /Cannot decode the video .*only MP4 .*and WebM are supported/);
   });
 });

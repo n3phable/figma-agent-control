@@ -2,7 +2,7 @@
  * [INPUT]: Uses ./html/chrome.mjs launch for video decoding, frame capture and contact sheets; ./png.mjs diffPng; ./record.mjs localResult; and ./project.mjs root/hash/isJobId.
  * [OUTPUT]: frames(cwd, source, { atSeconds, frameCount, compareSource, dump }, invocationDir, chromeOptions) -> summary with contact-sheet paths, sample times, comparison pixel counts, and optional individual PNG paths.
  * [POS]: Converts run-exported MP4/WebM into timestamped PNG contact sheets that agents can inspect. --dump also saves full-size frames for quantitative checks; --compare compares both videos at identical sample times.
- *        Reuses the decoded frame when the requested time is unchanged; changed times wait for seeked before capture.
+ *        Waits for loadeddata and the first presented-frame callback before sampling; reuses that frame at unchanged times, while changed times wait for seeked.
  *        Serializes each canvas before the next seek so dumps and contact sheets consume the captured pixels.
  *        Shares diffPng's change definition with image-diff and run --expect; byte-identical videos trigger a possible stale-export hint. Sample indices prevent rounded-millisecond filename collisions. Runs offline without bridge access and uses only html/chrome, like doctor.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -40,14 +40,16 @@ async function source(cwd, value, invocationDir) {
 }
 
 // Page script: omit MIME type so Chrome detects the container; keep elements on window.__fac for later capture and contact-sheet assembly.
-// Reuse the loaded frame at unchanged times; an unnecessary seek can reset Chrome's first-frame readiness.
+// loadeddata can precede a drawable first frame for detached videos; register both readiness signals before loading.
 /** @param {string[]} videos base64 */
 const LOAD = videos => `(async () => {
   window.__fac = { videos: [], frames: [] };
   for (const b64 of ${JSON.stringify(videos)}) {
     const v = document.createElement('video'); v.muted = true; v.preload = 'auto';
+    const loaded = new Promise((ok, no) => { v.onloadeddata = ok; v.onerror = () => no(new Error('Cannot decode the video (' + ((v.error && v.error.message) || 'unknown reason') + '): only MP4 (H.264, depending on the Chrome build) and WebM are supported; for GIF or decode failures, export as WEBM instead')); });
+    const presented = new Promise(ok => v.requestVideoFrameCallback(ok));
     v.src = URL.createObjectURL(new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))]));
-    await new Promise((ok, no) => { v.onloadeddata = ok; v.onerror = () => no(new Error('Cannot decode the video (' + ((v.error && v.error.message) || 'unknown reason') + '): only MP4 (H.264, depending on the Chrome build) and WebM are supported; for GIF or decode failures, export as WEBM instead')); });
+    await Promise.all([loaded, presented]);
     window.__fac.videos.push(v);
   }
   return window.__fac.videos.map(v => ({ width: v.videoWidth, height: v.videoHeight, duration: v.duration }));
