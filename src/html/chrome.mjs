@@ -5,7 +5,7 @@
  *           page() -> { browser, open(url, width, height, dsf?), shot(clip?), evaluate(expression), cdp(method, params?), close() }.
  * [POS]: Minimal dependency-free CDP rendering layer. command launches it for check/zoom; doctor uses it for diagnostics. Uses Node built-ins only.
  *        Uses --remote-debugging-pipe exclusively: Chrome exits when SIGKILL closes its parent's pipe, unlike port mode, which can leave orphans.
- *        Registers SIGINT/SIGTERM/SIGHUP and exit cleanup before profile creation through browser shutdown; termination or process.exit kills Chrome and removes profiles. Only SIGKILL can leave fac-chrome-* directories.
+ *        Registers SIGINT/SIGTERM/SIGHUP and exit cleanup before profile creation through browser shutdown; termination or process.exit kills Chrome and removes profiles. Normal close retries recursive profile removal while Chrome subprocesses finish writing. Only SIGKILL can leave fac-chrome-* directories.
  *        Errors: CHROME_NOT_FOUND during lookup, CHROME_LAUNCH_FAILED during startup, CHROME_PROTOCOL for non-CDP pipe messages,
  *        CHROME_EXITED for unexpected exit (rejecting pending and later commands), and RENDER_TIMEOUT for command/event deadlines.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -151,7 +151,7 @@ export async function launch({ executable = findChrome(), timeout = 30000 } = {}
     send('Browser.close').catch(() => {});
     const kill = setTimeout(() => proc.kill('SIGKILL'), 5000);
     await exited; clearTimeout(kill);
-    fs.rmSync(profile, { recursive: true, force: true });
+    await fs.promises.rm(profile, { recursive: true, force: true, maxRetries: 3 });
     unwatch(self);
   }
 

@@ -3,7 +3,7 @@
  * [OUTPUT]: SHIFT, region(boxes, own, mask, width, height, pad?) -> search area or reason, search(ref, act, rect, k?) -> { s, before, after },
  *           worth(r, k?), relocate(placement, dx, dy, basis?) -> { fix?, flat, hint? }, advise(r, k, placement, basis?) -> { shift?, fix?, flat?, hints }, moved(dx, dy), and Placement.
  * [POS]: Pure checker corrections: finds alignment shifts and converts them to local CSS coordinates. 1x top diagnostics and zoom share search/advise with scale k.
- *        match owns counts (differing ranks candidates, match measures before/after); css.place serializes transforms consistently with generation. No browser or file access.
+ *        A sparse byte comparison seeds the search bound; full perceptual counts and the original candidate order decide the winner. match measures before/after; css.place serializes transforms consistently with generation. No browser or file access.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
  */
 import { match, differing, crop } from './match.mjs';
@@ -14,6 +14,7 @@ import { num, place } from './css.mjs';
 
 // Search radius 3 px at roughly 1 CSS px steps. Pad the union of both bounds by 2 px, capped at 200,000 px. Offer fixes only with at least 50 original differences and 30% improvement.
 export const SHIFT = { radius: 3, pad: 2, area: 200_000, minPx: 50, minDrop: 0.3 };
+const SEARCH_SAMPLES = 256;
 
 // -- Search regions -----------------------------------------------------
 // Union boxes, expand by pad, round outward and clamp to the image. Above the area limit, fall back to the padded bounds of differing pixels owned by this node.
@@ -56,17 +57,40 @@ function cropPad(rgba, width, height, [x0, y0, x1, y1]) {
   return out;
 }
 // Shift s means rendered content lies at reference position +s: compare ref(x, y) with act(x + sx, y + sy), in device pixels. Let K = round(k); coarse search uses shifts(3K, K)
-// at roughly 1 CSS px per step (49 shifts when K = 1), then K > 1 refines around the best candidate in device-pixel steps. differing counts candidates, using the current best count as an early limit;
-// select the first minimum. match computes before/after on crops with identical semantics, though translucent pixels may differ slightly from full-frame mismatch counts.
+// at roughly 1 CSS px per step (49 shifts when K = 1), then K > 1 refines around the best candidate in device-pixel steps. Sampled byte differences choose one promising candidate to establish a low bound;
+// differing still checks every possible winner with full perceptual counts, retaining the first minimum in the original order. match computes before/after on crops with identical semantics, though translucent pixels may differ slightly from full-frame mismatch counts.
 /** @param {{ data: Uint8Array, width: number, height: number }} ref @param {{ data: Uint8Array }} act @param {Rect} rect @param {number} [k]
  *  @returns {{ s: [number, number], before: number, after: number }} */
 export function search(ref, act, rect, k = 1) {
-  const { width, height } = ref, K = Math.round(k);
+  const { width, height } = ref, K = Math.round(k), [x0, y0, x1, y1] = rect, area = (x1 - x0) * (y1 - y0);
+  const step = Math.max(1, Math.ceil(area / SEARCH_SAMPLES));
   /** @param {[number, number][]} candidates */
   const pick = candidates => {
-    let best = candidates[0], min = Infinity;
-    for (const s of candidates) { const n = differing(ref.data, act.data, width, height, rect, s[0], s[1], 0.1, min); if (n < min) { min = n; best = s; } }
-    return best;
+    /** @param {number} i @param {number} [limit] */
+    const count = (i, limit = Infinity) => differing(ref.data, act.data, width, height, rect, candidates[i][0], candidates[i][1], 0.1, limit);
+    let best = 0, min = count(0);
+    if (min === 0) return candidates[0];
+    let probe = 0, fewest = Infinity;
+    for (let i = 0; i < candidates.length && fewest > 0; i++) {
+      const [sx, sy] = candidates[i];
+      let n = 0;
+      for (let pixel = 0; pixel < area && n < fewest; pixel += step) {
+        const x = x0 + pixel % (x1 - x0), y = y0 + Math.floor(pixel / (x1 - x0));
+        const a = (y * width + x) * 4, bx = x + sx, by = y + sy;
+        const b = bx >= 0 && bx < width && by >= 0 && by < height ? (by * width + bx) * 4 : -4;
+        if (ref.data[a] !== (act.data[b] ?? 0) || ref.data[a + 1] !== (act.data[b + 1] ?? 0) ||
+            ref.data[a + 2] !== (act.data[b + 2] ?? 0) || ref.data[a + 3] !== (act.data[b + 3] ?? 0)) n++;
+      }
+      if (n < fewest) { fewest = n; probe = i; }
+    }
+    if (probe) { const n = count(probe, min); if (n < min) { min = n; best = probe; } }
+    for (let i = 1; i < candidates.length && (min > 0 || i < best); i++) {
+      if (i === probe) continue;
+      // An earlier candidate may tie the seed; count one further pixel to distinguish a tie from a worse score.
+      const n = count(i, min + (i < best ? 1 : 0));
+      if (n < min || (n === min && i < best)) { min = n; best = i; }
+    }
+    return candidates[best];
   };
   let s = pick(shifts(3 * K, K, [0, 0]));
   if (K > 1) s = pick(shifts(K - 1, 1, s));

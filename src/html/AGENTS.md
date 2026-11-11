@@ -35,7 +35,7 @@ Dependencies are one-way: command orchestrates extracts/page/overrides/check/sum
 - `match.mjs`: pixelmatch-derived perceptual comparison, antialias classification, dense-block scanning, translation counts, and crop/upscale/stack helpers. Distinct from strict `png.diffPng` change detection.
 - `attrib.mjs`: pure rectangle rasterization and Figma/HTML-side attribution, merged by max contribution to identify missing or displaced content.
 - `layout.mjs`: browser geometry/font/structure collection and findings. Box/wrap/content-offset/overflow block clean; ink-offset is informational.
-- `shift.mjs`: pure local translation search and conversion to override transforms/bases; fixes require at least fifty original differing pixels and 30% improvement.
+- `shift.mjs`: sample-seeded exact translation search and conversion to override transforms/bases; full perceptual counts preserve tie order, and fixes require at least fifty original differing pixels and 30% improvement.
 - `structure.mjs`: pure data-node/text correspondence checks with explicit exemptions for intentionally omitted or baked subtrees.
 - `suggest.mjs`: groups background-dependent approximations, proposes component-level reference crops using generator-derived geometry, and measures crop-edge seams.
 - `zoom.mjs`: magnified single-node preflight/render/comparison, neutralizing ancestor effects and reusing translation search at device-pixel precision; focus/zoom do not change the frame verdict.
