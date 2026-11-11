@@ -39,6 +39,8 @@ jobs:
       - run: node scripts/check-release.mjs --self-test
       - name: Run tests and preserve the log
         shell: bash
+        env:
+          FAC_PERFORMANCE_GATE: ${{ matrix.os == 'ubuntu-latest' && matrix.node == '22' && '1' || '0' }}
         run: |
           set -o pipefail
           mkdir -p test-results

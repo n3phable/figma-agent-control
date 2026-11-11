@@ -1,5 +1,5 @@
 /**
- * [INPUT]: src/html/chrome findChrome/launch; src/html/check check/raster/writeEvidence/BLOCK_IMAGES; src/html/generate embed/dataUri; src/png decodePng/encodePng; helpers/generate extracted/run; local Chrome.
+ * [INPUT]: src/html/chrome findChrome/launch; src/html/check check/raster/writeEvidence/BLOCK_IMAGES; src/html/generate embed/dataUri; src/png decodePng/encodePng; helpers/generate extracted/run; local Chrome; FAC_PERFORMANCE_GATE controls elapsed-time budgets.
  * [OUTPUT]: No exports; node:test cases.
  * [POS]: Rendering/check contracts cover self-comparison, pixels/transparency/root opacity/reverse stacking, node attribution and clipping, reference sizes, navigation/DSF/CDP, evidence, timeouts and process/signal cleanup, tall-frame performance, and override/fix round trips under rotated or left/top parents. Chrome-free stubs cover refs, reports, block crops, two-sided top/fix/basis/layout/font/structure/focus/cluster/seam findings. Missing Chrome skips with CHROME_NOT_FOUND; only suite-owned processes and temporary directories are cleaned.
  * [PROTOCOL]: When changing this file, update this header and check AGENTS.md.
@@ -449,7 +449,7 @@ await launch({ executable: ${JSON.stringify(chrome)} }); setInterval(() => {}, 1
   });
 
   // Worst-case frame-aware search: five 440x440 noise blocks shift 2 px, each searching about 444x446 near the 200,000 px limit and occupying the top five ranks.
-  test('A 1440x6000 frame shifted 1 px checks within 1.6 s with attribution within 1 s; maximum-area top searches stay within 500 ms and added stages within 800 ms', needs, async t => {
+  test('Large frames preserve attribution and exact shifts at the maximum search area', needs, async t => {
     const rows = Array.from({ length: 300 }, (_, i) => `<div class="n" data-node="2:${i}" data-name="\u884c${i}" style="transform:translate(24px,${i * 20}px);width:1392px;height:20px">
 <div class="n" data-node="3:${i}" data-name="\u8272\u5757${i}" style="transform:translate(0,2px);width:16px;height:16px;background:hsl(${i * 7 % 360},70%,50%)"></div>
 <div class="n" data-node="4:${i}" data-name="\u6587\u5b57${i}" style="transform:translate(28px,1px);font:14px sans-serif;white-space:pre">\u7b2c ${i} \u884c Row ${i} · The quick brown fox jumps over the lazy dog</div></div>`).join('');
@@ -470,9 +470,12 @@ await launch({ executable: ${JSON.stringify(chrome)} }); setInterval(() => {}, 1
     const ms = report.ms, base = ms.decode + ms.match + ms.blocks + ms.attrib, added = ms.figma + ms.facts + ms.fonts + ms.top + ms.structure + ms.suggest;
     t.diagnostic(`ms ${JSON.stringify(ms)}; top ${JSON.stringify(report.top.map(e => [e.node, e.px, e.shift?.before, e.shift?.after]))}`);
     assert.ok(report.mismatched > 10000 && report.nodes.length > 100, `Translation should cause widespread differences: ${report.mismatched} px, ${report.nodes.length} nodes`);
-    assert.ok(base <= 1600, `Check stages ${JSON.stringify(ms)}`);
-    assert.ok(ms.attrib <= 1000, `Attribution ${ms.attrib} ms`);
     assert.deepEqual(report.top.map(e => [e.node, e.shift?.dy, !!e.fix]).sort(), [0, 1, 2, 3, 4].map(n => [`5:${n}`, -2, true]));
-    assert.ok(ms.top <= 500 && added <= 800, `top ${ms.top} ms, added stages ${added} ms`);
+    // CI calibrates elapsed-time budgets on Ubuntu/Node 22; all matrix jobs retain the pixel assertions above.
+    if (process.env.FAC_PERFORMANCE_GATE !== '0') {
+      assert.ok(base <= 1600, `Check stages ${JSON.stringify(ms)}`);
+      assert.ok(ms.attrib <= 1000, `Attribution ${ms.attrib} ms`);
+      assert.ok(ms.top <= 500 && added <= 800, `top ${ms.top} ms, added stages ${added} ms`);
+    }
   });
 });

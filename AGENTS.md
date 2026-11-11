@@ -47,6 +47,8 @@ Read the relevant module map and source headers before changing behavior. Mainta
 
 Run checks proportionate to the change. `npm test` runs test files serially to prevent browser performance checks competing for resources. `npm run check` verifies syntax and the separate type environments. `npm run check:release` verifies English text, obvious sensitive-data patterns, and the npm tarball allowlist. Record observed local, hosted-CI and live Desktop checks separately.
 
+CI checks functional behavior on Linux/macOS with Node.js 22/24. Ubuntu/Node.js 22 is the elapsed-time performance baseline; `FAC_PERFORMANCE_GATE=0` disables only timing assertions in the other CI jobs. Local tests enforce timing budgets by default.
+
 Plugin template bytes affect the plugin version; generator/checker source bytes affect their fingerprints. Even comment-only changes can require new plugin installation/reload or regenerate provenance fingerprints. Generate fingerprints from source bytes and run the corresponding checks.
 
 ## Installing the consumer skill
