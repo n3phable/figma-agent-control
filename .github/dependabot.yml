@@ -9,3 +9,7 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 3
+    ignore:
+      # Keep type checking aligned with the minimum supported Node.js runtime.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
